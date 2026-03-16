@@ -1,0 +1,2650 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+  <meta charset="UTF-8">
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Eval Review</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+
+  <style>
+
+    :root {
+
+      --bg: #faf9f5;
+
+      --surface: #ffffff;
+
+      --border: #e8e6dc;
+
+      --text: #141413;
+
+      --text-muted: #b0aea5;
+
+      --accent: #d97757;
+
+      --accent-hover: #c4613f;
+
+      --green: #788c5d;
+
+      --green-bg: #eef2e8;
+
+      --red: #c44;
+
+      --red-bg: #fceaea;
+
+      --header-bg: #141413;
+
+      --header-text: #faf9f5;
+
+      --radius: 6px;
+
+    }
+
+
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+
+
+    body {
+
+      font-family: 'Lora', Georgia, serif;
+
+      background: var(--bg);
+
+      color: var(--text);
+
+      height: 100vh;
+
+      display: flex;
+
+      flex-direction: column;
+
+    }
+
+
+
+    /* ---- Header ---- */
+
+    .header {
+
+      background: var(--header-bg);
+
+      color: var(--header-text);
+
+      padding: 1rem 2rem;
+
+      display: flex;
+
+      justify-content: space-between;
+
+      align-items: center;
+
+      flex-shrink: 0;
+
+    }
+
+    .header h1 {
+
+      font-family: 'Poppins', sans-serif;
+
+      font-size: 1.25rem;
+
+      font-weight: 600;
+
+    }
+
+    .header .instructions {
+
+      font-size: 0.8rem;
+
+      opacity: 0.7;
+
+      margin-top: 0.25rem;
+
+    }
+
+    .header .progress {
+
+      font-size: 0.875rem;
+
+      opacity: 0.8;
+
+      text-align: right;
+
+    }
+
+
+
+    /* ---- Main content ---- */
+
+    .main {
+
+      flex: 1;
+
+      overflow-y: auto;
+
+      padding: 1.5rem 2rem;
+
+      display: flex;
+
+      flex-direction: column;
+
+      gap: 1.25rem;
+
+    }
+
+
+
+    /* ---- Sections ---- */
+
+    .section {
+
+      background: var(--surface);
+
+      border: 1px solid var(--border);
+
+      border-radius: var(--radius);
+
+      flex-shrink: 0;
+
+    }
+
+    .section-header {
+
+      font-family: 'Poppins', sans-serif;
+
+      padding: 0.75rem 1rem;
+
+      font-size: 0.75rem;
+
+      font-weight: 500;
+
+      text-transform: uppercase;
+
+      letter-spacing: 0.05em;
+
+      color: var(--text-muted);
+
+      border-bottom: 1px solid var(--border);
+
+      background: var(--bg);
+
+    }
+
+    .section-body {
+
+      padding: 1rem;
+
+    }
+
+
+
+    /* ---- Config badge ---- */
+
+    .config-badge {
+
+      display: inline-block;
+
+      padding: 0.2rem 0.625rem;
+
+      border-radius: 9999px;
+
+      font-family: 'Poppins', sans-serif;
+
+      font-size: 0.6875rem;
+
+      font-weight: 600;
+
+      text-transform: uppercase;
+
+      letter-spacing: 0.03em;
+
+      margin-left: 0.75rem;
+
+      vertical-align: middle;
+
+    }
+
+    .config-badge.config-primary {
+
+      background: rgba(33, 150, 243, 0.12);
+
+      color: #1976d2;
+
+    }
+
+    .config-badge.config-baseline {
+
+      background: rgba(255, 193, 7, 0.15);
+
+      color: #f57f17;
+
+    }
+
+
+
+    /* ---- Prompt ---- */
+
+    .prompt-text {
+
+      white-space: pre-wrap;
+
+      font-size: 0.9375rem;
+
+      line-height: 1.6;
+
+    }
+
+
+
+    /* ---- Outputs ---- */
+
+    .output-file {
+
+      border: 1px solid var(--border);
+
+      border-radius: var(--radius);
+
+      overflow: hidden;
+
+    }
+
+    .output-file + .output-file {
+
+      margin-top: 1rem;
+
+    }
+
+    .output-file-header {
+
+      padding: 0.5rem 0.75rem;
+
+      font-size: 0.8rem;
+
+      font-weight: 600;
+
+      color: var(--text-muted);
+
+      background: var(--bg);
+
+      border-bottom: 1px solid var(--border);
+
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+
+      display: flex;
+
+      justify-content: space-between;
+
+      align-items: center;
+
+    }
+
+    .output-file-header .dl-btn {
+
+      font-size: 0.7rem;
+
+      color: var(--accent);
+
+      text-decoration: none;
+
+      cursor: pointer;
+
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+      font-weight: 500;
+
+      opacity: 0.8;
+
+    }
+
+    .output-file-header .dl-btn:hover {
+
+      opacity: 1;
+
+      text-decoration: underline;
+
+    }
+
+    .output-file-content {
+
+      padding: 0.75rem;
+
+      overflow-x: auto;
+
+    }
+
+    .output-file-content pre {
+
+      font-size: 0.8125rem;
+
+      line-height: 1.5;
+
+      white-space: pre-wrap;
+
+      word-break: break-word;
+
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+
+    }
+
+    .output-file-content img {
+
+      max-width: 100%;
+
+      height: auto;
+
+      border-radius: 4px;
+
+    }
+
+    .output-file-content iframe {
+
+      width: 100%;
+
+      height: 600px;
+
+      border: none;
+
+    }
+
+    .output-file-content table {
+
+      border-collapse: collapse;
+
+      font-size: 0.8125rem;
+
+      width: 100%;
+
+    }
+
+    .output-file-content table td,
+
+    .output-file-content table th {
+
+      border: 1px solid var(--border);
+
+      padding: 0.375rem 0.5rem;
+
+      text-align: left;
+
+    }
+
+    .output-file-content table th {
+
+      background: var(--bg);
+
+      font-weight: 600;
+
+    }
+
+    .output-file-content .download-link {
+
+      display: inline-flex;
+
+      align-items: center;
+
+      gap: 0.5rem;
+
+      padding: 0.5rem 1rem;
+
+      background: var(--bg);
+
+      border: 1px solid var(--border);
+
+      border-radius: 4px;
+
+      color: var(--accent);
+
+      text-decoration: none;
+
+      font-size: 0.875rem;
+
+      cursor: pointer;
+
+    }
+
+    .output-file-content .download-link:hover {
+
+      background: var(--border);
+
+    }
+
+    .empty-state {
+
+      color: var(--text-muted);
+
+      font-style: italic;
+
+      padding: 2rem;
+
+      text-align: center;
+
+    }
+
+
+
+    /* ---- Feedback ---- */
+
+    .prev-feedback {
+
+      background: var(--bg);
+
+      border: 1px solid var(--border);
+
+      border-radius: 4px;
+
+      padding: 0.625rem 0.75rem;
+
+      margin-top: 0.75rem;
+
+      font-size: 0.8125rem;
+
+      color: var(--text-muted);
+
+      line-height: 1.5;
+
+    }
+
+    .prev-feedback-label {
+
+      font-size: 0.7rem;
+
+      font-weight: 600;
+
+      text-transform: uppercase;
+
+      letter-spacing: 0.04em;
+
+      margin-bottom: 0.25rem;
+
+      color: var(--text-muted);
+
+    }
+
+    .feedback-textarea {
+
+      width: 100%;
+
+      min-height: 100px;
+
+      padding: 0.75rem;
+
+      border: 1px solid var(--border);
+
+      border-radius: 4px;
+
+      font-family: inherit;
+
+      font-size: 0.9375rem;
+
+      line-height: 1.5;
+
+      resize: vertical;
+
+      color: var(--text);
+
+    }
+
+    .feedback-textarea:focus {
+
+      outline: none;
+
+      border-color: var(--accent);
+
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+
+    }
+
+    .feedback-status {
+
+      font-size: 0.75rem;
+
+      color: var(--text-muted);
+
+      margin-top: 0.5rem;
+
+      min-height: 1.1em;
+
+    }
+
+
+
+    /* ---- Grades (collapsible) ---- */
+
+    .grades-toggle {
+
+      display: flex;
+
+      align-items: center;
+
+      cursor: pointer;
+
+      user-select: none;
+
+    }
+
+    .grades-toggle:hover {
+
+      color: var(--accent);
+
+    }
+
+    .grades-toggle .arrow {
+
+      margin-right: 0.5rem;
+
+      transition: transform 0.15s;
+
+      font-size: 0.75rem;
+
+    }
+
+    .grades-toggle .arrow.open {
+
+      transform: rotate(90deg);
+
+    }
+
+    .grades-content {
+
+      display: none;
+
+      margin-top: 0.75rem;
+
+    }
+
+    .grades-content.open {
+
+      display: block;
+
+    }
+
+    .grades-summary {
+
+      font-size: 0.875rem;
+
+      margin-bottom: 0.75rem;
+
+      display: flex;
+
+      align-items: center;
+
+      gap: 0.5rem;
+
+    }
+
+    .grade-badge {
+
+      display: inline-block;
+
+      padding: 0.125rem 0.5rem;
+
+      border-radius: 9999px;
+
+      font-size: 0.75rem;
+
+      font-weight: 600;
+
+    }
+
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+
+    .assertion-list {
+
+      list-style: none;
+
+    }
+
+    .assertion-item {
+
+      padding: 0.625rem 0;
+
+      border-bottom: 1px solid var(--border);
+
+      font-size: 0.8125rem;
+
+    }
+
+    .assertion-item:last-child { border-bottom: none; }
+
+    .assertion-status {
+
+      font-weight: 600;
+
+      margin-right: 0.5rem;
+
+    }
+
+    .assertion-status.pass { color: var(--green); }
+
+    .assertion-status.fail { color: var(--red); }
+
+    .assertion-evidence {
+
+      color: var(--text-muted);
+
+      font-size: 0.75rem;
+
+      margin-top: 0.25rem;
+
+      padding-left: 1.5rem;
+
+    }
+
+
+
+    /* ---- View tabs ---- */
+
+    .view-tabs {
+
+      display: flex;
+
+      gap: 0;
+
+      padding: 0 2rem;
+
+      background: var(--bg);
+
+      border-bottom: 1px solid var(--border);
+
+      flex-shrink: 0;
+
+    }
+
+    .view-tab {
+
+      font-family: 'Poppins', sans-serif;
+
+      padding: 0.625rem 1.25rem;
+
+      font-size: 0.8125rem;
+
+      font-weight: 500;
+
+      cursor: pointer;
+
+      border: none;
+
+      background: none;
+
+      color: var(--text-muted);
+
+      border-bottom: 2px solid transparent;
+
+      transition: all 0.15s;
+
+    }
+
+    .view-tab:hover { color: var(--text); }
+
+    .view-tab.active {
+
+      color: var(--accent);
+
+      border-bottom-color: var(--accent);
+
+    }
+
+    .view-panel { display: none; }
+
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+
+
+    /* ---- Benchmark view ---- */
+
+    .benchmark-view {
+
+      padding: 1.5rem 2rem;
+
+      overflow-y: auto;
+
+      flex: 1;
+
+    }
+
+    .benchmark-table {
+
+      border-collapse: collapse;
+
+      background: var(--surface);
+
+      border: 1px solid var(--border);
+
+      border-radius: var(--radius);
+
+      font-size: 0.8125rem;
+
+      width: 100%;
+
+      margin-bottom: 1.5rem;
+
+    }
+
+    .benchmark-table th, .benchmark-table td {
+
+      padding: 0.625rem 0.75rem;
+
+      text-align: left;
+
+      border: 1px solid var(--border);
+
+    }
+
+    .benchmark-table th {
+
+      font-family: 'Poppins', sans-serif;
+
+      background: var(--header-bg);
+
+      color: var(--header-text);
+
+      font-weight: 500;
+
+      font-size: 0.75rem;
+
+      text-transform: uppercase;
+
+      letter-spacing: 0.04em;
+
+    }
+
+    .benchmark-table tr:hover { background: var(--bg); }
+
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+
+    .benchmark-notes {
+
+      background: var(--surface);
+
+      border: 1px solid var(--border);
+
+      border-radius: var(--radius);
+
+      padding: 1rem;
+
+    }
+
+    .benchmark-notes h3 {
+
+      font-family: 'Poppins', sans-serif;
+
+      font-size: 0.875rem;
+
+      margin-bottom: 0.75rem;
+
+    }
+
+    .benchmark-notes ul {
+
+      list-style: disc;
+
+      padding-left: 1.25rem;
+
+    }
+
+    .benchmark-notes li {
+
+      font-size: 0.8125rem;
+
+      line-height: 1.6;
+
+      margin-bottom: 0.375rem;
+
+    }
+
+    .benchmark-empty {
+
+      color: var(--text-muted);
+
+      font-style: italic;
+
+      text-align: center;
+
+      padding: 3rem;
+
+    }
+
+
+
+    /* ---- Navigation ---- */
+
+    .nav {
+
+      display: flex;
+
+      justify-content: space-between;
+
+      align-items: center;
+
+      padding: 1rem 2rem;
+
+      border-top: 1px solid var(--border);
+
+      background: var(--surface);
+
+      flex-shrink: 0;
+
+    }
+
+    .nav-btn {
+
+      font-family: 'Poppins', sans-serif;
+
+      padding: 0.5rem 1.25rem;
+
+      border: 1px solid var(--border);
+
+      border-radius: var(--radius);
+
+      background: var(--surface);
+
+      cursor: pointer;
+
+      font-size: 0.875rem;
+
+      font-weight: 500;
+
+      color: var(--text);
+
+      transition: all 0.15s;
+
+    }
+
+    .nav-btn:hover:not(:disabled) {
+
+      background: var(--bg);
+
+      border-color: var(--text-muted);
+
+    }
+
+    .nav-btn:disabled {
+
+      opacity: 0.4;
+
+      cursor: not-allowed;
+
+    }
+
+    .done-btn {
+
+      font-family: 'Poppins', sans-serif;
+
+      padding: 0.5rem 1.5rem;
+
+      border: 1px solid var(--border);
+
+      border-radius: var(--radius);
+
+      background: var(--surface);
+
+      color: var(--text);
+
+      cursor: pointer;
+
+      font-size: 0.875rem;
+
+      font-weight: 500;
+
+      transition: all 0.15s;
+
+    }
+
+    .done-btn:hover {
+
+      background: var(--bg);
+
+      border-color: var(--text-muted);
+
+    }
+
+    .done-btn.ready {
+
+      border: none;
+
+      background: var(--accent);
+
+      color: white;
+
+      font-weight: 600;
+
+    }
+
+    .done-btn.ready:hover {
+
+      background: var(--accent-hover);
+
+    }
+
+    /* ---- Done overlay ---- */
+
+    .done-overlay {
+
+      display: none;
+
+      position: fixed;
+
+      inset: 0;
+
+      background: rgba(0, 0, 0, 0.5);
+
+      z-index: 100;
+
+      justify-content: center;
+
+      align-items: center;
+
+    }
+
+    .done-overlay.visible {
+
+      display: flex;
+
+    }
+
+    .done-card {
+
+      background: var(--surface);
+
+      border-radius: 12px;
+
+      padding: 2rem 3rem;
+
+      text-align: center;
+
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+
+      max-width: 500px;
+
+    }
+
+    .done-card h2 {
+
+      font-size: 1.5rem;
+
+      margin-bottom: 0.5rem;
+
+    }
+
+    .done-card p {
+
+      color: var(--text-muted);
+
+      margin-bottom: 1.5rem;
+
+      line-height: 1.5;
+
+    }
+
+    .done-card .btn-row {
+
+      display: flex;
+
+      gap: 0.5rem;
+
+      justify-content: center;
+
+    }
+
+    .done-card button {
+
+      padding: 0.5rem 1.25rem;
+
+      border: 1px solid var(--border);
+
+      border-radius: var(--radius);
+
+      background: var(--surface);
+
+      cursor: pointer;
+
+      font-size: 0.875rem;
+
+    }
+
+    .done-card button:hover {
+
+      background: var(--bg);
+
+    }
+
+    /* ---- Toast ---- */
+
+    .toast {
+
+      position: fixed;
+
+      bottom: 5rem;
+
+      left: 50%;
+
+      transform: translateX(-50%);
+
+      background: var(--header-bg);
+
+      color: var(--header-text);
+
+      padding: 0.625rem 1.25rem;
+
+      border-radius: var(--radius);
+
+      font-size: 0.875rem;
+
+      opacity: 0;
+
+      transition: opacity 0.3s;
+
+      pointer-events: none;
+
+      z-index: 200;
+
+    }
+
+    .toast.visible {
+
+      opacity: 1;
+
+    }
+
+  </style>
+
+</head>
+
+<body>
+
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+
+    <div class="header">
+
+      <div>
+
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+
+      </div>
+
+      <div class="progress" id="progress"></div>
+
+    </div>
+
+
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+
+    </div>
+
+
+
+    <!-- Outputs panel (qualitative review) -->
+
+    <div class="view-panel active" id="panel-outputs">
+
+    <div class="main">
+
+      <!-- Prompt -->
+
+      <div class="section">
+
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+
+        <div class="section-body">
+
+          <div class="prompt-text" id="prompt-text"></div>
+
+        </div>
+
+      </div>
+
+
+
+      <!-- Outputs -->
+
+      <div class="section">
+
+        <div class="section-header">Output</div>
+
+        <div class="section-body" id="outputs-body">
+
+          <div class="empty-state">No output files found</div>
+
+        </div>
+
+      </div>
+
+
+
+      <!-- Previous Output (collapsible) -->
+
+      <div class="section" id="prev-outputs-section" style="display:none;">
+
+        <div class="section-header">
+
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+
+            Previous Output
+
+          </div>
+
+        </div>
+
+        <div class="grades-content" id="prev-outputs-content"></div>
+
+      </div>
+
+
+
+      <!-- Grades (collapsible) -->
+
+      <div class="section" id="grades-section" style="display:none;">
+
+        <div class="section-header">
+
+          <div class="grades-toggle" onclick="toggleGrades()">
+
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+
+            Formal Grades
+
+          </div>
+
+        </div>
+
+        <div class="grades-content" id="grades-content"></div>
+
+      </div>
+
+
+
+      <!-- Feedback -->
+
+      <div class="section">
+
+        <div class="section-header">Your Feedback</div>
+
+        <div class="section-body">
+
+          <textarea
+
+            class="feedback-textarea"
+
+            id="feedback"
+
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+
+          ></textarea>
+
+          <div class="feedback-status" id="feedback-status"></div>
+
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+
+            <div class="prev-feedback-label">Previous feedback</div>
+
+            <div id="prev-feedback-text"></div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+
+
+    <div class="nav" id="outputs-nav">
+
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+
+    </div>
+
+    </div><!-- end panel-outputs -->
+
+
+
+    <!-- Benchmark panel (quantitative stats) -->
+
+    <div class="view-panel" id="panel-benchmark">
+
+      <div class="benchmark-view" id="benchmark-content">
+
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+
+  <!-- Done overlay -->
+
+  <div class="done-overlay" id="done-overlay">
+
+    <div class="done-card">
+
+      <h2>Review Complete</h2>
+
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+
+      <div class="btn-row">
+
+        <button onclick="closeDoneDialog()">OK</button>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+
+  <!-- Toast -->
+
+  <div class="toast" id="toast"></div>
+
+
+
+  <script>
+
+    // ---- Embedded data (injected by generate_review.py) ----
+
+    const EMBEDDED_DATA = {"skill_name": "frontend-design", "runs": [{"id": "notification-dropdown-with_skill", "prompt": "Build me a notification dropdown component. When you click a bell icon in the nav bar it should show a list of recent notifications with unread indicators, timestamps, and a 'mark all as read' button.", "eval_id": 1, "outputs": [{"name": "NotificationDropdown.svelte", "type": "text", "content": "<script lang=\"ts\">\n\timport { fade, fly } from 'svelte/transition';\n\n\ttype NotificationType = 'info' | 'success' | 'warning' | 'error';\n\n\tinterface Notification {\n\t\tid: string;\n\t\ttype: NotificationType;\n\t\ttitle: string;\n\t\tmessage: string;\n\t\ttimestamp: Date;\n\t\tread: boolean;\n\t}\n\n\tlet open = $state(false);\n\n\tlet notifications = $state<Notification[]>([\n\t\t{\n\t\t\tid: '1',\n\t\t\ttype: 'success',\n\t\t\ttitle: 'Print Complete',\n\t\t\tmessage: 'benchy_v2.gcode finished successfully.',\n\t\t\ttimestamp: new Date(Date.now() - 1000 * 60 * 4),\n\t\t\tread: false\n\t\t},\n\t\t{\n\t\t\tid: '2',\n\t\t\ttype: 'warning',\n\t\t\ttitle: 'Thermal Runaway Warning',\n\t\t\tmessage: 'Hotend temperature exceeded target by 8\\u00b0C.',\n\t\t\ttimestamp: new Date(Date.now() - 1000 * 60 * 23),\n\t\t\tread: false\n\t\t},\n\t\t{\n\t\t\tid: '3',\n\t\t\ttype: 'error',\n\t\t\ttitle: 'Print Failed',\n\t\t\tmessage: 'cable_clip.gcode stopped due to communication error.',\n\t\t\ttimestamp: new Date(Date.now() - 1000 * 60 * 60 * 2),\n\t\t\tread: false\n\t\t},\n\t\t{\n\t\t\tid: '4',\n\t\t\ttype: 'info',\n\t\t\ttitle: 'Firmware Update Available',\n\t\t\tmessage: 'Marlin 2.1.3 is available for your printer.',\n\t\t\ttimestamp: new Date(Date.now() - 1000 * 60 * 60 * 5),\n\t\t\tread: true\n\t\t},\n\t\t{\n\t\t\tid: '5',\n\t\t\ttype: 'success',\n\t\t\ttitle: 'Bed Leveling Complete',\n\t\t\tmessage: 'Auto bed leveling mesh calibrated successfully.',\n\t\t\ttimestamp: new Date(Date.now() - 1000 * 60 * 60 * 24),\n\t\t\tread: true\n\t\t}\n\t]);\n\n\tlet unreadCount = $derived(notifications.filter((n) => !n.read).length);\n\n\tconst typeStyles: Record<NotificationType, { bg: string; text: string; icon: string }> = {\n\t\tsuccess: {\n\t\t\tbg: 'bg-emerald-500/15',\n\t\t\ttext: 'text-emerald-400',\n\t\t\ticon: 'M5 13l4 4L19 7'\n\t\t},\n\t\twarning: {\n\t\t\tbg: 'bg-amber-500/15',\n\t\t\ttext: 'text-amber-400',\n\t\t\ticon: 'M12 9v2m0 4h.01M12 3l9.5 16.5H2.5L12 3z'\n\t\t},\n\t\terror: {\n\t\t\tbg: 'bg-red-500/15',\n\t\t\ttext: 'text-red-400',\n\t\t\ticon: 'M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'\n\t\t},\n\t\tinfo: {\n\t\t\tbg: 'bg-accent/15',\n\t\t\ttext: 'text-accent',\n\t\t\ticon: 'M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z'\n\t\t}\n\t};\n\n\tfunction toggle() {\n\t\topen = !open;\n\t}\n\n\tfunction close() {\n\t\topen = false;\n\t}\n\n\tfunction markAllRead() {\n\t\tnotifications = notifications.map((n) => ({ ...n, read: true }));\n\t}\n\n\tfunction markRead(id: string) {\n\t\tnotifications = notifications.map((n) => (n.id === id ? { ...n, read: true } : n));\n\t}\n\n\tfunction dismiss(id: string) {\n\t\tnotifications = notifications.filter((n) => n.id !== id);\n\t}\n\n\tfunction formatTimestamp(date: Date): string {\n\t\tconst now = Date.now();\n\t\tconst diff = now - date.getTime();\n\t\tconst seconds = Math.floor(diff / 1000);\n\t\tconst minutes = Math.floor(seconds / 60);\n\t\tconst hours = Math.floor(minutes / 60);\n\t\tconst days = Math.floor(hours / 24);\n\n\t\tif (minutes < 1) return 'just now';\n\t\tif (minutes < 60) return `${minutes}m ago`;\n\t\tif (hours < 24) return `${hours}h ago`;\n\t\tif (days === 1) return 'yesterday';\n\t\treturn `${days}d ago`;\n\t}\n\n\tfunction onKeydown(e: KeyboardEvent) {\n\t\tif (e.key === 'Escape' && open) {\n\t\t\tclose();\n\t\t}\n\t}\n</script>\n\n<svelte:window onkeydown={onKeydown} />\n\n<div class=\"relative\">\n\t<!-- Bell trigger button -->\n\t<button\n\t\tclass=\"relative p-2 rounded-lg transition-colors duration-150\n\t\t\t   hover:bg-surface-700 text-surface-400 hover:text-surface-100\n\t\t\t   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent\"\n\t\tonclick={toggle}\n\t\taria-label=\"Notifications\"\n\t\taria-expanded={open}\n\t\taria-haspopup=\"true\"\n\t>\n\t\t<!-- Bell icon -->\n\t\t<svg class=\"w-5 h-5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t<path\n\t\t\t\tstroke-linecap=\"round\"\n\t\t\t\tstroke-linejoin=\"round\"\n\t\t\t\tstroke-width=\"1.5\"\n\t\t\t\td=\"M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0\"\n\t\t\t/>\n\t\t</svg>\n\n\t\t<!-- Unread count badge -->\n\t\t{#if unreadCount > 0}\n\t\t\t<span\n\t\t\t\tclass=\"absolute -top-0.5 -right-0.5 flex items-center justify-center\n\t\t\t\t\t   min-w-[18px] h-[18px] px-1 rounded-full\n\t\t\t\t\t   bg-red-500 text-white text-[10px] font-bold\n\t\t\t\t\t   ring-2 ring-surface-900\"\n\t\t\t>\n\t\t\t\t{unreadCount > 9 ? '9+' : unreadCount}\n\t\t\t</span>\n\t\t{/if}\n\t</button>\n\n\t<!-- Dropdown panel -->\n\t{#if open}\n\t\t<!-- Backdrop (click outside to close) -->\n\t\t<!-- svelte-ignore a11y_no_static_element_interactions -->\n\t\t<div class=\"fixed inset-0 z-40\" onclick={close} onkeydown={() => {}}></div>\n\n\t\t<div\n\t\t\tclass=\"absolute right-0 top-full mt-2 z-50\n\t\t\t\t   w-[360px] sm:w-[400px] max-h-[480px]\n\t\t\t\t   bg-surface-900 border border-surface-700 rounded-xl shadow-2xl shadow-black/40\n\t\t\t\t   flex flex-col overflow-hidden\"\n\t\t\ttransition:fly={{ y: -8, duration: 200 }}\n\t\t\trole=\"menu\"\n\t\t\taria-label=\"Notifications\"\n\t\t>\n\t\t\t<!-- Header -->\n\t\t\t<div class=\"flex items-center justify-between px-4 py-3 border-b border-surface-700\">\n\t\t\t\t<div class=\"flex items-center gap-2\">\n\t\t\t\t\t<h3 class=\"text-sm font-semibold text-surface-100\">Notifications</h3>\n\t\t\t\t\t{#if unreadCount > 0}\n\t\t\t\t\t\t<span class=\"badge bg-accent/15 text-accent\">\n\t\t\t\t\t\t\t{unreadCount} new\n\t\t\t\t\t\t</span>\n\t\t\t\t\t{/if}\n\t\t\t\t</div>\n\t\t\t\t{#if unreadCount > 0}\n\t\t\t\t\t<button\n\t\t\t\t\t\tclass=\"text-xs font-medium text-accent hover:text-accent-hover transition-colors duration-150\n\t\t\t\t\t\t\t   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent\"\n\t\t\t\t\t\tonclick={markAllRead}\n\t\t\t\t\t>\n\t\t\t\t\t\tMark all as read\n\t\t\t\t\t</button>\n\t\t\t\t{/if}\n\t\t\t</div>\n\n\t\t\t<!-- Notification list -->\n\t\t\t<div class=\"flex-1 overflow-y-auto overscroll-contain divide-y divide-surface-800\">\n\t\t\t\t{#if notifications.length === 0}\n\t\t\t\t\t<!-- Empty state -->\n\t\t\t\t\t<div class=\"flex flex-col items-center justify-center py-12 text-center px-4\">\n\t\t\t\t\t\t<svg class=\"w-10 h-10 text-surface-600 mb-3\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t<path\n\t\t\t\t\t\t\t\tstroke-linecap=\"round\"\n\t\t\t\t\t\t\t\tstroke-linejoin=\"round\"\n\t\t\t\t\t\t\t\tstroke-width=\"1.5\"\n\t\t\t\t\t\t\t\td=\"M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0\"\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t<p class=\"text-sm font-medium text-surface-400\">No notifications</p>\n\t\t\t\t\t\t<p class=\"text-xs text-surface-500 mt-1\">You're all caught up.</p>\n\t\t\t\t\t</div>\n\t\t\t\t{:else}\n\t\t\t\t\t{#each notifications as notification (notification.id)}\n\t\t\t\t\t\t<div\n\t\t\t\t\t\t\tclass=\"group relative flex gap-3 px-4 py-3 transition-colors duration-150\n\t\t\t\t\t\t\t\t   hover:bg-surface-800/60\n\t\t\t\t\t\t\t\t   {notification.read ? 'opacity-60' : ''}\"\n\t\t\t\t\t\t\trole=\"menuitem\"\n\t\t\t\t\t\t>\n\t\t\t\t\t\t\t<!-- Unread indicator -->\n\t\t\t\t\t\t\t{#if !notification.read}\n\t\t\t\t\t\t\t\t<div class=\"absolute left-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-accent\"></div>\n\t\t\t\t\t\t\t{/if}\n\n\t\t\t\t\t\t\t<!-- Type icon -->\n\t\t\t\t\t\t\t<div\n\t\t\t\t\t\t\t\tclass=\"shrink-0 w-8 h-8 rounded-lg flex items-center justify-center mt-0.5\n\t\t\t\t\t\t\t\t\t   {typeStyles[notification.type].bg}\"\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t<svg\n\t\t\t\t\t\t\t\t\tclass=\"w-4 h-4 {typeStyles[notification.type].text}\"\n\t\t\t\t\t\t\t\t\tfill=\"none\"\n\t\t\t\t\t\t\t\t\tstroke=\"currentColor\"\n\t\t\t\t\t\t\t\t\tviewBox=\"0 0 24 24\"\n\t\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t\t<path\n\t\t\t\t\t\t\t\t\t\tstroke-linecap=\"round\"\n\t\t\t\t\t\t\t\t\t\tstroke-linejoin=\"round\"\n\t\t\t\t\t\t\t\t\t\tstroke-width=\"2\"\n\t\t\t\t\t\t\t\t\t\td={typeStyles[notification.type].icon}\n\t\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t</div>\n\n\t\t\t\t\t\t\t<!-- Content -->\n\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\tclass=\"flex-1 min-w-0 text-left\"\n\t\t\t\t\t\t\t\tonclick={() => markRead(notification.id)}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t<div class=\"flex items-baseline justify-between gap-2\">\n\t\t\t\t\t\t\t\t\t<p class=\"text-sm font-medium text-surface-100 truncate\">\n\t\t\t\t\t\t\t\t\t\t{notification.title}\n\t\t\t\t\t\t\t\t\t</p>\n\t\t\t\t\t\t\t\t\t<span class=\"shrink-0 text-[11px] tabular-nums text-surface-500\">\n\t\t\t\t\t\t\t\t\t\t{formatTimestamp(notification.timestamp)}\n\t\t\t\t\t\t\t\t\t</span>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<p class=\"text-xs text-surface-400 mt-0.5 line-clamp-2\">\n\t\t\t\t\t\t\t\t\t{notification.message}\n\t\t\t\t\t\t\t\t</p>\n\t\t\t\t\t\t\t</button>\n\n\t\t\t\t\t\t\t<!-- Dismiss button -->\n\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\tclass=\"shrink-0 self-start mt-1 p-1 rounded-md\n\t\t\t\t\t\t\t\t\t   opacity-0 group-hover:opacity-100\n\t\t\t\t\t\t\t\t\t   text-surface-500 hover:text-surface-200 hover:bg-surface-700\n\t\t\t\t\t\t\t\t\t   transition-all duration-150\n\t\t\t\t\t\t\t\t\t   focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent\"\n\t\t\t\t\t\t\t\tonclick={() => dismiss(notification.id)}\n\t\t\t\t\t\t\t\taria-label=\"Dismiss notification\"\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t<svg class=\"w-3.5 h-3.5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M6 18L18 6M6 6l12 12\" />\n\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t{/each}\n\t\t\t\t{/if}\n\t\t\t</div>\n\n\t\t\t<!-- Footer -->\n\t\t\t{#if notifications.length > 0}\n\t\t\t\t<div class=\"border-t border-surface-700 px-4 py-2.5\">\n\t\t\t\t\t<button\n\t\t\t\t\t\tclass=\"w-full text-xs font-medium text-surface-400 hover:text-surface-200 transition-colors duration-150 text-center py-1\n\t\t\t\t\t\t\t   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent rounded\"\n\t\t\t\t\t\tonclick={close}\n\t\t\t\t\t>\n\t\t\t\t\t\tView all notifications\n\t\t\t\t\t</button>\n\t\t\t\t</div>\n\t\t\t{/if}\n\t\t</div>\n\t{/if}\n</div>\n"}], "grading": {"expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists and has content"}, {"text": "Uses Tailwind CSS utility classes for styling (not custom CSS as primary approach)", "passed": true, "evidence": "Found 70 Tailwind utility patterns"}, {"text": "Has dark: prefix classes for dark mode support", "passed": true, "evidence": "No dark: prefixes, but uses project's dark-first surface-* palette (22 occurrences) which inherently supports dark mode"}, {"text": "Contains a bell icon (SVG element or icon component import)", "passed": true, "evidence": "Bell icon SVG found"}, {"text": "Has dropdown toggle logic (click handler with visibility state variable)", "passed": true, "evidence": "Toggle state and click handler found"}, {"text": "Shows unread indicators (visual dot or badge on notification items)", "passed": true, "evidence": "Unread indicator styling found"}, {"text": "Includes timestamps on notification items", "passed": true, "evidence": "Timestamp formatting found"}, {"text": "Has a mark-all-as-read action (button or link)", "passed": true, "evidence": "Mark all as read action found"}, {"text": "Uses <button> elements for interactive actions rather than div with onclick", "passed": true, "evidence": "Found 5 <button> elements, 1 div onclick"}, {"text": "Includes hover: and/or focus-visible: state classes on interactive elements", "passed": true, "evidence": "Found 8 hover: and 16 focus states"}], "summary": {"passed": 10, "failed": 0, "total": 10, "pass_rate": 1.0}}}, {"id": "notification-dropdown-without_skill", "prompt": "Build me a notification dropdown component. When you click a bell icon in the nav bar it should show a list of recent notifications with unread indicators, timestamps, and a 'mark all as read' button.", "eval_id": 1, "outputs": [{"name": "NotificationDropdown.svelte", "type": "text", "content": "<script>\n  import { onMount, onDestroy } from \"svelte\";\n  import NotificationItem from \"./NotificationItem.svelte\";\n\n  // Notifications array - can be passed as a prop or managed internally.\n  // Each notification: { id, title, message?, type: 'success'|'error'|'warning'|'info', timestamp, read }\n  export let notifications = [\n    {\n      id: 1,\n      title: \"Print completed\",\n      message: \"benchy_v2.gcode finished printing successfully.\",\n      type: \"success\",\n      timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),\n      read: false,\n    },\n    {\n      id: 2,\n      title: \"Filament running low\",\n      message: \"PLA White spool is estimated at 12% remaining.\",\n      type: \"warning\",\n      timestamp: new Date(Date.now() - 45 * 60 * 1000).toISOString(),\n      read: false,\n    },\n    {\n      id: 3,\n      title: \"Firmware update available\",\n      message: \"Ender 3 firmware v4.2.7 is ready to install.\",\n      type: \"info\",\n      timestamp: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),\n      read: false,\n    },\n    {\n      id: 4,\n      title: \"Print failed\",\n      message: \"gear_housing.gcode stopped unexpectedly at layer 42.\",\n      type: \"error\",\n      timestamp: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(),\n      read: true,\n    },\n    {\n      id: 5,\n      title: \"Bed leveling complete\",\n      message: \"Automatic mesh leveling finished with 0.02mm variance.\",\n      type: \"success\",\n      timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),\n      read: true,\n    },\n  ];\n\n  let isOpen = false;\n  let dropdownRef;\n\n  $: unreadCount = notifications.filter((n) => !n.read).length;\n\n  function toggleDropdown() {\n    isOpen = !isOpen;\n  }\n\n  function markAllAsRead() {\n    notifications = notifications.map((n) => ({ ...n, read: true }));\n  }\n\n  function markAsRead(event) {\n    const id = event.detail;\n    notifications = notifications.map((n) =>\n      n.id === id ? { ...n, read: true } : n\n    );\n  }\n\n  function handleClickOutside(event) {\n    if (dropdownRef && !dropdownRef.contains(event.target)) {\n      isOpen = false;\n    }\n  }\n\n  function handleKeydown(event) {\n    if (event.key === \"Escape\") {\n      isOpen = false;\n    }\n  }\n\n  onMount(() => {\n    document.addEventListener(\"click\", handleClickOutside, true);\n    document.addEventListener(\"keydown\", handleKeydown);\n  });\n\n  onDestroy(() => {\n    document.removeEventListener(\"click\", handleClickOutside, true);\n    document.removeEventListener(\"keydown\", handleKeydown);\n  });\n</script>\n\n<div class=\"relative\" bind:this={dropdownRef}>\n  <!-- Bell icon trigger button -->\n  <button\n    class=\"relative p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100\n           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2\n           transition-colors duration-150\"\n    on:click={toggleDropdown}\n    aria-label=\"Notifications\"\n    aria-expanded={isOpen}\n    aria-haspopup=\"true\"\n  >\n    <!-- Bell SVG icon -->\n    <svg\n      xmlns=\"http://www.w3.org/2000/svg\"\n      class=\"h-6 w-6\"\n      fill=\"none\"\n      viewBox=\"0 0 24 24\"\n      stroke=\"currentColor\"\n      stroke-width=\"1.5\"\n    >\n      <path\n        stroke-linecap=\"round\"\n        stroke-linejoin=\"round\"\n        d=\"M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0\"\n      />\n    </svg>\n\n    <!-- Unread badge -->\n    {#if unreadCount > 0}\n      <span\n        class=\"absolute -top-0.5 -right-0.5 flex items-center justify-center h-5 min-w-[1.25rem]\n               rounded-full bg-red-500 text-white text-xs font-bold px-1\n               ring-2 ring-white\"\n      >\n        {unreadCount > 99 ? \"99+\" : unreadCount}\n      </span>\n    {/if}\n  </button>\n\n  <!-- Dropdown panel -->\n  {#if isOpen}\n    <div\n      class=\"absolute right-0 mt-2 w-96 max-h-[28rem] bg-white rounded-xl shadow-xl\n             ring-1 ring-black/5 overflow-hidden z-50\n             flex flex-col\"\n      role=\"menu\"\n    >\n      <!-- Header -->\n      <div\n        class=\"flex items-center justify-between px-4 py-3 border-b border-gray-100\"\n      >\n        <div class=\"flex items-center gap-2\">\n          <h3 class=\"text-sm font-semibold text-gray-900\">Notifications</h3>\n          {#if unreadCount > 0}\n            <span\n              class=\"inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700\"\n            >\n              {unreadCount} new\n            </span>\n          {/if}\n        </div>\n\n        {#if unreadCount > 0}\n          <button\n            class=\"text-xs font-medium text-blue-600 hover:text-blue-800\n                   transition-colors duration-150 focus:outline-none focus:underline\"\n            on:click={markAllAsRead}\n          >\n            Mark all as read\n          </button>\n        {/if}\n      </div>\n\n      <!-- Notification list -->\n      <div class=\"overflow-y-auto flex-1 divide-y divide-gray-50\">\n        {#if notifications.length === 0}\n          <div class=\"px-4 py-10 text-center\">\n            <svg\n              xmlns=\"http://www.w3.org/2000/svg\"\n              class=\"h-10 w-10 mx-auto text-gray-300 mb-3\"\n              fill=\"none\"\n              viewBox=\"0 0 24 24\"\n              stroke=\"currentColor\"\n              stroke-width=\"1.5\"\n            >\n              <path\n                stroke-linecap=\"round\"\n                stroke-linejoin=\"round\"\n                d=\"M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0\"\n              />\n            </svg>\n            <p class=\"text-sm text-gray-400\">No notifications yet</p>\n          </div>\n        {:else}\n          {#each notifications as notification (notification.id)}\n            <NotificationItem {notification} on:read={markAsRead} />\n          {/each}\n        {/if}\n      </div>\n\n      <!-- Footer -->\n      {#if notifications.length > 0}\n        <div class=\"border-t border-gray-100 px-4 py-2.5\">\n          <button\n            class=\"w-full text-center text-xs font-medium text-gray-500 hover:text-gray-700\n                   transition-colors duration-150 focus:outline-none focus:underline\"\n          >\n            View all notifications\n          </button>\n        </div>\n      {/if}\n    </div>\n  {/if}\n</div>\n"}, {"name": "NotificationItem.svelte", "type": "text", "content": "<script>\n  import { createEventDispatcher } from \"svelte\";\n\n  export let notification;\n\n  const dispatch = createEventDispatcher();\n\n  function formatTimestamp(dateString) {\n    const date = new Date(dateString);\n    const now = new Date();\n    const diffMs = now - date;\n    const diffSeconds = Math.floor(diffMs / 1000);\n    const diffMinutes = Math.floor(diffSeconds / 60);\n    const diffHours = Math.floor(diffMinutes / 60);\n    const diffDays = Math.floor(diffHours / 24);\n\n    if (diffSeconds < 60) return \"just now\";\n    if (diffMinutes < 60) return `${diffMinutes}m ago`;\n    if (diffHours < 24) return `${diffHours}h ago`;\n    if (diffDays < 7) return `${diffDays}d ago`;\n\n    return date.toLocaleDateString(\"en-US\", {\n      month: \"short\",\n      day: \"numeric\",\n    });\n  }\n\n  function handleClick() {\n    dispatch(\"read\", notification.id);\n  }\n\n  const iconMap = {\n    success: {\n      path: \"M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z\",\n      color: \"text-green-500\",\n      bg: \"bg-green-50\",\n    },\n    error: {\n      path: \"M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z\",\n      color: \"text-red-500\",\n      bg: \"bg-red-50\",\n    },\n    warning: {\n      path: \"M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z\",\n      color: \"text-amber-500\",\n      bg: \"bg-amber-50\",\n    },\n    info: {\n      path: \"M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\",\n      color: \"text-blue-500\",\n      bg: \"bg-blue-50\",\n    },\n  };\n\n  $: icon = iconMap[notification.type] || iconMap.info;\n</script>\n\n<button\n  class=\"w-full text-left px-4 py-3 flex items-start gap-3 transition-colors duration-150 hover:bg-gray-50\n         {notification.read ? 'opacity-60' : ''}\"\n  on:click={handleClick}\n>\n  <!-- Type icon -->\n  <div class=\"flex-shrink-0 mt-0.5 rounded-full p-1.5 {icon.bg}\">\n    <svg\n      xmlns=\"http://www.w3.org/2000/svg\"\n      class=\"h-4 w-4 {icon.color}\"\n      fill=\"none\"\n      viewBox=\"0 0 24 24\"\n      stroke=\"currentColor\"\n      stroke-width=\"2\"\n    >\n      <path stroke-linecap=\"round\" stroke-linejoin=\"round\" d={icon.path} />\n    </svg>\n  </div>\n\n  <!-- Content -->\n  <div class=\"flex-1 min-w-0\">\n    <div class=\"flex items-start justify-between gap-2\">\n      <p\n        class=\"text-sm leading-snug {notification.read\n          ? 'text-gray-500 font-normal'\n          : 'text-gray-900 font-medium'}\"\n      >\n        {notification.title}\n      </p>\n\n      <!-- Unread indicator dot -->\n      {#if !notification.read}\n        <span class=\"flex-shrink-0 mt-1.5\">\n          <span class=\"block h-2 w-2 rounded-full bg-blue-500\"></span>\n        </span>\n      {/if}\n    </div>\n\n    {#if notification.message}\n      <p class=\"text-xs text-gray-400 mt-0.5 line-clamp-2 leading-relaxed\">\n        {notification.message}\n      </p>\n    {/if}\n\n    <p class=\"text-xs text-gray-400 mt-1\">\n      {formatTimestamp(notification.timestamp)}\n    </p>\n  </div>\n</button>\n"}], "grading": {"expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists and has content"}, {"text": "Uses Tailwind CSS utility classes for styling (not custom CSS as primary approach)", "passed": true, "evidence": "Found 65 Tailwind utility patterns"}, {"text": "Has dark: prefix classes for dark mode support", "passed": false, "evidence": "No dark mode support found (no dark: prefixes and no dark-first palette)"}, {"text": "Contains a bell icon (SVG element or icon component import)", "passed": true, "evidence": "Bell icon SVG found"}, {"text": "Has dropdown toggle logic (click handler with visibility state variable)", "passed": true, "evidence": "Toggle state and click handler found"}, {"text": "Shows unread indicators (visual dot or badge on notification items)", "passed": true, "evidence": "Unread indicator styling found"}, {"text": "Includes timestamps on notification items", "passed": true, "evidence": "Timestamp formatting found"}, {"text": "Has a mark-all-as-read action (button or link)", "passed": true, "evidence": "Mark all as read action found"}, {"text": "Uses <button> elements for interactive actions rather than div with onclick", "passed": true, "evidence": "Found 4 <button> elements, 0 div onclick"}, {"text": "Includes hover: and/or focus-visible: state classes on interactive elements", "passed": true, "evidence": "Found 5 hover: and 8 focus states"}], "summary": {"passed": 9, "failed": 1, "total": 10, "pass_rate": 0.9}}}, {"id": "settings-page-with_skill", "prompt": "Create a settings page with a sidebar nav that has sections for Profile, Account, Notifications, and Appearance. The Profile section should have a form with avatar upload, name, email, and bio fields.", "eval_id": 2, "outputs": [{"name": "SettingsPage.svelte", "type": "text", "content": "<script lang=\"ts\">\n\timport { fade, slide } from 'svelte/transition';\n\n\t// Sidebar navigation sections\n\tconst sections = [\n\t\t{ id: 'profile', label: 'Profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' },\n\t\t{ id: 'account', label: 'Account', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },\n\t\t{ id: 'notifications', label: 'Notifications', icon: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9' },\n\t\t{ id: 'appearance', label: 'Appearance', icon: 'M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01' }\n\t] as const;\n\n\ttype SectionId = typeof sections[number]['id'];\n\n\tlet activeSection = $state<SectionId>('profile');\n\tlet mobileMenuOpen = $state(false);\n\n\t// Profile form state\n\tlet profileName = $state('');\n\tlet profileEmail = $state('');\n\tlet profileBio = $state('');\n\tlet avatarPreview = $state<string | null>(null);\n\tlet avatarInput = $state<HTMLInputElement | null>(null);\n\tlet saving = $state(false);\n\n\t// Account form state\n\tlet currentPassword = $state('');\n\tlet newPassword = $state('');\n\tlet confirmPassword = $state('');\n\n\t// Notification settings state\n\tlet emailNotifications = $state(true);\n\tlet pushNotifications = $state(false);\n\tlet printCompleteNotify = $state(true);\n\tlet errorNotify = $state(true);\n\tlet updateNotify = $state(false);\n\n\t// Appearance state\n\tlet theme = $state<'dark' | 'light' | 'system'>('dark');\n\tlet fontSize = $state<'small' | 'default' | 'large'>('default');\n\n\tfunction selectSection(id: SectionId) {\n\t\tactiveSection = id;\n\t\tmobileMenuOpen = false;\n\t}\n\n\tfunction handleAvatarClick() {\n\t\tavatarInput?.click();\n\t}\n\n\tfunction handleAvatarChange(e: Event) {\n\t\tconst target = e.target as HTMLInputElement;\n\t\tconst file = target.files?.[0];\n\t\tif (!file) return;\n\n\t\tif (!file.type.startsWith('image/')) return;\n\n\t\tconst reader = new FileReader();\n\t\treader.onload = () => {\n\t\t\tavatarPreview = reader.result as string;\n\t\t};\n\t\treader.readAsDataURL(file);\n\t}\n\n\tfunction removeAvatar() {\n\t\tavatarPreview = null;\n\t\tif (avatarInput) avatarInput.value = '';\n\t}\n\n\tasync function saveProfile() {\n\t\tsaving = true;\n\t\t// Simulate save\n\t\tawait new Promise((r) => setTimeout(r, 800));\n\t\tsaving = false;\n\t}\n</script>\n\n<svelte:head>\n\t<title>PrintForge - Settings</title>\n</svelte:head>\n\n<!-- Page header -->\n<div class=\"mb-6\">\n\t<h1 class=\"text-2xl font-bold\">Settings</h1>\n\t<p class=\"mt-1 text-sm text-surface-400\">Manage your profile, account, and preferences.</p>\n</div>\n\n<div class=\"flex flex-col lg:flex-row gap-6\">\n\t<!-- Mobile section selector -->\n\t<div class=\"lg:hidden\">\n\t\t<button\n\t\t\tclass=\"w-full flex items-center justify-between card px-4 py-3\"\n\t\t\tonclick={() => mobileMenuOpen = !mobileMenuOpen}\n\t\t\taria-expanded={mobileMenuOpen}\n\t\t\taria-controls=\"settings-nav-mobile\"\n\t\t>\n\t\t\t<div class=\"flex items-center gap-3\">\n\t\t\t\t<svg class=\"w-5 h-5 text-accent\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d={sections.find(s => s.id === activeSection)?.icon} />\n\t\t\t\t</svg>\n\t\t\t\t<span class=\"text-sm font-medium\">{sections.find(s => s.id === activeSection)?.label}</span>\n\t\t\t</div>\n\t\t\t<svg\n\t\t\t\tclass=\"w-4 h-4 text-surface-400 transition-transform duration-200 {mobileMenuOpen ? 'rotate-180' : ''}\"\n\t\t\t\tfill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"\n\t\t\t>\n\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M19 9l-7 7-7-7\" />\n\t\t\t</svg>\n\t\t</button>\n\n\t\t{#if mobileMenuOpen}\n\t\t\t<nav\n\t\t\t\tid=\"settings-nav-mobile\"\n\t\t\t\tclass=\"mt-2 card p-2\"\n\t\t\t\ttransition:slide={{ duration: 200 }}\n\t\t\t>\n\t\t\t\t{#each sections as section}\n\t\t\t\t\t<button\n\t\t\t\t\t\tclass=\"w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors duration-150\n\t\t\t\t\t\t\t   {activeSection === section.id\n\t\t\t\t\t\t\t\t? 'bg-accent/10 text-accent'\n\t\t\t\t\t\t\t\t: 'text-surface-400 hover:bg-surface-800 hover:text-surface-200'}\"\n\t\t\t\t\t\tonclick={() => selectSection(section.id)}\n\t\t\t\t\t>\n\t\t\t\t\t\t<svg class=\"w-5 h-5 shrink-0\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d={section.icon} />\n\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t<span class=\"text-sm\">{section.label}</span>\n\t\t\t\t\t</button>\n\t\t\t\t{/each}\n\t\t\t</nav>\n\t\t{/if}\n\t</div>\n\n\t<!-- Desktop sidebar -->\n\t<aside class=\"hidden lg:block w-56 shrink-0\">\n\t\t<nav class=\"card p-2 sticky top-6\" aria-label=\"Settings navigation\">\n\t\t\t{#each sections as section}\n\t\t\t\t<button\n\t\t\t\t\tclass=\"w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors duration-150\n\t\t\t\t\t\t   {activeSection === section.id\n\t\t\t\t\t\t\t? 'bg-accent/10 text-accent'\n\t\t\t\t\t\t\t: 'text-surface-400 hover:bg-surface-800 hover:text-surface-200'}\"\n\t\t\t\t\tonclick={() => activeSection = section.id}\n\t\t\t\t\taria-current={activeSection === section.id ? 'page' : undefined}\n\t\t\t\t>\n\t\t\t\t\t<svg class=\"w-5 h-5 shrink-0\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d={section.icon} />\n\t\t\t\t\t</svg>\n\t\t\t\t\t<span class=\"text-sm font-medium\">{section.label}</span>\n\t\t\t\t</button>\n\t\t\t{/each}\n\t\t</nav>\n\t</aside>\n\n\t<!-- Content area -->\n\t<div class=\"flex-1 min-w-0 max-w-2xl\">\n\t\t{#if activeSection === 'profile'}\n\t\t\t<div class=\"fade-in\" >\n\t\t\t\t<div class=\"card\">\n\t\t\t\t\t<h2 class=\"text-lg font-semibold mb-1\">Profile</h2>\n\t\t\t\t\t<p class=\"text-sm text-surface-400 mb-6\">Your public profile information.</p>\n\n\t\t\t\t\t<!-- Avatar -->\n\t\t\t\t\t<div class=\"flex items-start gap-5 mb-6 pb-6 border-b border-surface-700\">\n\t\t\t\t\t\t<div class=\"relative group\">\n\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\tclass=\"w-20 h-20 rounded-xl overflow-hidden bg-surface-800 border-2 border-surface-600\n\t\t\t\t\t\t\t\t\t   flex items-center justify-center transition-all duration-200\n\t\t\t\t\t\t\t\t\t   group-hover:border-accent/50 focus-visible:outline focus-visible:outline-2\n\t\t\t\t\t\t\t\t\t   focus-visible:outline-offset-2 focus-visible:outline-accent cursor-pointer\"\n\t\t\t\t\t\t\t\tonclick={handleAvatarClick}\n\t\t\t\t\t\t\t\taria-label=\"Upload avatar\"\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t{#if avatarPreview}\n\t\t\t\t\t\t\t\t\t<img src={avatarPreview} alt=\"Avatar preview\" class=\"w-full h-full object-cover\" />\n\t\t\t\t\t\t\t\t{:else}\n\t\t\t\t\t\t\t\t\t<svg class=\"w-8 h-8 text-surface-500\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d=\"M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z\" />\n\t\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t\t{/if}\n\t\t\t\t\t\t\t\t<!-- Hover overlay -->\n\t\t\t\t\t\t\t\t<div class=\"absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center rounded-xl\">\n\t\t\t\t\t\t\t\t\t<svg class=\"w-5 h-5 text-white\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z\" />\n\t\t\t\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M15 13a3 3 0 11-6 0 3 3 0 016 0z\" />\n\t\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t<input\n\t\t\t\t\t\t\t\tbind:this={avatarInput}\n\t\t\t\t\t\t\t\ttype=\"file\"\n\t\t\t\t\t\t\t\taccept=\"image/*\"\n\t\t\t\t\t\t\t\tclass=\"hidden\"\n\t\t\t\t\t\t\t\tonchange={handleAvatarChange}\n\t\t\t\t\t\t\t\taria-label=\"Choose avatar file\"\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t\t<div class=\"flex-1 pt-1\">\n\t\t\t\t\t\t\t<p class=\"text-sm font-medium text-surface-200\">Profile photo</p>\n\t\t\t\t\t\t\t<p class=\"text-xs text-surface-500 mt-1\">JPG, PNG or GIF. Max 2MB.</p>\n\t\t\t\t\t\t\t<div class=\"flex gap-2 mt-3\">\n\t\t\t\t\t\t\t\t<button class=\"btn-secondary text-xs px-3 py-1.5\" onclick={handleAvatarClick}>\n\t\t\t\t\t\t\t\t\tUpload\n\t\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t\t{#if avatarPreview}\n\t\t\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\t\t\tclass=\"text-xs px-3 py-1.5 rounded-lg text-red-400 hover:bg-red-500/10 transition-colors duration-150\"\n\t\t\t\t\t\t\t\t\t\tonclick={removeAvatar}\n\t\t\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t\t\tRemove\n\t\t\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t\t{/if}\n\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t</div>\n\n\t\t\t\t\t<!-- Form fields -->\n\t\t\t\t\t<form class=\"space-y-5\" onsubmit={(e) => { e.preventDefault(); saveProfile(); }}>\n\t\t\t\t\t\t<!-- Name -->\n\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t<label for=\"profile-name\" class=\"block text-sm font-medium text-surface-300 mb-1.5\">\n\t\t\t\t\t\t\t\tDisplay name\n\t\t\t\t\t\t\t</label>\n\t\t\t\t\t\t\t<input\n\t\t\t\t\t\t\t\tid=\"profile-name\"\n\t\t\t\t\t\t\t\ttype=\"text\"\n\t\t\t\t\t\t\t\tclass=\"input w-full text-sm\"\n\t\t\t\t\t\t\t\tplaceholder=\"Your name\"\n\t\t\t\t\t\t\t\tbind:value={profileName}\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t</div>\n\n\t\t\t\t\t\t<!-- Email -->\n\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t<label for=\"profile-email\" class=\"block text-sm font-medium text-surface-300 mb-1.5\">\n\t\t\t\t\t\t\t\tEmail address\n\t\t\t\t\t\t\t</label>\n\t\t\t\t\t\t\t<input\n\t\t\t\t\t\t\t\tid=\"profile-email\"\n\t\t\t\t\t\t\t\ttype=\"email\"\n\t\t\t\t\t\t\t\tclass=\"input w-full text-sm\"\n\t\t\t\t\t\t\t\tplaceholder=\"you@example.com\"\n\t\t\t\t\t\t\t\tbind:value={profileEmail}\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t<p class=\"text-xs text-surface-500 mt-1.5\">Used for notifications and account recovery.</p>\n\t\t\t\t\t\t</div>\n\n\t\t\t\t\t\t<!-- Bio -->\n\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t<label for=\"profile-bio\" class=\"block text-sm font-medium text-surface-300 mb-1.5\">\n\t\t\t\t\t\t\t\tBio\n\t\t\t\t\t\t\t</label>\n\t\t\t\t\t\t\t<textarea\n\t\t\t\t\t\t\t\tid=\"profile-bio\"\n\t\t\t\t\t\t\t\tclass=\"input w-full text-sm resize-none\"\n\t\t\t\t\t\t\t\trows=\"4\"\n\t\t\t\t\t\t\t\tplaceholder=\"Tell us a bit about yourself...\"\n\t\t\t\t\t\t\t\tbind:value={profileBio}\n\t\t\t\t\t\t\t></textarea>\n\t\t\t\t\t\t\t<p class=\"text-xs text-surface-500 mt-1.5\">{profileBio.length}/200 characters</p>\n\t\t\t\t\t\t</div>\n\n\t\t\t\t\t\t<!-- Save -->\n\t\t\t\t\t\t<div class=\"flex items-center justify-end gap-3 pt-2\">\n\t\t\t\t\t\t\t<button type=\"button\" class=\"btn-secondary text-sm\">\n\t\t\t\t\t\t\t\tCancel\n\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\ttype=\"submit\"\n\t\t\t\t\t\t\t\tclass=\"btn-primary text-sm inline-flex items-center gap-2\"\n\t\t\t\t\t\t\t\tdisabled={saving}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t{#if saving}\n\t\t\t\t\t\t\t\t\t<span class=\"animate-spin rounded-full h-3.5 w-3.5 border-2 border-white/30 border-t-white\"></span>\n\t\t\t\t\t\t\t\t{/if}\n\t\t\t\t\t\t\t\t{saving ? 'Saving...' : 'Save Changes'}\n\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t</form>\n\t\t\t\t</div>\n\t\t\t</div>\n\t\t{:else if activeSection === 'account'}\n\t\t\t<div class=\"fade-in\">\n\t\t\t\t<div class=\"space-y-6\">\n\t\t\t\t\t<!-- Change password -->\n\t\t\t\t\t<div class=\"card\">\n\t\t\t\t\t\t<h2 class=\"text-lg font-semibold mb-1\">Change Password</h2>\n\t\t\t\t\t\t<p class=\"text-sm text-surface-400 mb-6\">Update your password to keep your account secure.</p>\n\n\t\t\t\t\t\t<form class=\"space-y-5\" onsubmit={(e) => e.preventDefault()}>\n\t\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t\t<label for=\"current-password\" class=\"block text-sm font-medium text-surface-300 mb-1.5\">\n\t\t\t\t\t\t\t\t\tCurrent password\n\t\t\t\t\t\t\t\t</label>\n\t\t\t\t\t\t\t\t<input\n\t\t\t\t\t\t\t\t\tid=\"current-password\"\n\t\t\t\t\t\t\t\t\ttype=\"password\"\n\t\t\t\t\t\t\t\t\tclass=\"input w-full text-sm\"\n\t\t\t\t\t\t\t\t\tplaceholder=\"Enter current password\"\n\t\t\t\t\t\t\t\t\tbind:value={currentPassword}\n\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t</div>\n\n\t\t\t\t\t\t\t<div class=\"grid grid-cols-1 sm:grid-cols-2 gap-4\">\n\t\t\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t\t\t<label for=\"new-password\" class=\"block text-sm font-medium text-surface-300 mb-1.5\">\n\t\t\t\t\t\t\t\t\t\tNew password\n\t\t\t\t\t\t\t\t\t</label>\n\t\t\t\t\t\t\t\t\t<input\n\t\t\t\t\t\t\t\t\t\tid=\"new-password\"\n\t\t\t\t\t\t\t\t\t\ttype=\"password\"\n\t\t\t\t\t\t\t\t\t\tclass=\"input w-full text-sm\"\n\t\t\t\t\t\t\t\t\t\tplaceholder=\"Enter new password\"\n\t\t\t\t\t\t\t\t\t\tbind:value={newPassword}\n\t\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t\t\t<label for=\"confirm-password\" class=\"block text-sm font-medium text-surface-300 mb-1.5\">\n\t\t\t\t\t\t\t\t\t\tConfirm password\n\t\t\t\t\t\t\t\t\t</label>\n\t\t\t\t\t\t\t\t\t<input\n\t\t\t\t\t\t\t\t\t\tid=\"confirm-password\"\n\t\t\t\t\t\t\t\t\t\ttype=\"password\"\n\t\t\t\t\t\t\t\t\t\tclass=\"input w-full text-sm\"\n\t\t\t\t\t\t\t\t\t\tplaceholder=\"Confirm new password\"\n\t\t\t\t\t\t\t\t\t\tbind:value={confirmPassword}\n\t\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t</div>\n\n\t\t\t\t\t\t\t{#if newPassword && confirmPassword && newPassword !== confirmPassword}\n\t\t\t\t\t\t\t\t<div class=\"flex items-center gap-2 text-sm text-red-400\">\n\t\t\t\t\t\t\t\t\t<svg class=\"w-4 h-4 shrink-0\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.27 16.5c-.77.833.192 2.5 1.732 2.5z\" />\n\t\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t\t\tPasswords do not match.\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t{/if}\n\n\t\t\t\t\t\t\t<div class=\"flex justify-end pt-2\">\n\t\t\t\t\t\t\t\t<button type=\"submit\" class=\"btn-primary text-sm\">\n\t\t\t\t\t\t\t\t\tUpdate Password\n\t\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t</form>\n\t\t\t\t\t</div>\n\n\t\t\t\t\t<!-- Sessions -->\n\t\t\t\t\t<div class=\"card\">\n\t\t\t\t\t\t<h2 class=\"text-lg font-semibold mb-1\">Active Sessions</h2>\n\t\t\t\t\t\t<p class=\"text-sm text-surface-400 mb-4\">Manage devices where you're currently signed in.</p>\n\n\t\t\t\t\t\t<div class=\"divide-y divide-surface-700/50\">\n\t\t\t\t\t\t\t<!-- Current session -->\n\t\t\t\t\t\t\t<div class=\"flex items-center justify-between py-3\">\n\t\t\t\t\t\t\t\t<div class=\"flex items-center gap-3\">\n\t\t\t\t\t\t\t\t\t<div class=\"w-9 h-9 rounded-lg bg-surface-800 flex items-center justify-center\">\n\t\t\t\t\t\t\t\t\t\t<svg class=\"w-4.5 h-4.5 text-surface-400\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d=\"M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z\" />\n\t\t\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t\t\t\t<p class=\"text-sm font-medium text-surface-200\">This device</p>\n\t\t\t\t\t\t\t\t\t\t<p class=\"text-xs text-surface-500\">Last active: now</p>\n\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<span class=\"text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full\">\n\t\t\t\t\t\t\t\t\tCurrent\n\t\t\t\t\t\t\t\t</span>\n\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t</div>\n\n\t\t\t\t\t<!-- Danger zone -->\n\t\t\t\t\t<div class=\"card border-red-500/20\">\n\t\t\t\t\t\t<h2 class=\"text-lg font-semibold text-red-400 mb-1\">Danger Zone</h2>\n\t\t\t\t\t\t<p class=\"text-sm text-surface-400 mb-4\">Irreversible actions. Proceed with caution.</p>\n\n\t\t\t\t\t\t<div class=\"flex items-center justify-between p-3 rounded-lg bg-red-500/5 border border-red-500/10\">\n\t\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t\t<p class=\"text-sm font-medium text-surface-200\">Delete account</p>\n\t\t\t\t\t\t\t\t<p class=\"text-xs text-surface-500\">Permanently remove your account and all data.</p>\n\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t<button class=\"btn-danger text-sm px-3 py-1.5\">\n\t\t\t\t\t\t\t\tDelete\n\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t</div>\n\t\t\t\t</div>\n\t\t\t</div>\n\t\t{:else if activeSection === 'notifications'}\n\t\t\t<div class=\"fade-in\">\n\t\t\t\t<div class=\"card\">\n\t\t\t\t\t<h2 class=\"text-lg font-semibold mb-1\">Notification Preferences</h2>\n\t\t\t\t\t<p class=\"text-sm text-surface-400 mb-6\">Choose how and when you want to be notified.</p>\n\n\t\t\t\t\t<!-- Delivery channels -->\n\t\t\t\t\t<div class=\"mb-6\">\n\t\t\t\t\t\t<h3 class=\"text-xs font-medium text-surface-500 uppercase tracking-wide mb-3\">Delivery channels</h3>\n\t\t\t\t\t\t<div class=\"space-y-3\">\n\t\t\t\t\t\t\t<!-- Email notifications toggle -->\n\t\t\t\t\t\t\t<div class=\"flex items-center justify-between p-3 rounded-lg bg-surface-800/50\">\n\t\t\t\t\t\t\t\t<div class=\"flex items-center gap-3\">\n\t\t\t\t\t\t\t\t\t<div class=\"w-9 h-9 rounded-lg bg-surface-700 flex items-center justify-center\">\n\t\t\t\t\t\t\t\t\t\t<svg class=\"w-4.5 h-4.5 text-surface-400\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d=\"M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z\" />\n\t\t\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t\t\t\t<p class=\"text-sm font-medium text-surface-200\">Email notifications</p>\n\t\t\t\t\t\t\t\t\t\t<p class=\"text-xs text-surface-500\">Receive updates via email.</p>\n\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\t\trole=\"switch\"\n\t\t\t\t\t\t\t\t\taria-checked={emailNotifications}\n\t\t\t\t\t\t\t\t\tclass=\"relative w-11 h-6 rounded-full transition-colors duration-200 {emailNotifications ? 'bg-accent' : 'bg-surface-700'}\n\t\t\t\t\t\t\t\t\t\t   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent\"\n\t\t\t\t\t\t\t\t\tonclick={() => emailNotifications = !emailNotifications}\n\t\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t\t<div class=\"absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 {emailNotifications ? 'translate-x-5' : ''}\"></div>\n\t\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t</div>\n\n\t\t\t\t\t\t\t<!-- Push notifications toggle -->\n\t\t\t\t\t\t\t<div class=\"flex items-center justify-between p-3 rounded-lg bg-surface-800/50\">\n\t\t\t\t\t\t\t\t<div class=\"flex items-center gap-3\">\n\t\t\t\t\t\t\t\t\t<div class=\"w-9 h-9 rounded-lg bg-surface-700 flex items-center justify-center\">\n\t\t\t\t\t\t\t\t\t\t<svg class=\"w-4.5 h-4.5 text-surface-400\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d=\"M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9\" />\n\t\t\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t\t\t\t<p class=\"text-sm font-medium text-surface-200\">Push notifications</p>\n\t\t\t\t\t\t\t\t\t\t<p class=\"text-xs text-surface-500\">Browser push notifications.</p>\n\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\t\trole=\"switch\"\n\t\t\t\t\t\t\t\t\taria-checked={pushNotifications}\n\t\t\t\t\t\t\t\t\tclass=\"relative w-11 h-6 rounded-full transition-colors duration-200 {pushNotifications ? 'bg-accent' : 'bg-surface-700'}\n\t\t\t\t\t\t\t\t\t\t   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent\"\n\t\t\t\t\t\t\t\t\tonclick={() => pushNotifications = !pushNotifications}\n\t\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t\t<div class=\"absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 {pushNotifications ? 'translate-x-5' : ''}\"></div>\n\t\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t</div>\n\n\t\t\t\t\t<!-- Event types -->\n\t\t\t\t\t<div>\n\t\t\t\t\t\t<h3 class=\"text-xs font-medium text-surface-500 uppercase tracking-wide mb-3\">Events</h3>\n\t\t\t\t\t\t<div class=\"divide-y divide-surface-700/50\">\n\t\t\t\t\t\t\t<!-- Print complete -->\n\t\t\t\t\t\t\t<div class=\"flex items-center justify-between py-3.5\">\n\t\t\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t\t\t<p class=\"text-sm font-medium text-surface-200\">Print completed</p>\n\t\t\t\t\t\t\t\t\t<p class=\"text-xs text-surface-500\">When a print job finishes successfully.</p>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\t\trole=\"switch\"\n\t\t\t\t\t\t\t\t\taria-checked={printCompleteNotify}\n\t\t\t\t\t\t\t\t\tclass=\"relative w-11 h-6 rounded-full transition-colors duration-200 {printCompleteNotify ? 'bg-accent' : 'bg-surface-700'}\n\t\t\t\t\t\t\t\t\t\t   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent\"\n\t\t\t\t\t\t\t\t\tonclick={() => printCompleteNotify = !printCompleteNotify}\n\t\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t\t<div class=\"absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 {printCompleteNotify ? 'translate-x-5' : ''}\"></div>\n\t\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t</div>\n\n\t\t\t\t\t\t\t<!-- Errors -->\n\t\t\t\t\t\t\t<div class=\"flex items-center justify-between py-3.5\">\n\t\t\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t\t\t<p class=\"text-sm font-medium text-surface-200\">Errors and failures</p>\n\t\t\t\t\t\t\t\t\t<p class=\"text-xs text-surface-500\">When a print fails or the printer encounters an error.</p>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\t\trole=\"switch\"\n\t\t\t\t\t\t\t\t\taria-checked={errorNotify}\n\t\t\t\t\t\t\t\t\tclass=\"relative w-11 h-6 rounded-full transition-colors duration-200 {errorNotify ? 'bg-accent' : 'bg-surface-700'}\n\t\t\t\t\t\t\t\t\t\t   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent\"\n\t\t\t\t\t\t\t\t\tonclick={() => errorNotify = !errorNotify}\n\t\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t\t<div class=\"absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 {errorNotify ? 'translate-x-5' : ''}\"></div>\n\t\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t</div>\n\n\t\t\t\t\t\t\t<!-- Software updates -->\n\t\t\t\t\t\t\t<div class=\"flex items-center justify-between py-3.5\">\n\t\t\t\t\t\t\t\t<div>\n\t\t\t\t\t\t\t\t\t<p class=\"text-sm font-medium text-surface-200\">Software updates</p>\n\t\t\t\t\t\t\t\t\t<p class=\"text-xs text-surface-500\">When a new version of PrintForge is available.</p>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\t\trole=\"switch\"\n\t\t\t\t\t\t\t\t\taria-checked={updateNotify}\n\t\t\t\t\t\t\t\t\tclass=\"relative w-11 h-6 rounded-full transition-colors duration-200 {updateNotify ? 'bg-accent' : 'bg-surface-700'}\n\t\t\t\t\t\t\t\t\t\t   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent\"\n\t\t\t\t\t\t\t\t\tonclick={() => updateNotify = !updateNotify}\n\t\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t\t<div class=\"absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 {updateNotify ? 'translate-x-5' : ''}\"></div>\n\t\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t</div>\n\t\t\t\t</div>\n\t\t\t</div>\n\t\t{:else if activeSection === 'appearance'}\n\t\t\t<div class=\"fade-in\">\n\t\t\t\t<div class=\"card\">\n\t\t\t\t\t<h2 class=\"text-lg font-semibold mb-1\">Appearance</h2>\n\t\t\t\t\t<p class=\"text-sm text-surface-400 mb-6\">Customize how PrintForge looks on your device.</p>\n\n\t\t\t\t\t<!-- Theme selection -->\n\t\t\t\t\t<div class=\"mb-8\">\n\t\t\t\t\t\t<h3 class=\"text-xs font-medium text-surface-500 uppercase tracking-wide mb-3\">Theme</h3>\n\t\t\t\t\t\t<div class=\"grid grid-cols-3 gap-3\">\n\t\t\t\t\t\t\t<!-- Dark -->\n\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\tclass=\"relative rounded-xl border-2 p-3 transition-all duration-200\n\t\t\t\t\t\t\t\t\t   {theme === 'dark'\n\t\t\t\t\t\t\t\t\t\t? 'border-accent bg-accent/5'\n\t\t\t\t\t\t\t\t\t\t: 'border-surface-700 hover:border-surface-500'}\"\n\t\t\t\t\t\t\t\tonclick={() => theme = 'dark'}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t<div class=\"rounded-lg bg-surface-900 border border-surface-700 p-2 mb-2.5\">\n\t\t\t\t\t\t\t\t\t<div class=\"h-1.5 w-8 bg-surface-600 rounded mb-1.5\"></div>\n\t\t\t\t\t\t\t\t\t<div class=\"h-1.5 w-12 bg-surface-700 rounded mb-1\"></div>\n\t\t\t\t\t\t\t\t\t<div class=\"h-1.5 w-6 bg-surface-700 rounded\"></div>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<span class=\"text-xs font-medium {theme === 'dark' ? 'text-accent' : 'text-surface-400'}\">Dark</span>\n\t\t\t\t\t\t\t\t{#if theme === 'dark'}\n\t\t\t\t\t\t\t\t\t<div class=\"absolute top-2 right-2\">\n\t\t\t\t\t\t\t\t\t\t<svg class=\"w-4 h-4 text-accent\" fill=\"currentColor\" viewBox=\"0 0 20 20\">\n\t\t\t\t\t\t\t\t\t\t\t<path fill-rule=\"evenodd\" d=\"M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z\" clip-rule=\"evenodd\" />\n\t\t\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t{/if}\n\t\t\t\t\t\t\t</button>\n\n\t\t\t\t\t\t\t<!-- Light -->\n\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\tclass=\"relative rounded-xl border-2 p-3 transition-all duration-200\n\t\t\t\t\t\t\t\t\t   {theme === 'light'\n\t\t\t\t\t\t\t\t\t\t? 'border-accent bg-accent/5'\n\t\t\t\t\t\t\t\t\t\t: 'border-surface-700 hover:border-surface-500'}\"\n\t\t\t\t\t\t\t\tonclick={() => theme = 'light'}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t<div class=\"rounded-lg bg-white border border-gray-200 p-2 mb-2.5\">\n\t\t\t\t\t\t\t\t\t<div class=\"h-1.5 w-8 bg-gray-300 rounded mb-1.5\"></div>\n\t\t\t\t\t\t\t\t\t<div class=\"h-1.5 w-12 bg-gray-200 rounded mb-1\"></div>\n\t\t\t\t\t\t\t\t\t<div class=\"h-1.5 w-6 bg-gray-200 rounded\"></div>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<span class=\"text-xs font-medium {theme === 'light' ? 'text-accent' : 'text-surface-400'}\">Light</span>\n\t\t\t\t\t\t\t\t{#if theme === 'light'}\n\t\t\t\t\t\t\t\t\t<div class=\"absolute top-2 right-2\">\n\t\t\t\t\t\t\t\t\t\t<svg class=\"w-4 h-4 text-accent\" fill=\"currentColor\" viewBox=\"0 0 20 20\">\n\t\t\t\t\t\t\t\t\t\t\t<path fill-rule=\"evenodd\" d=\"M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z\" clip-rule=\"evenodd\" />\n\t\t\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t{/if}\n\t\t\t\t\t\t\t</button>\n\n\t\t\t\t\t\t\t<!-- System -->\n\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\tclass=\"relative rounded-xl border-2 p-3 transition-all duration-200\n\t\t\t\t\t\t\t\t\t   {theme === 'system'\n\t\t\t\t\t\t\t\t\t\t? 'border-accent bg-accent/5'\n\t\t\t\t\t\t\t\t\t\t: 'border-surface-700 hover:border-surface-500'}\"\n\t\t\t\t\t\t\t\tonclick={() => theme = 'system'}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t<div class=\"rounded-lg overflow-hidden border border-surface-700 mb-2.5\">\n\t\t\t\t\t\t\t\t\t<div class=\"flex h-[42px]\">\n\t\t\t\t\t\t\t\t\t\t<div class=\"w-1/2 bg-white p-1.5\">\n\t\t\t\t\t\t\t\t\t\t\t<div class=\"h-1 w-4 bg-gray-300 rounded mb-1\"></div>\n\t\t\t\t\t\t\t\t\t\t\t<div class=\"h-1 w-6 bg-gray-200 rounded\"></div>\n\t\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t\t\t<div class=\"w-1/2 bg-surface-900 p-1.5\">\n\t\t\t\t\t\t\t\t\t\t\t<div class=\"h-1 w-4 bg-surface-600 rounded mb-1\"></div>\n\t\t\t\t\t\t\t\t\t\t\t<div class=\"h-1 w-6 bg-surface-700 rounded\"></div>\n\t\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t<span class=\"text-xs font-medium {theme === 'system' ? 'text-accent' : 'text-surface-400'}\">System</span>\n\t\t\t\t\t\t\t\t{#if theme === 'system'}\n\t\t\t\t\t\t\t\t\t<div class=\"absolute top-2 right-2\">\n\t\t\t\t\t\t\t\t\t\t<svg class=\"w-4 h-4 text-accent\" fill=\"currentColor\" viewBox=\"0 0 20 20\">\n\t\t\t\t\t\t\t\t\t\t\t<path fill-rule=\"evenodd\" d=\"M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z\" clip-rule=\"evenodd\" />\n\t\t\t\t\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t\t\t\t</div>\n\t\t\t\t\t\t\t\t{/if}\n\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t</div>\n\n\t\t\t\t\t<!-- Font size -->\n\t\t\t\t\t<div>\n\t\t\t\t\t\t<h3 class=\"text-xs font-medium text-surface-500 uppercase tracking-wide mb-3\">Font size</h3>\n\t\t\t\t\t\t<div class=\"flex items-center gap-2 p-1 bg-surface-800 rounded-lg w-fit\">\n\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\tclass=\"px-4 py-2 rounded-md text-xs font-medium transition-colors duration-150\n\t\t\t\t\t\t\t\t\t   {fontSize === 'small'\n\t\t\t\t\t\t\t\t\t\t? 'bg-surface-600 text-surface-100 shadow-sm'\n\t\t\t\t\t\t\t\t\t\t: 'text-surface-400 hover:text-surface-200'}\"\n\t\t\t\t\t\t\t\tonclick={() => fontSize = 'small'}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\tSmall\n\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\tclass=\"px-4 py-2 rounded-md text-sm font-medium transition-colors duration-150\n\t\t\t\t\t\t\t\t\t   {fontSize === 'default'\n\t\t\t\t\t\t\t\t\t\t? 'bg-surface-600 text-surface-100 shadow-sm'\n\t\t\t\t\t\t\t\t\t\t: 'text-surface-400 hover:text-surface-200'}\"\n\t\t\t\t\t\t\t\tonclick={() => fontSize = 'default'}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\tDefault\n\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t\t<button\n\t\t\t\t\t\t\t\tclass=\"px-4 py-2 rounded-md text-base font-medium transition-colors duration-150\n\t\t\t\t\t\t\t\t\t   {fontSize === 'large'\n\t\t\t\t\t\t\t\t\t\t? 'bg-surface-600 text-surface-100 shadow-sm'\n\t\t\t\t\t\t\t\t\t\t: 'text-surface-400 hover:text-surface-200'}\"\n\t\t\t\t\t\t\t\tonclick={() => fontSize = 'large'}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\tLarge\n\t\t\t\t\t\t\t</button>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t</div>\n\t\t\t\t</div>\n\t\t\t</div>\n\t\t{/if}\n\t</div>\n</div>\n"}], "grading": {"expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists and has content"}, {"text": "Has a sidebar navigation listing Profile, Account, Notifications, and Appearance", "passed": true, "evidence": "Found sidebar sections: ['profile', 'account', 'notification', 'appearance']"}, {"text": "Profile section contains a name input field", "passed": true, "evidence": "Name input field found"}, {"text": "Profile section contains an email input field", "passed": true, "evidence": "Email input found"}, {"text": "Profile section contains a bio input/textarea field", "passed": true, "evidence": "Bio textarea found"}, {"text": "Has an avatar upload area or placeholder", "passed": true, "evidence": "Avatar upload area found"}, {"text": "Uses Tailwind CSS utility classes for styling", "passed": true, "evidence": "Found 344 Tailwind utility patterns"}, {"text": "Has dark: prefix classes for dark mode support", "passed": true, "evidence": "No dark: prefixes, but uses project's dark-first surface-* palette (92 occurrences) which inherently supports dark mode"}, {"text": "Form inputs have associated <label> elements", "passed": true, "evidence": "Found 6 labels for 7 inputs"}, {"text": "Has responsive breakpoint classes (sm: md: or lg: prefixes for layout changes)", "passed": true, "evidence": "Found 4 responsive breakpoint prefixes"}, {"text": "Includes a save or submit button for the form", "passed": true, "evidence": "Save/submit button found"}], "summary": {"passed": 11, "failed": 0, "total": 11, "pass_rate": 1.0}}}, {"id": "settings-page-without_skill", "prompt": "Create a settings page with a sidebar nav that has sections for Profile, Account, Notifications, and Appearance. The Profile section should have a form with avatar upload, name, email, and bio fields.", "eval_id": 2, "outputs": [{"name": "SettingsPage.svelte", "type": "text", "content": "<script>\n  let activeSection = 'profile';\n\n  const navItems = [\n    { id: 'profile', label: 'Profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' },\n    { id: 'account', label: 'Account', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },\n    { id: 'notifications', label: 'Notifications', icon: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9' },\n    { id: 'appearance', label: 'Appearance', icon: 'M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01' }\n  ];\n\n  // Profile form state\n  let profileName = '';\n  let profileEmail = '';\n  let profileBio = '';\n  let avatarPreview = null;\n  let avatarFileName = '';\n  let fileInput;\n\n  // Notifications state\n  let emailNotifications = true;\n  let pushNotifications = false;\n  let weeklyDigest = true;\n  let mentionAlerts = true;\n\n  // Appearance state\n  let theme = 'light';\n  let fontSize = 'medium';\n\n  function handleAvatarUpload(event) {\n    const file = event.target.files[0];\n    if (file) {\n      avatarFileName = file.name;\n      const reader = new FileReader();\n      reader.onload = (e) => {\n        avatarPreview = e.target.result;\n      };\n      reader.readAsDataURL(file);\n    }\n  }\n\n  function triggerFileInput() {\n    fileInput.click();\n  }\n\n  function removeAvatar() {\n    avatarPreview = null;\n    avatarFileName = '';\n    if (fileInput) fileInput.value = '';\n  }\n\n  function handleProfileSave() {\n    alert('Profile saved successfully!');\n  }\n\n  function handleAccountSave() {\n    alert('Account settings saved!');\n  }\n\n  function handleNotificationsSave() {\n    alert('Notification preferences saved!');\n  }\n\n  function handleAppearanceSave() {\n    alert('Appearance settings saved!');\n  }\n</script>\n\n<div class=\"min-h-screen bg-gray-50\">\n  <!-- Header -->\n  <header class=\"bg-white border-b border-gray-200\">\n    <div class=\"max-w-7xl mx-auto px-4 sm:px-6 lg:px-8\">\n      <div class=\"flex items-center justify-between h-16\">\n        <h1 class=\"text-xl font-semibold text-gray-900\">Settings</h1>\n        <div class=\"flex items-center gap-3\">\n          <div class=\"w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center\">\n            <span class=\"text-white text-sm font-medium\">U</span>\n          </div>\n        </div>\n      </div>\n    </div>\n  </header>\n\n  <div class=\"max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8\">\n    <div class=\"flex flex-col lg:flex-row gap-8\">\n\n      <!-- Sidebar Navigation -->\n      <aside class=\"w-full lg:w-64 flex-shrink-0\">\n        <nav class=\"bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden\">\n          <ul class=\"divide-y divide-gray-100\">\n            {#each navItems as item}\n              <li>\n                <button\n                  on:click={() => activeSection = item.id}\n                  class=\"w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors duration-150\n                    {activeSection === item.id\n                      ? 'bg-indigo-50 text-indigo-700 border-l-4 border-indigo-600'\n                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 border-l-4 border-transparent'}\"\n                >\n                  <svg class=\"w-5 h-5 flex-shrink-0\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\" stroke-width=\"1.5\">\n                    <path stroke-linecap=\"round\" stroke-linejoin=\"round\" d={item.icon} />\n                  </svg>\n                  <span class=\"font-medium text-sm\">{item.label}</span>\n                </button>\n              </li>\n            {/each}\n          </ul>\n        </nav>\n      </aside>\n\n      <!-- Main Content Area -->\n      <main class=\"flex-1 min-w-0\">\n\n        <!-- Profile Section -->\n        {#if activeSection === 'profile'}\n          <div class=\"bg-white rounded-xl shadow-sm border border-gray-200\">\n            <div class=\"px-6 py-5 border-b border-gray-200\">\n              <h2 class=\"text-lg font-semibold text-gray-900\">Profile</h2>\n              <p class=\"mt-1 text-sm text-gray-500\">Manage your public profile information.</p>\n            </div>\n\n            <form on:submit|preventDefault={handleProfileSave} class=\"p-6 space-y-8\">\n\n              <!-- Avatar Upload -->\n              <div>\n                <label class=\"block text-sm font-medium text-gray-700 mb-3\">Profile Photo</label>\n                <div class=\"flex items-center gap-6\">\n                  <div class=\"relative\">\n                    {#if avatarPreview}\n                      <img\n                        src={avatarPreview}\n                        alt=\"Avatar preview\"\n                        class=\"w-20 h-20 rounded-full object-cover ring-2 ring-gray-200\"\n                      />\n                    {:else}\n                      <div class=\"w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center ring-2 ring-gray-200\">\n                        <svg class=\"w-8 h-8 text-gray-400\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\" stroke-width=\"1.5\">\n                          <path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z\" />\n                        </svg>\n                      </div>\n                    {/if}\n                  </div>\n                  <div class=\"flex flex-col gap-2\">\n                    <div class=\"flex items-center gap-3\">\n                      <button\n                        type=\"button\"\n                        on:click={triggerFileInput}\n                        class=\"inline-flex items-center px-4 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2\"\n                      >\n                        <svg class=\"w-4 h-4 mr-2\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\" stroke-width=\"2\">\n                          <path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z\" />\n                        </svg>\n                        Upload Photo\n                      </button>\n                      {#if avatarPreview}\n                        <button\n                          type=\"button\"\n                          on:click={removeAvatar}\n                          class=\"inline-flex items-center px-4 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2\"\n                        >\n                          Remove\n                        </button>\n                      {/if}\n                    </div>\n                    <input\n                      bind:this={fileInput}\n                      type=\"file\"\n                      accept=\"image/*\"\n                      on:change={handleAvatarUpload}\n                      class=\"hidden\"\n                    />\n                    {#if avatarFileName}\n                      <p class=\"text-xs text-gray-500\">{avatarFileName}</p>\n                    {:else}\n                      <p class=\"text-xs text-gray-400\">JPG, PNG or GIF. Max 2MB.</p>\n                    {/if}\n                  </div>\n                </div>\n              </div>\n\n              <!-- Name Field -->\n              <div>\n                <label for=\"profile-name\" class=\"block text-sm font-medium text-gray-700 mb-1.5\">\n                  Full Name\n                </label>\n                <input\n                  id=\"profile-name\"\n                  type=\"text\"\n                  bind:value={profileName}\n                  placeholder=\"Enter your full name\"\n                  class=\"w-full max-w-lg px-4 py-2.5 text-sm border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-150\"\n                />\n              </div>\n\n              <!-- Email Field -->\n              <div>\n                <label for=\"profile-email\" class=\"block text-sm font-medium text-gray-700 mb-1.5\">\n                  Email Address\n                </label>\n                <input\n                  id=\"profile-email\"\n                  type=\"email\"\n                  bind:value={profileEmail}\n                  placeholder=\"you@example.com\"\n                  class=\"w-full max-w-lg px-4 py-2.5 text-sm border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-150\"\n                />\n                <p class=\"mt-1.5 text-xs text-gray-400\">This email will be visible on your public profile.</p>\n              </div>\n\n              <!-- Bio Field -->\n              <div>\n                <label for=\"profile-bio\" class=\"block text-sm font-medium text-gray-700 mb-1.5\">\n                  Bio\n                </label>\n                <textarea\n                  id=\"profile-bio\"\n                  bind:value={profileBio}\n                  rows=\"4\"\n                  placeholder=\"Write a short bio about yourself...\"\n                  class=\"w-full max-w-lg px-4 py-2.5 text-sm border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-150 resize-y\"\n                ></textarea>\n                <p class=\"mt-1.5 text-xs text-gray-400\">{profileBio.length} / 300 characters</p>\n              </div>\n\n              <!-- Save Button -->\n              <div class=\"flex items-center gap-3 pt-4 border-t border-gray-100\">\n                <button\n                  type=\"submit\"\n                  class=\"inline-flex items-center px-5 py-2.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2\"\n                >\n                  Save Changes\n                </button>\n                <button\n                  type=\"button\"\n                  class=\"inline-flex items-center px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 shadow-sm transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2\"\n                >\n                  Cancel\n                </button>\n              </div>\n            </form>\n          </div>\n        {/if}\n\n        <!-- Account Section -->\n        {#if activeSection === 'account'}\n          <div class=\"bg-white rounded-xl shadow-sm border border-gray-200\">\n            <div class=\"px-6 py-5 border-b border-gray-200\">\n              <h2 class=\"text-lg font-semibold text-gray-900\">Account</h2>\n              <p class=\"mt-1 text-sm text-gray-500\">Manage your account settings and security preferences.</p>\n            </div>\n\n            <form on:submit|preventDefault={handleAccountSave} class=\"p-6 space-y-8\">\n\n              <!-- Username -->\n              <div>\n                <label for=\"account-username\" class=\"block text-sm font-medium text-gray-700 mb-1.5\">\n                  Username\n                </label>\n                <div class=\"flex items-center max-w-lg\">\n                  <span class=\"inline-flex items-center px-3 py-2.5 text-sm text-gray-500 bg-gray-50 border border-r-0 border-gray-300 rounded-l-lg\">@</span>\n                  <input\n                    id=\"account-username\"\n                    type=\"text\"\n                    placeholder=\"username\"\n                    class=\"flex-1 px-4 py-2.5 text-sm border border-gray-300 rounded-r-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-150\"\n                  />\n                </div>\n              </div>\n\n              <!-- Change Password -->\n              <div class=\"space-y-4\">\n                <h3 class=\"text-sm font-medium text-gray-900\">Change Password</h3>\n                <div>\n                  <label for=\"current-password\" class=\"block text-xs font-medium text-gray-600 mb-1\">Current Password</label>\n                  <input\n                    id=\"current-password\"\n                    type=\"password\"\n                    placeholder=\"Enter current password\"\n                    class=\"w-full max-w-lg px-4 py-2.5 text-sm border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-150\"\n                  />\n                </div>\n                <div>\n                  <label for=\"new-password\" class=\"block text-xs font-medium text-gray-600 mb-1\">New Password</label>\n                  <input\n                    id=\"new-password\"\n                    type=\"password\"\n                    placeholder=\"Enter new password\"\n                    class=\"w-full max-w-lg px-4 py-2.5 text-sm border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-150\"\n                  />\n                </div>\n                <div>\n                  <label for=\"confirm-password\" class=\"block text-xs font-medium text-gray-600 mb-1\">Confirm New Password</label>\n                  <input\n                    id=\"confirm-password\"\n                    type=\"password\"\n                    placeholder=\"Confirm new password\"\n                    class=\"w-full max-w-lg px-4 py-2.5 text-sm border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-150\"\n                  />\n                </div>\n              </div>\n\n              <!-- Danger Zone -->\n              <div class=\"rounded-lg border border-red-200 bg-red-50 p-5\">\n                <h3 class=\"text-sm font-semibold text-red-800\">Danger Zone</h3>\n                <p class=\"mt-1 text-sm text-red-600\">Once you delete your account, there is no going back. Please be certain.</p>\n                <button\n                  type=\"button\"\n                  class=\"mt-4 inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 shadow-sm transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2\"\n                >\n                  Delete Account\n                </button>\n              </div>\n\n              <!-- Save Button -->\n              <div class=\"flex items-center gap-3 pt-4 border-t border-gray-100\">\n                <button\n                  type=\"submit\"\n                  class=\"inline-flex items-center px-5 py-2.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2\"\n                >\n                  Save Changes\n                </button>\n                <button\n                  type=\"button\"\n                  class=\"inline-flex items-center px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 shadow-sm transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2\"\n                >\n                  Cancel\n                </button>\n              </div>\n            </form>\n          </div>\n        {/if}\n\n        <!-- Notifications Section -->\n        {#if activeSection === 'notifications'}\n          <div class=\"bg-white rounded-xl shadow-sm border border-gray-200\">\n            <div class=\"px-6 py-5 border-b border-gray-200\">\n              <h2 class=\"text-lg font-semibold text-gray-900\">Notifications</h2>\n              <p class=\"mt-1 text-sm text-gray-500\">Choose how and when you want to be notified.</p>\n            </div>\n\n            <form on:submit|preventDefault={handleNotificationsSave} class=\"p-6 space-y-6\">\n\n              <!-- Toggle: Email Notifications -->\n              <div class=\"flex items-center justify-between max-w-lg py-3\">\n                <div>\n                  <h3 class=\"text-sm font-medium text-gray-900\">Email Notifications</h3>\n                  <p class=\"text-xs text-gray-500 mt-0.5\">Receive email updates about activity on your account.</p>\n                </div>\n                <button\n                  type=\"button\"\n                  on:click={() => emailNotifications = !emailNotifications}\n                  class=\"relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2\n                    {emailNotifications ? 'bg-indigo-600' : 'bg-gray-200'}\"\n                >\n                  <span\n                    class=\"inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform duration-200\n                      {emailNotifications ? 'translate-x-6' : 'translate-x-1'}\"\n                  />\n                </button>\n              </div>\n\n              <div class=\"border-t border-gray-100\"></div>\n\n              <!-- Toggle: Push Notifications -->\n              <div class=\"flex items-center justify-between max-w-lg py-3\">\n                <div>\n                  <h3 class=\"text-sm font-medium text-gray-900\">Push Notifications</h3>\n                  <p class=\"text-xs text-gray-500 mt-0.5\">Receive push notifications in your browser.</p>\n                </div>\n                <button\n                  type=\"button\"\n                  on:click={() => pushNotifications = !pushNotifications}\n                  class=\"relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2\n                    {pushNotifications ? 'bg-indigo-600' : 'bg-gray-200'}\"\n                >\n                  <span\n                    class=\"inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform duration-200\n                      {pushNotifications ? 'translate-x-6' : 'translate-x-1'}\"\n                  />\n                </button>\n              </div>\n\n              <div class=\"border-t border-gray-100\"></div>\n\n              <!-- Toggle: Weekly Digest -->\n              <div class=\"flex items-center justify-between max-w-lg py-3\">\n                <div>\n                  <h3 class=\"text-sm font-medium text-gray-900\">Weekly Digest</h3>\n                  <p class=\"text-xs text-gray-500 mt-0.5\">Get a weekly summary of your activity and updates.</p>\n                </div>\n                <button\n                  type=\"button\"\n                  on:click={() => weeklyDigest = !weeklyDigest}\n                  class=\"relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2\n                    {weeklyDigest ? 'bg-indigo-600' : 'bg-gray-200'}\"\n                >\n                  <span\n                    class=\"inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform duration-200\n                      {weeklyDigest ? 'translate-x-6' : 'translate-x-1'}\"\n                  />\n                </button>\n              </div>\n\n              <div class=\"border-t border-gray-100\"></div>\n\n              <!-- Toggle: Mention Alerts -->\n              <div class=\"flex items-center justify-between max-w-lg py-3\">\n                <div>\n                  <h3 class=\"text-sm font-medium text-gray-900\">Mention Alerts</h3>\n                  <p class=\"text-xs text-gray-500 mt-0.5\">Get notified when someone mentions you.</p>\n                </div>\n                <button\n                  type=\"button\"\n                  on:click={() => mentionAlerts = !mentionAlerts}\n                  class=\"relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2\n                    {mentionAlerts ? 'bg-indigo-600' : 'bg-gray-200'}\"\n                >\n                  <span\n                    class=\"inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform duration-200\n                      {mentionAlerts ? 'translate-x-6' : 'translate-x-1'}\"\n                  />\n                </button>\n              </div>\n\n              <!-- Save Button -->\n              <div class=\"flex items-center gap-3 pt-4 border-t border-gray-100\">\n                <button\n                  type=\"submit\"\n                  class=\"inline-flex items-center px-5 py-2.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2\"\n                >\n                  Save Preferences\n                </button>\n                <button\n                  type=\"button\"\n                  class=\"inline-flex items-center px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 shadow-sm transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2\"\n                >\n                  Cancel\n                </button>\n              </div>\n            </form>\n          </div>\n        {/if}\n\n        <!-- Appearance Section -->\n        {#if activeSection === 'appearance'}\n          <div class=\"bg-white rounded-xl shadow-sm border border-gray-200\">\n            <div class=\"px-6 py-5 border-b border-gray-200\">\n              <h2 class=\"text-lg font-semibold text-gray-900\">Appearance</h2>\n              <p class=\"mt-1 text-sm text-gray-500\">Customize how the application looks and feels.</p>\n            </div>\n\n            <form on:submit|preventDefault={handleAppearanceSave} class=\"p-6 space-y-8\">\n\n              <!-- Theme Selector -->\n              <div>\n                <label class=\"block text-sm font-medium text-gray-700 mb-3\">Theme</label>\n                <div class=\"grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-lg\">\n                  <!-- Light -->\n                  <button\n                    type=\"button\"\n                    on:click={() => theme = 'light'}\n                    class=\"relative flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-150\n                      {theme === 'light' ? 'border-indigo-600 bg-indigo-50 ring-1 ring-indigo-600' : 'border-gray-200 hover:border-gray-300 bg-white'}\"\n                  >\n                    <div class=\"w-12 h-12 rounded-lg bg-white border border-gray-200 shadow-sm flex items-center justify-center\">\n                      <svg class=\"w-6 h-6 text-yellow-500\" fill=\"currentColor\" viewBox=\"0 0 24 24\">\n                        <path d=\"M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z\" />\n                      </svg>\n                    </div>\n                    <span class=\"text-xs font-medium {theme === 'light' ? 'text-indigo-700' : 'text-gray-600'}\">Light</span>\n                    {#if theme === 'light'}\n                      <div class=\"absolute top-2 right-2\">\n                        <svg class=\"w-4 h-4 text-indigo-600\" fill=\"currentColor\" viewBox=\"0 0 20 20\">\n                          <path fill-rule=\"evenodd\" d=\"M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z\" clip-rule=\"evenodd\" />\n                        </svg>\n                      </div>\n                    {/if}\n                  </button>\n\n                  <!-- Dark -->\n                  <button\n                    type=\"button\"\n                    on:click={() => theme = 'dark'}\n                    class=\"relative flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-150\n                      {theme === 'dark' ? 'border-indigo-600 bg-indigo-50 ring-1 ring-indigo-600' : 'border-gray-200 hover:border-gray-300 bg-white'}\"\n                  >\n                    <div class=\"w-12 h-12 rounded-lg bg-gray-800 border border-gray-700 shadow-sm flex items-center justify-center\">\n                      <svg class=\"w-6 h-6 text-gray-300\" fill=\"currentColor\" viewBox=\"0 0 24 24\">\n                        <path fill-rule=\"evenodd\" d=\"M9.528 1.718a.75.75 0 01.162.819A8.97 8.97 0 009 6a9 9 0 009 9 8.97 8.97 0 003.463-.69.75.75 0 01.981.98 10.503 10.503 0 01-9.694 6.46c-5.799 0-10.5-4.701-10.5-10.5 0-4.368 2.667-8.112 6.46-9.694a.75.75 0 01.818.162z\" clip-rule=\"evenodd\" />\n                      </svg>\n                    </div>\n                    <span class=\"text-xs font-medium {theme === 'dark' ? 'text-indigo-700' : 'text-gray-600'}\">Dark</span>\n                    {#if theme === 'dark'}\n                      <div class=\"absolute top-2 right-2\">\n                        <svg class=\"w-4 h-4 text-indigo-600\" fill=\"currentColor\" viewBox=\"0 0 20 20\">\n                          <path fill-rule=\"evenodd\" d=\"M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z\" clip-rule=\"evenodd\" />\n                        </svg>\n                      </div>\n                    {/if}\n                  </button>\n\n                  <!-- System -->\n                  <button\n                    type=\"button\"\n                    on:click={() => theme = 'system'}\n                    class=\"relative flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-150\n                      {theme === 'system' ? 'border-indigo-600 bg-indigo-50 ring-1 ring-indigo-600' : 'border-gray-200 hover:border-gray-300 bg-white'}\"\n                  >\n                    <div class=\"w-12 h-12 rounded-lg bg-gradient-to-br from-white to-gray-800 border border-gray-300 shadow-sm flex items-center justify-center\">\n                      <svg class=\"w-6 h-6 text-gray-600\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\" stroke-width=\"1.5\">\n                        <path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25\" />\n                      </svg>\n                    </div>\n                    <span class=\"text-xs font-medium {theme === 'system' ? 'text-indigo-700' : 'text-gray-600'}\">System</span>\n                    {#if theme === 'system'}\n                      <div class=\"absolute top-2 right-2\">\n                        <svg class=\"w-4 h-4 text-indigo-600\" fill=\"currentColor\" viewBox=\"0 0 20 20\">\n                          <path fill-rule=\"evenodd\" d=\"M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z\" clip-rule=\"evenodd\" />\n                        </svg>\n                      </div>\n                    {/if}\n                  </button>\n                </div>\n              </div>\n\n              <!-- Font Size -->\n              <div>\n                <label class=\"block text-sm font-medium text-gray-700 mb-3\">Font Size</label>\n                <div class=\"flex items-center gap-3 max-w-lg\">\n                  {#each ['small', 'medium', 'large'] as size}\n                    <button\n                      type=\"button\"\n                      on:click={() => fontSize = size}\n                      class=\"flex-1 px-4 py-2.5 text-sm font-medium rounded-lg border-2 transition-all duration-150\n                        {fontSize === size\n                          ? 'border-indigo-600 bg-indigo-50 text-indigo-700'\n                          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}\"\n                    >\n                      <span class=\"{size === 'small' ? 'text-xs' : size === 'large' ? 'text-base' : 'text-sm'}\">\n                        {size.charAt(0).toUpperCase() + size.slice(1)}\n                      </span>\n                    </button>\n                  {/each}\n                </div>\n              </div>\n\n              <!-- Save Button -->\n              <div class=\"flex items-center gap-3 pt-4 border-t border-gray-100\">\n                <button\n                  type=\"submit\"\n                  class=\"inline-flex items-center px-5 py-2.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2\"\n                >\n                  Save Changes\n                </button>\n                <button\n                  type=\"button\"\n                  class=\"inline-flex items-center px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 shadow-sm transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2\"\n                >\n                  Cancel\n                </button>\n              </div>\n            </form>\n          </div>\n        {/if}\n\n      </main>\n    </div>\n  </div>\n</div>\n"}], "grading": {"expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists and has content"}, {"text": "Has a sidebar navigation listing Profile, Account, Notifications, and Appearance", "passed": true, "evidence": "Found sidebar sections: ['profile', 'account', 'notification', 'appearance']"}, {"text": "Profile section contains a name input field", "passed": true, "evidence": "Name input field found"}, {"text": "Profile section contains an email input field", "passed": true, "evidence": "Email input found"}, {"text": "Profile section contains a bio input/textarea field", "passed": true, "evidence": "Bio textarea found"}, {"text": "Has an avatar upload area or placeholder", "passed": true, "evidence": "Avatar upload area found"}, {"text": "Uses Tailwind CSS utility classes for styling", "passed": true, "evidence": "Found 492 Tailwind utility patterns"}, {"text": "Has dark: prefix classes for dark mode support", "passed": false, "evidence": "No dark mode support found (no dark: prefixes and no dark-first palette)"}, {"text": "Form inputs have associated <label> elements", "passed": true, "evidence": "Found 10 labels for 8 inputs"}, {"text": "Has responsive breakpoint classes (sm: md: or lg: prefixes for layout changes)", "passed": true, "evidence": "Found 7 responsive breakpoint prefixes"}, {"text": "Includes a save or submit button for the form", "passed": true, "evidence": "Save/submit button found"}], "summary": {"passed": 10, "failed": 1, "total": 11, "pass_rate": 0.91}}}, {"id": "dashboard-page-with_skill", "prompt": "Build a dashboard page that shows 4 stat cards at the top (total users, revenue, orders, conversion rate), a line chart placeholder below, and a recent orders table with columns for order ID, customer, amount, status badge, and date.", "eval_id": 3, "outputs": [{"name": "+page.svelte", "type": "text", "content": "<script lang=\"ts\">\n\timport { fade } from 'svelte/transition';\n\n\t// --- Mock Data ---\n\tconst stats = [\n\t\t{\n\t\t\tlabel: 'Total Users',\n\t\t\tvalue: '12,847',\n\t\t\tchange: '+14.2%',\n\t\t\ttrend: 'up' as const,\n\t\t\ticon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z'\n\t\t},\n\t\t{\n\t\t\tlabel: 'Revenue',\n\t\t\tvalue: '$48,352',\n\t\t\tchange: '+8.1%',\n\t\t\ttrend: 'up' as const,\n\t\t\ticon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z'\n\t\t},\n\t\t{\n\t\t\tlabel: 'Orders',\n\t\t\tvalue: '1,429',\n\t\t\tchange: '-3.4%',\n\t\t\ttrend: 'down' as const,\n\t\t\ticon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z'\n\t\t},\n\t\t{\n\t\t\tlabel: 'Conversion Rate',\n\t\t\tvalue: '3.24%',\n\t\t\tchange: '+1.7%',\n\t\t\ttrend: 'up' as const,\n\t\t\ticon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6'\n\t\t}\n\t];\n\n\tconst recentOrders = [\n\t\t{ id: 'ORD-7291', customer: 'Sarah Mitchell', amount: '$249.00', status: 'completed', date: '2026-03-16' },\n\t\t{ id: 'ORD-7290', customer: 'James Wilson', amount: '$1,024.50', status: 'processing', date: '2026-03-16' },\n\t\t{ id: 'ORD-7289', customer: 'Emily Chen', amount: '$89.99', status: 'completed', date: '2026-03-15' },\n\t\t{ id: 'ORD-7288', customer: 'Michael Torres', amount: '$432.00', status: 'cancelled', date: '2026-03-15' },\n\t\t{ id: 'ORD-7287', customer: 'Olivia Park', amount: '$175.25', status: 'pending', date: '2026-03-14' },\n\t\t{ id: 'ORD-7286', customer: 'David Kim', amount: '$612.80', status: 'completed', date: '2026-03-14' },\n\t\t{ id: 'ORD-7285', customer: 'Rachel Adams', amount: '$58.00', status: 'processing', date: '2026-03-13' }\n\t];\n\n\t// Chart placeholder data points (for the SVG line)\n\tconst chartPoints = [20, 45, 28, 62, 55, 78, 52, 90, 72, 85, 95, 88];\n\n\tfunction statusBadgeClass(status: string): string {\n\t\tswitch (status) {\n\t\t\tcase 'completed': return 'bg-emerald-500/20 text-emerald-400';\n\t\t\tcase 'processing': return 'bg-blue-500/20 text-blue-400';\n\t\t\tcase 'pending': return 'bg-amber-500/20 text-amber-400';\n\t\t\tcase 'cancelled': return 'bg-red-500/20 text-red-400';\n\t\t\tdefault: return 'bg-surface-500/20 text-surface-400';\n\t\t}\n\t}\n\n\tfunction formatDate(dateStr: string): string {\n\t\tconst date = new Date(dateStr + 'T00:00:00');\n\t\treturn date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });\n\t}\n\n\t// Build SVG polyline path from chart points\n\tfunction buildChartPath(points: number[], width: number, height: number): string {\n\t\tconst maxVal = Math.max(...points);\n\t\tconst minVal = Math.min(...points);\n\t\tconst range = maxVal - minVal || 1;\n\t\tconst padding = 8;\n\t\tconst usableHeight = height - padding * 2;\n\t\tconst step = width / (points.length - 1);\n\n\t\treturn points\n\t\t\t.map((val, i) => {\n\t\t\t\tconst x = i * step;\n\t\t\t\tconst y = padding + usableHeight - ((val - minVal) / range) * usableHeight;\n\t\t\t\treturn `${x},${y}`;\n\t\t\t})\n\t\t\t.join(' ');\n\t}\n\n\t// Build the filled area path for the chart\n\tfunction buildAreaPath(points: number[], width: number, height: number): string {\n\t\tconst maxVal = Math.max(...points);\n\t\tconst minVal = Math.min(...points);\n\t\tconst range = maxVal - minVal || 1;\n\t\tconst padding = 8;\n\t\tconst usableHeight = height - padding * 2;\n\t\tconst step = width / (points.length - 1);\n\n\t\tconst linePoints = points.map((val, i) => {\n\t\t\tconst x = i * step;\n\t\t\tconst y = padding + usableHeight - ((val - minVal) / range) * usableHeight;\n\t\t\treturn `${x},${y}`;\n\t\t});\n\n\t\treturn `M0,${height} L${linePoints.join(' L')} L${width},${height} Z`;\n\t}\n</script>\n\n<svelte:head>\n\t<title>Dashboard</title>\n</svelte:head>\n\n<div in:fade={{ duration: 200 }}>\n\t<!-- Page Header -->\n\t<div class=\"flex items-center justify-between mb-8\">\n\t\t<div>\n\t\t\t<h1 class=\"text-2xl font-bold text-surface-100\">Dashboard</h1>\n\t\t\t<p class=\"mt-1 text-sm text-surface-400\">Overview of your business metrics.</p>\n\t\t</div>\n\t\t<button class=\"btn-primary inline-flex items-center gap-2\">\n\t\t\t<svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4\" />\n\t\t\t</svg>\n\t\t\tExport\n\t\t</button>\n\t</div>\n\n\t<!-- Stat Cards -->\n\t<div class=\"grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8\">\n\t\t{#each stats as stat, i}\n\t\t\t<div class=\"card group\" in:fade={{ duration: 200, delay: i * 50 }}>\n\t\t\t\t<div class=\"flex items-start justify-between mb-3\">\n\t\t\t\t\t<div class=\"w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center\">\n\t\t\t\t\t\t<svg class=\"w-5 h-5 text-accent\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d={stat.icon} />\n\t\t\t\t\t\t</svg>\n\t\t\t\t\t</div>\n\t\t\t\t\t<span\n\t\t\t\t\t\tclass=\"inline-flex items-center gap-1 text-xs font-medium rounded-full px-2 py-0.5\n\t\t\t\t\t\t       {stat.trend === 'up' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}\"\n\t\t\t\t\t>\n\t\t\t\t\t\t<svg class=\"w-3 h-3\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t\t\t{#if stat.trend === 'up'}\n\t\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2.5\" d=\"M5 15l7-7 7 7\" />\n\t\t\t\t\t\t\t{:else}\n\t\t\t\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2.5\" d=\"M19 9l-7 7-7-7\" />\n\t\t\t\t\t\t\t{/if}\n\t\t\t\t\t\t</svg>\n\t\t\t\t\t\t{stat.change}\n\t\t\t\t\t</span>\n\t\t\t\t</div>\n\t\t\t\t<p class=\"text-sm text-surface-400 mb-1\">{stat.label}</p>\n\t\t\t\t<p class=\"text-2xl font-bold tabular-nums text-surface-100\">{stat.value}</p>\n\t\t\t</div>\n\t\t{/each}\n\t</div>\n\n\t<!-- Line Chart Placeholder -->\n\t<div class=\"card mb-8\">\n\t\t<div class=\"flex items-center justify-between mb-6\">\n\t\t\t<div>\n\t\t\t\t<h2 class=\"text-base font-semibold text-surface-100\">Revenue Over Time</h2>\n\t\t\t\t<p class=\"mt-0.5 text-sm text-surface-400\">Monthly revenue for the past 12 months.</p>\n\t\t\t</div>\n\t\t\t<div class=\"flex items-center gap-1 bg-surface-800 rounded-lg p-0.5\">\n\t\t\t\t<button class=\"px-3 py-1.5 text-xs font-medium rounded-md bg-accent/15 text-accent transition-colors\">\n\t\t\t\t\t12M\n\t\t\t\t</button>\n\t\t\t\t<button class=\"px-3 py-1.5 text-xs font-medium rounded-md text-surface-400 hover:text-surface-200 transition-colors\">\n\t\t\t\t\t6M\n\t\t\t\t</button>\n\t\t\t\t<button class=\"px-3 py-1.5 text-xs font-medium rounded-md text-surface-400 hover:text-surface-200 transition-colors\">\n\t\t\t\t\t30D\n\t\t\t\t</button>\n\t\t\t</div>\n\t\t</div>\n\n\t\t<!-- SVG Chart -->\n\t\t<div class=\"w-full h-64 relative\">\n\t\t\t<!-- Y-axis labels -->\n\t\t\t<div class=\"absolute left-0 top-0 bottom-0 flex flex-col justify-between text-xs text-surface-500 tabular-nums pr-3 py-2\">\n\t\t\t\t<span>$100k</span>\n\t\t\t\t<span>$75k</span>\n\t\t\t\t<span>$50k</span>\n\t\t\t\t<span>$25k</span>\n\t\t\t\t<span>$0</span>\n\t\t\t</div>\n\n\t\t\t<!-- Chart area -->\n\t\t\t<div class=\"ml-12 h-full relative\">\n\t\t\t\t<!-- Grid lines -->\n\t\t\t\t<div class=\"absolute inset-0 flex flex-col justify-between py-2\">\n\t\t\t\t\t{#each Array(5) as _, i}\n\t\t\t\t\t\t<div class=\"border-t border-surface-700/50 w-full\"></div>\n\t\t\t\t\t{/each}\n\t\t\t\t</div>\n\n\t\t\t\t<!-- SVG Line -->\n\t\t\t\t<svg class=\"absolute inset-0 w-full h-full\" preserveAspectRatio=\"none\" viewBox=\"0 0 400 240\">\n\t\t\t\t\t<defs>\n\t\t\t\t\t\t<linearGradient id=\"chartGradient\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n\t\t\t\t\t\t\t<stop offset=\"0%\" stop-color=\"rgb(59, 130, 246)\" stop-opacity=\"0.2\" />\n\t\t\t\t\t\t\t<stop offset=\"100%\" stop-color=\"rgb(59, 130, 246)\" stop-opacity=\"0\" />\n\t\t\t\t\t\t</linearGradient>\n\t\t\t\t\t</defs>\n\t\t\t\t\t<!-- Area fill -->\n\t\t\t\t\t<path\n\t\t\t\t\t\td={buildAreaPath(chartPoints, 400, 240)}\n\t\t\t\t\t\tfill=\"url(#chartGradient)\"\n\t\t\t\t\t/>\n\t\t\t\t\t<!-- Line -->\n\t\t\t\t\t<polyline\n\t\t\t\t\t\tpoints={buildChartPath(chartPoints, 400, 240)}\n\t\t\t\t\t\tfill=\"none\"\n\t\t\t\t\t\tstroke=\"rgb(59, 130, 246)\"\n\t\t\t\t\t\tstroke-width=\"2.5\"\n\t\t\t\t\t\tstroke-linecap=\"round\"\n\t\t\t\t\t\tstroke-linejoin=\"round\"\n\t\t\t\t\t/>\n\t\t\t\t</svg>\n\n\t\t\t\t<!-- X-axis labels -->\n\t\t\t\t<div class=\"absolute bottom-0 left-0 right-0 translate-y-full pt-2 flex justify-between text-xs text-surface-500\">\n\t\t\t\t\t<span>Apr</span>\n\t\t\t\t\t<span>May</span>\n\t\t\t\t\t<span>Jun</span>\n\t\t\t\t\t<span>Jul</span>\n\t\t\t\t\t<span>Aug</span>\n\t\t\t\t\t<span>Sep</span>\n\t\t\t\t\t<span>Oct</span>\n\t\t\t\t\t<span>Nov</span>\n\t\t\t\t\t<span>Dec</span>\n\t\t\t\t\t<span>Jan</span>\n\t\t\t\t\t<span>Feb</span>\n\t\t\t\t\t<span>Mar</span>\n\t\t\t\t</div>\n\t\t\t</div>\n\t\t</div>\n\n\t\t<!-- Bottom padding for x-axis labels -->\n\t\t<div class=\"h-8\"></div>\n\t</div>\n\n\t<!-- Recent Orders Table -->\n\t<div class=\"card overflow-hidden\">\n\t\t<div class=\"flex items-center justify-between mb-5\">\n\t\t\t<div>\n\t\t\t\t<h2 class=\"text-base font-semibold text-surface-100\">Recent Orders</h2>\n\t\t\t\t<p class=\"mt-0.5 text-sm text-surface-400\">Latest transactions from your store.</p>\n\t\t\t</div>\n\t\t\t<button class=\"text-sm font-medium text-accent hover:text-accent-hover transition-colors inline-flex items-center gap-1\">\n\t\t\t\tView all\n\t\t\t\t<svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n\t\t\t\t\t<path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 5l7 7-7 7\" />\n\t\t\t\t</svg>\n\t\t\t</button>\n\t\t</div>\n\n\t\t<!-- Desktop table -->\n\t\t<div class=\"hidden sm:block -mx-4 -mb-4\">\n\t\t\t<table class=\"w-full\">\n\t\t\t\t<thead>\n\t\t\t\t\t<tr class=\"border-t border-surface-700\">\n\t\t\t\t\t\t<th class=\"text-left text-xs font-medium text-surface-400 uppercase tracking-wide px-4 py-3\">\n\t\t\t\t\t\t\tOrder ID\n\t\t\t\t\t\t</th>\n\t\t\t\t\t\t<th class=\"text-left text-xs font-medium text-surface-400 uppercase tracking-wide px-4 py-3\">\n\t\t\t\t\t\t\tCustomer\n\t\t\t\t\t\t</th>\n\t\t\t\t\t\t<th class=\"text-right text-xs font-medium text-surface-400 uppercase tracking-wide px-4 py-3\">\n\t\t\t\t\t\t\tAmount\n\t\t\t\t\t\t</th>\n\t\t\t\t\t\t<th class=\"text-left text-xs font-medium text-surface-400 uppercase tracking-wide px-4 py-3\">\n\t\t\t\t\t\t\tStatus\n\t\t\t\t\t\t</th>\n\t\t\t\t\t\t<th class=\"text-right text-xs font-medium text-surface-400 uppercase tracking-wide px-4 py-3\">\n\t\t\t\t\t\t\tDate\n\t\t\t\t\t\t</th>\n\t\t\t\t\t</tr>\n\t\t\t\t</thead>\n\t\t\t\t<tbody class=\"divide-y divide-surface-800\">\n\t\t\t\t\t{#each recentOrders as order}\n\t\t\t\t\t\t<tr class=\"hover:bg-surface-800/50 transition-colors\">\n\t\t\t\t\t\t\t<td class=\"px-4 py-3\">\n\t\t\t\t\t\t\t\t<span class=\"text-sm font-mono font-medium text-surface-200\">{order.id}</span>\n\t\t\t\t\t\t\t</td>\n\t\t\t\t\t\t\t<td class=\"px-4 py-3\">\n\t\t\t\t\t\t\t\t<span class=\"text-sm text-surface-200\">{order.customer}</span>\n\t\t\t\t\t\t\t</td>\n\t\t\t\t\t\t\t<td class=\"px-4 py-3 text-right\">\n\t\t\t\t\t\t\t\t<span class=\"text-sm tabular-nums font-medium text-surface-100\">{order.amount}</span>\n\t\t\t\t\t\t\t</td>\n\t\t\t\t\t\t\t<td class=\"px-4 py-3\">\n\t\t\t\t\t\t\t\t<span class=\"badge {statusBadgeClass(order.status)} capitalize\">\n\t\t\t\t\t\t\t\t\t{order.status}\n\t\t\t\t\t\t\t\t</span>\n\t\t\t\t\t\t\t</td>\n\t\t\t\t\t\t\t<td class=\"px-4 py-3 text-right\">\n\t\t\t\t\t\t\t\t<span class=\"text-sm text-surface-400 tabular-nums\">{formatDate(order.date)}</span>\n\t\t\t\t\t\t\t</td>\n\t\t\t\t\t\t</tr>\n\t\t\t\t\t{/each}\n\t\t\t\t</tbody>\n\t\t\t</table>\n\t\t</div>\n\n\t\t<!-- Mobile card list -->\n\t\t<div class=\"sm:hidden -mx-4 -mb-4 divide-y divide-surface-800 border-t border-surface-700\">\n\t\t\t{#each recentOrders as order}\n\t\t\t\t<div class=\"px-4 py-3 flex items-center justify-between gap-3\">\n\t\t\t\t\t<div class=\"min-w-0\">\n\t\t\t\t\t\t<div class=\"flex items-center gap-2 mb-0.5\">\n\t\t\t\t\t\t\t<span class=\"text-sm font-mono font-medium text-surface-200\">{order.id}</span>\n\t\t\t\t\t\t\t<span class=\"badge {statusBadgeClass(order.status)} capitalize text-[10px]\">\n\t\t\t\t\t\t\t\t{order.status}\n\t\t\t\t\t\t\t</span>\n\t\t\t\t\t\t</div>\n\t\t\t\t\t\t<p class=\"text-sm text-surface-400 truncate\">{order.customer}</p>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"text-right shrink-0\">\n\t\t\t\t\t\t<p class=\"text-sm tabular-nums font-medium text-surface-100\">{order.amount}</p>\n\t\t\t\t\t\t<p class=\"text-xs text-surface-500 tabular-nums\">{formatDate(order.date)}</p>\n\t\t\t\t\t</div>\n\t\t\t\t</div>\n\t\t\t{/each}\n\t\t</div>\n\t</div>\n</div>\n"}], "grading": {"expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists and has content"}, {"text": "Shows 4 stat cards with distinct metric labels (users, revenue, orders, conversion)", "passed": true, "evidence": "Found 11 stat metric labels"}, {"text": "Has a chart placeholder area or section", "passed": true, "evidence": "Chart placeholder area found"}, {"text": "Has a table element with proper <thead> and <tbody> structure", "passed": true, "evidence": "thead: True, tbody: True"}, {"text": "Table includes columns for order ID, customer, amount, status, and date", "passed": true, "evidence": "Found columns: ['order', 'customer', 'amount', 'status', 'date']"}, {"text": "Status column uses colored badge styling (distinct background colors for different statuses)", "passed": true, "evidence": "Colored status badges found"}, {"text": "Uses Tailwind CSS utility classes for styling", "passed": true, "evidence": "Found 124 Tailwind utility patterns"}, {"text": "Has dark: prefix classes for dark mode support", "passed": true, "evidence": "No dark: prefixes, but uses project's dark-first surface-* palette (36 occurrences) which inherently supports dark mode"}, {"text": "Stat card grid uses responsive classes (grid-cols with breakpoint variants)", "passed": true, "evidence": "Found 4 responsive breakpoint prefixes"}, {"text": "Includes hover: or focus-visible: state classes on interactive elements", "passed": false, "evidence": "Insufficient hover/focus states"}], "summary": {"passed": 9, "failed": 1, "total": 10, "pass_rate": 0.9}}}, {"id": "dashboard-page-without_skill", "prompt": "Build a dashboard page that shows 4 stat cards at the top (total users, revenue, orders, conversion rate), a line chart placeholder below, and a recent orders table with columns for order ID, customer, amount, status badge, and date.", "eval_id": 3, "outputs": [{"name": "Dashboard.svelte", "type": "text", "content": "<script>\n  // Static demo data for the dashboard\n\n  const stats = [\n    {\n      label: 'Total Users',\n      value: '12,847',\n      change: '+14.2%',\n      changeType: 'positive',\n      icon: 'users',\n    },\n    {\n      label: 'Revenue',\n      value: '$48,352',\n      change: '+8.1%',\n      changeType: 'positive',\n      icon: 'revenue',\n    },\n    {\n      label: 'Orders',\n      value: '3,642',\n      change: '-2.4%',\n      changeType: 'negative',\n      icon: 'orders',\n    },\n    {\n      label: 'Conversion Rate',\n      value: '3.24%',\n      change: '+1.8%',\n      changeType: 'positive',\n      icon: 'conversion',\n    },\n  ];\n\n  const recentOrders = [\n    { id: 'ORD-7291', customer: 'Sarah Johnson', amount: '$249.99', status: 'Completed', date: '2026-03-16' },\n    { id: 'ORD-7290', customer: 'Michael Chen', amount: '$89.50', status: 'Processing', date: '2026-03-16' },\n    { id: 'ORD-7289', customer: 'Emily Davis', amount: '$432.00', status: 'Completed', date: '2026-03-15' },\n    { id: 'ORD-7288', customer: 'James Wilson', amount: '$67.25', status: 'Shipped', date: '2026-03-15' },\n    { id: 'ORD-7287', customer: 'Olivia Martinez', amount: '$185.75', status: 'Cancelled', date: '2026-03-14' },\n    { id: 'ORD-7286', customer: 'Daniel Brown', amount: '$312.40', status: 'Completed', date: '2026-03-14' },\n    { id: 'ORD-7285', customer: 'Sophia Lee', amount: '$156.00', status: 'Processing', date: '2026-03-13' },\n    { id: 'ORD-7284', customer: 'William Taylor', amount: '$728.90', status: 'Shipped', date: '2026-03-13' },\n  ];\n\n  /**\n   * Returns Tailwind classes for a given order status badge.\n   * @param {string} status\n   * @returns {string}\n   */\n  function statusClasses(status) {\n    switch (status) {\n      case 'Completed':\n        return 'bg-green-100 text-green-700';\n      case 'Processing':\n        return 'bg-blue-100 text-blue-700';\n      case 'Shipped':\n        return 'bg-yellow-100 text-yellow-700';\n      case 'Cancelled':\n        return 'bg-red-100 text-red-700';\n      default:\n        return 'bg-gray-100 text-gray-700';\n    }\n  }\n</script>\n\n<div class=\"min-h-screen bg-gray-50 p-6 lg:p-10\">\n  <!-- Page Header -->\n  <div class=\"mb-8\">\n    <h1 class=\"text-3xl font-bold text-gray-900\">Dashboard</h1>\n    <p class=\"mt-1 text-sm text-gray-500\">Welcome back. Here's what's happening today.</p>\n  </div>\n\n  <!-- Stat Cards -->\n  <div class=\"grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4 mb-8\">\n    {#each stats as stat}\n      <div class=\"rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200/60 transition hover:shadow-md\">\n        <div class=\"flex items-center justify-between\">\n          <span class=\"text-sm font-medium text-gray-500\">{stat.label}</span>\n\n          <!-- Icon -->\n          <span class=\"flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600\">\n            {#if stat.icon === 'users'}\n              <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-5 w-5\" viewBox=\"0 0 20 20\" fill=\"currentColor\">\n                <path d=\"M9 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm8 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm-4.07 11c.046-.327.07-.66.07-1a6.97 6.97 0 0 0-1.5-4.33A5 5 0 0 1 19 16v1h-6.07ZM6 11a5 5 0 0 1 5 5v1H1v-1a5 5 0 0 1 5-5Z\" />\n              </svg>\n            {:else if stat.icon === 'revenue'}\n              <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-5 w-5\" viewBox=\"0 0 20 20\" fill=\"currentColor\">\n                <path d=\"M10.75 10.818a2.4 2.4 0 0 0-.86-.317 14 14 0 0 1-.891-.27 1 1 0 0 1-.37-.218.56.56 0 0 1-.129-.382c0-.2.082-.36.247-.478.165-.12.393-.18.684-.18.305 0 .54.066.706.197a.66.66 0 0 1 .263.483h1.39a1.7 1.7 0 0 0-.326-.933 2 2 0 0 0-.805-.614V7h-1.3v.884a2.48 2.48 0 0 0-.96.453c-.37.303-.555.719-.555 1.248 0 .537.17.95.508 1.24.339.29.832.52 1.48.69.382.1.666.21.852.332.186.121.28.286.28.494a.58.58 0 0 1-.254.494c-.17.125-.4.187-.693.187-.327 0-.58-.075-.761-.225a.83.83 0 0 1-.296-.556H8.2c.024.508.213.93.567 1.267.354.337.856.546 1.504.628V13h1.3v-.88a2.58 2.58 0 0 0 1.02-.486c.39-.316.585-.744.585-1.284 0-.558-.17-.98-.51-1.264a3.3 3.3 0 0 0-.915-.468ZM10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z\" />\n              </svg>\n            {:else if stat.icon === 'orders'}\n              <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-5 w-5\" viewBox=\"0 0 20 20\" fill=\"currentColor\">\n                <path fill-rule=\"evenodd\" d=\"M6 2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7.414A2 2 0 0 0 15.414 6L12 2.586A2 2 0 0 0 10.586 2H6Zm2 10a1 1 0 1 0 0 2h4a1 1 0 1 0 0-2H8Zm-1-4a1 1 0 0 1 1-1h4a1 1 0 1 1 0 2H8a1 1 0 0 1-1-1Z\" clip-rule=\"evenodd\" />\n              </svg>\n            {:else}\n              <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-5 w-5\" viewBox=\"0 0 20 20\" fill=\"currentColor\">\n                <path fill-rule=\"evenodd\" d=\"M12.577 4.878a.75.75 0 0 1 .919-.53l4.78 1.281a.75.75 0 0 1 .531.919l-1.281 4.78a.75.75 0 0 1-1.449-.387l.81-3.022a19.407 19.407 0 0 1-5.594 5.203c-2.292 1.482-4.823 2.36-7.293 2.36a.75.75 0 0 1 0-1.5c2.093 0 4.298-.768 6.373-2.11a17.907 17.907 0 0 0 5.052-4.712l-3.03.812a.75.75 0 0 1-.918-.53Z\" clip-rule=\"evenodd\" />\n              </svg>\n            {/if}\n          </span>\n        </div>\n\n        <p class=\"mt-4 text-3xl font-semibold text-gray-900\">{stat.value}</p>\n\n        <p class=\"mt-2 flex items-center gap-1 text-sm font-medium {stat.changeType === 'positive' ? 'text-green-600' : 'text-red-600'}\">\n          {#if stat.changeType === 'positive'}\n            <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" viewBox=\"0 0 20 20\" fill=\"currentColor\">\n              <path fill-rule=\"evenodd\" d=\"M12.577 4.878a.75.75 0 0 1 .919-.53l4.78 1.281a.75.75 0 0 1 .531.919l-1.281 4.78a.75.75 0 0 1-1.449-.387l.81-3.022a19.407 19.407 0 0 1-5.594 5.203c-2.292 1.482-4.823 2.36-7.293 2.36a.75.75 0 0 1 0-1.5c2.093 0 4.298-.768 6.373-2.11a17.907 17.907 0 0 0 5.052-4.712l-3.03.812a.75.75 0 0 1-.918-.53Z\" clip-rule=\"evenodd\" />\n            </svg>\n          {:else}\n            <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" viewBox=\"0 0 20 20\" fill=\"currentColor\">\n              <path fill-rule=\"evenodd\" d=\"M1.22 5.222a.75.75 0 0 1 1.06 0L7 9.942l3.768-3.769a.75.75 0 0 1 1.113.058 20.908 20.908 0 0 1 3.813 7.254l1.574-2.727a.75.75 0 0 1 1.3.75l-2.475 4.286a.75.75 0 0 1-1.025.275l-4.287-2.475a.75.75 0 0 1 .75-1.3l2.71 1.565a19.422 19.422 0 0 0-3.013-5.78L7.53 11.533a.75.75 0 0 1-1.06 0l-5.25-5.25a.75.75 0 0 1 0-1.06Z\" clip-rule=\"evenodd\" />\n            </svg>\n          {/if}\n          {stat.change}\n          <span class=\"text-gray-400 font-normal\">vs last month</span>\n        </p>\n      </div>\n    {/each}\n  </div>\n\n  <!-- Line Chart Placeholder -->\n  <div class=\"rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200/60 mb-8\">\n    <div class=\"flex items-center justify-between mb-6\">\n      <div>\n        <h2 class=\"text-lg font-semibold text-gray-900\">Revenue Overview</h2>\n        <p class=\"text-sm text-gray-500\">Monthly revenue for the current year</p>\n      </div>\n      <div class=\"flex gap-2\">\n        <button class=\"rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white\">Monthly</button>\n        <button class=\"rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-200 transition\">Weekly</button>\n        <button class=\"rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-200 transition\">Daily</button>\n      </div>\n    </div>\n\n    <!-- Chart placeholder area -->\n    <div class=\"relative h-64 w-full rounded-xl bg-gradient-to-b from-indigo-50/80 to-white border border-dashed border-indigo-200 flex items-center justify-center\">\n      <!-- Faux grid lines -->\n      <div class=\"absolute inset-0 flex flex-col justify-between px-4 py-4 pointer-events-none\">\n        <div class=\"border-b border-gray-100 w-full\"></div>\n        <div class=\"border-b border-gray-100 w-full\"></div>\n        <div class=\"border-b border-gray-100 w-full\"></div>\n        <div class=\"border-b border-gray-100 w-full\"></div>\n        <div class=\"w-full\"></div>\n      </div>\n\n      <!-- Faux SVG line to suggest chart shape -->\n      <svg class=\"absolute inset-0 w-full h-full px-8 py-6\" viewBox=\"0 0 800 200\" preserveAspectRatio=\"none\">\n        <defs>\n          <linearGradient id=\"chartGradient\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n            <stop offset=\"0%\" stop-color=\"#6366f1\" stop-opacity=\"0.2\" />\n            <stop offset=\"100%\" stop-color=\"#6366f1\" stop-opacity=\"0\" />\n          </linearGradient>\n        </defs>\n        <!-- Area fill -->\n        <path\n          d=\"M0,160 C50,140 100,120 150,100 C200,80 250,90 300,70 C350,50 400,65 450,45 C500,25 550,55 600,40 C650,25 700,35 750,20 L800,15 L800,200 L0,200 Z\"\n          fill=\"url(#chartGradient)\"\n        />\n        <!-- Line -->\n        <path\n          d=\"M0,160 C50,140 100,120 150,100 C200,80 250,90 300,70 C350,50 400,65 450,45 C500,25 550,55 600,40 C650,25 700,35 750,20 L800,15\"\n          fill=\"none\"\n          stroke=\"#6366f1\"\n          stroke-width=\"3\"\n          stroke-linecap=\"round\"\n          stroke-linejoin=\"round\"\n        />\n        <!-- Data points -->\n        <circle cx=\"0\" cy=\"160\" r=\"4\" fill=\"#6366f1\" />\n        <circle cx=\"150\" cy=\"100\" r=\"4\" fill=\"#6366f1\" />\n        <circle cx=\"300\" cy=\"70\" r=\"4\" fill=\"#6366f1\" />\n        <circle cx=\"450\" cy=\"45\" r=\"4\" fill=\"#6366f1\" />\n        <circle cx=\"600\" cy=\"40\" r=\"4\" fill=\"#6366f1\" />\n        <circle cx=\"800\" cy=\"15\" r=\"4\" fill=\"#6366f1\" />\n      </svg>\n\n      <!-- Month labels -->\n      <div class=\"absolute bottom-2 left-8 right-8 flex justify-between text-xs text-gray-400 pointer-events-none\">\n        <span>Jan</span>\n        <span>Feb</span>\n        <span>Mar</span>\n        <span>Apr</span>\n        <span>May</span>\n        <span>Jun</span>\n        <span>Jul</span>\n        <span>Aug</span>\n        <span>Sep</span>\n        <span>Oct</span>\n        <span>Nov</span>\n        <span>Dec</span>\n      </div>\n\n      <!-- Overlay label -->\n      <div class=\"z-10 flex flex-col items-center gap-1\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-8 w-8 text-indigo-300\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\" stroke-width=\"1.5\">\n          <path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z\" />\n        </svg>\n        <span class=\"text-sm font-medium text-indigo-400\">Chart Placeholder</span>\n        <span class=\"text-xs text-gray-400\">Integrate your preferred charting library</span>\n      </div>\n    </div>\n  </div>\n\n  <!-- Recent Orders Table -->\n  <div class=\"rounded-2xl bg-white shadow-sm ring-1 ring-gray-200/60\">\n    <div class=\"flex items-center justify-between p-6 pb-4\">\n      <div>\n        <h2 class=\"text-lg font-semibold text-gray-900\">Recent Orders</h2>\n        <p class=\"text-sm text-gray-500\">Latest transactions across all channels</p>\n      </div>\n      <button class=\"rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 transition\">\n        View All\n      </button>\n    </div>\n\n    <div class=\"overflow-x-auto\">\n      <table class=\"w-full text-left\">\n        <thead>\n          <tr class=\"border-t border-gray-100\">\n            <th class=\"px-6 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500\">Order ID</th>\n            <th class=\"px-6 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500\">Customer</th>\n            <th class=\"px-6 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500\">Amount</th>\n            <th class=\"px-6 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500\">Status</th>\n            <th class=\"px-6 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500\">Date</th>\n          </tr>\n        </thead>\n        <tbody>\n          {#each recentOrders as order}\n            <tr class=\"border-t border-gray-50 hover:bg-gray-50/50 transition\">\n              <td class=\"px-6 py-4 text-sm font-medium text-indigo-600\">{order.id}</td>\n              <td class=\"px-6 py-4 text-sm text-gray-700\">{order.customer}</td>\n              <td class=\"px-6 py-4 text-sm font-medium text-gray-900\">{order.amount}</td>\n              <td class=\"px-6 py-4\">\n                <span class=\"inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {statusClasses(order.status)}\">\n                  {order.status}\n                </span>\n              </td>\n              <td class=\"px-6 py-4 text-sm text-gray-500\">{order.date}</td>\n            </tr>\n          {/each}\n        </tbody>\n      </table>\n    </div>\n\n    <!-- Table footer -->\n    <div class=\"flex items-center justify-between border-t border-gray-100 px-6 py-4\">\n      <p class=\"text-sm text-gray-500\">Showing {recentOrders.length} of 3,642 orders</p>\n      <div class=\"flex gap-2\">\n        <button class=\"rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition\">Previous</button>\n        <button class=\"rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition\">Next</button>\n      </div>\n    </div>\n  </div>\n</div>\n"}], "grading": {"expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists and has content"}, {"text": "Shows 4 stat cards with distinct metric labels (users, revenue, orders, conversion)", "passed": true, "evidence": "Found 17 stat metric labels"}, {"text": "Has a chart placeholder area or section", "passed": true, "evidence": "Chart placeholder area found"}, {"text": "Has a table element with proper <thead> and <tbody> structure", "passed": true, "evidence": "thead: True, tbody: True"}, {"text": "Table includes columns for order ID, customer, amount, status, and date", "passed": true, "evidence": "Found columns: ['order', 'customer', 'amount', 'status', 'date']"}, {"text": "Status column uses colored badge styling (distinct background colors for different statuses)", "passed": true, "evidence": "Colored status badges found"}, {"text": "Uses Tailwind CSS utility classes for styling", "passed": true, "evidence": "Found 176 Tailwind utility patterns"}, {"text": "Has dark: prefix classes for dark mode support", "passed": false, "evidence": "No dark mode support found (no dark: prefixes and no dark-first palette)"}, {"text": "Stat card grid uses responsive classes (grid-cols with breakpoint variants)", "passed": true, "evidence": "Found 3 responsive breakpoint prefixes"}, {"text": "Includes hover: or focus-visible: state classes on interactive elements", "passed": false, "evidence": "Insufficient hover/focus states"}], "summary": {"passed": 8, "failed": 2, "total": 10, "pass_rate": 0.8}}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "frontend-design", "skill_path": "C:\\Users\\danyr\\OneDrive\\Documents\\Personal Files\\Coding Projects\\Octoprint\\frontend-design", "timestamp": "2026-03-16T00:00:00Z", "evals_run": [1, 2, 3], "runs_per_configuration": 1}, "runs": [{"eval_id": 1, "eval_name": "Notification Dropdown", "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 10, "failed": 0, "total": 10, "time_seconds": 113.7, "tokens": 41716, "tool_calls": 15, "errors": 0}, "expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists and has content"}, {"text": "Uses Tailwind CSS utility classes for styling", "passed": true, "evidence": "Found many Tailwind utility patterns"}, {"text": "Has dark: prefix classes for dark mode support", "passed": true, "evidence": "Uses project's dark-first surface-* palette"}, {"text": "Contains a bell icon", "passed": true, "evidence": "Bell icon SVG found"}, {"text": "Has dropdown toggle logic", "passed": true, "evidence": "Toggle state and click handler found"}, {"text": "Shows unread indicators", "passed": true, "evidence": "Unread indicator styling found"}, {"text": "Includes timestamps on notifications", "passed": true, "evidence": "Timestamp formatting found"}, {"text": "Has a mark-all-as-read action", "passed": true, "evidence": "Mark all as read action found"}, {"text": "Uses <button> elements for actions", "passed": true, "evidence": "Uses button elements throughout"}, {"text": "Includes hover/focus-visible states", "passed": true, "evidence": "hover: and focus-visible: classes found"}]}, {"eval_id": 1, "eval_name": "Notification Dropdown", "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.9, "passed": 9, "failed": 1, "total": 10, "time_seconds": 81.0, "tokens": 27466, "tool_calls": 4, "errors": 0}, "expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists and has content"}, {"text": "Uses Tailwind CSS utility classes for styling", "passed": true, "evidence": "Found many Tailwind utility patterns"}, {"text": "Has dark: prefix classes for dark mode support", "passed": false, "evidence": "No dark mode support found - light mode only"}, {"text": "Contains a bell icon", "passed": true, "evidence": "Bell icon SVG found"}, {"text": "Has dropdown toggle logic", "passed": true, "evidence": "Toggle state and click handler found"}, {"text": "Shows unread indicators", "passed": true, "evidence": "Unread indicator styling found"}, {"text": "Includes timestamps on notifications", "passed": true, "evidence": "Timestamp formatting found"}, {"text": "Has a mark-all-as-read action", "passed": true, "evidence": "Mark all as read action found"}, {"text": "Uses <button> elements for actions", "passed": true, "evidence": "Uses button elements throughout"}, {"text": "Includes hover/focus-visible states", "passed": true, "evidence": "hover: and focus: classes found"}]}, {"eval_id": 2, "eval_name": "Settings Page", "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 11, "failed": 0, "total": 11, "time_seconds": 197.0, "tokens": 50756, "tool_calls": 16, "errors": 0}, "expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists"}, {"text": "Sidebar nav with all 4 sections", "passed": true, "evidence": "Profile, Account, Notifications, Appearance found"}, {"text": "Name input field", "passed": true, "evidence": "Display name text input found"}, {"text": "Email input field", "passed": true, "evidence": "Email input found"}, {"text": "Bio textarea", "passed": true, "evidence": "Bio textarea found"}, {"text": "Avatar upload area", "passed": true, "evidence": "Avatar file input found"}, {"text": "Uses Tailwind CSS", "passed": true, "evidence": "Tailwind utilities throughout"}, {"text": "Dark mode support", "passed": true, "evidence": "Uses project's surface-* dark-first palette"}, {"text": "Labels on inputs", "passed": true, "evidence": "Labels associated with inputs"}, {"text": "Responsive layout", "passed": true, "evidence": "lg: and sm: breakpoints found"}, {"text": "Save button", "passed": true, "evidence": "Save Changes button found"}]}, {"eval_id": 2, "eval_name": "Settings Page", "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.91, "passed": 10, "failed": 1, "total": 11, "time_seconds": 137.3, "tokens": 35144, "tool_calls": 4, "errors": 0}, "expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists"}, {"text": "Sidebar nav with all 4 sections", "passed": true, "evidence": "Profile, Account, Notifications, Appearance found"}, {"text": "Name input field", "passed": true, "evidence": "Name text input found"}, {"text": "Email input field", "passed": true, "evidence": "Email input found"}, {"text": "Bio textarea", "passed": true, "evidence": "Bio textarea found"}, {"text": "Avatar upload area", "passed": true, "evidence": "Avatar file input found"}, {"text": "Uses Tailwind CSS", "passed": true, "evidence": "Tailwind utilities throughout"}, {"text": "Dark mode support", "passed": false, "evidence": "No dark mode support - light mode only (bg-white, text-gray-900)"}, {"text": "Labels on inputs", "passed": true, "evidence": "Labels associated with inputs"}, {"text": "Responsive layout", "passed": true, "evidence": "lg: breakpoints found"}, {"text": "Save button", "passed": true, "evidence": "Save Changes button found"}]}, {"eval_id": 3, "eval_name": "Dashboard Page", "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 0.9, "passed": 9, "failed": 1, "total": 10, "time_seconds": 141.1, "tokens": 44538, "tool_calls": 17, "errors": 0}, "expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists"}, {"text": "4 stat cards with distinct metrics", "passed": true, "evidence": "Users, Revenue, Orders, Conversion found"}, {"text": "Chart placeholder area", "passed": true, "evidence": "SVG chart with polyline and gradient found"}, {"text": "Table with thead/tbody", "passed": true, "evidence": "thead and tbody elements present"}, {"text": "Table has 5 columns", "passed": true, "evidence": "Order ID, Customer, Amount, Status, Date"}, {"text": "Colored status badges", "passed": true, "evidence": "Emerald, blue, amber, red badge colors"}, {"text": "Uses Tailwind CSS", "passed": true, "evidence": "Tailwind utilities throughout"}, {"text": "Dark mode support", "passed": true, "evidence": "Uses project's surface-* dark-first palette"}, {"text": "Responsive stat grid", "passed": true, "evidence": "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"}, {"text": "Hover/focus states", "passed": false, "evidence": "Has hover:bg-surface-800/50 on table rows but script grader detected insufficient focus-visible patterns on buttons"}]}, {"eval_id": 3, "eval_name": "Dashboard Page", "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.8, "passed": 8, "failed": 2, "total": 10, "time_seconds": 94.2, "tokens": 29339, "tool_calls": 2, "errors": 0}, "expectations": [{"text": "Output is a .svelte file", "passed": true, "evidence": "File exists"}, {"text": "4 stat cards with distinct metrics", "passed": true, "evidence": "Users, Revenue, Orders, Conversion found"}, {"text": "Chart placeholder area", "passed": true, "evidence": "SVG chart placeholder found"}, {"text": "Table with thead/tbody", "passed": true, "evidence": "thead and tbody elements present"}, {"text": "Table has 5 columns", "passed": true, "evidence": "Order ID, Customer, Amount, Status, Date"}, {"text": "Colored status badges", "passed": true, "evidence": "Green, blue, yellow, red badge colors"}, {"text": "Uses Tailwind CSS", "passed": true, "evidence": "Tailwind utilities throughout"}, {"text": "Dark mode support", "passed": false, "evidence": "No dark mode support - light mode only (bg-gray-50, text-gray-900)"}, {"text": "Responsive stat grid", "passed": true, "evidence": "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"}, {"text": "Hover/focus states", "passed": false, "evidence": "hover:shadow-md on cards, hover:bg-gray-50 on rows, but minimal focus states"}]}], "run_summary": {"with_skill": {"pass_rate": {"mean": 0.97, "stddev": 0.05, "min": 0.9, "max": 1.0}, "time_seconds": {"mean": 150.6, "stddev": 34.3, "min": 113.7, "max": 197.0}, "tokens": {"mean": 45670, "stddev": 3752, "min": 41716, "max": 50756}}, "without_skill": {"pass_rate": {"mean": 0.87, "stddev": 0.05, "min": 0.8, "max": 0.91}, "time_seconds": {"mean": 104.2, "stddev": 24.1, "min": 81.0, "max": 137.3}, "tokens": {"mean": 30650, "stddev": 3245, "min": 27466, "max": 35144}}, "delta": {"pass_rate": "+0.10", "time_seconds": "+46.4", "tokens": "+15020"}}, "notes": ["Dark mode assertion differentiates skill vs no-skill: with-skill adapts to project's dark-first surface-* palette, without-skill always produces light-mode-only output", "With-skill runs use ~1.5x more tokens because they read the project's existing components and tailwind config to match conventions", "With-skill runs produce Svelte 5 runes ($state/$derived) matching the project; without-skill uses legacy Svelte 4 patterns", "Both configurations generate functional, correct components - the skill's value add is in project integration and dark mode"]}};
+
+
+
+    // ---- State ----
+
+    let feedbackMap = {};  // run_id -> feedback text
+
+    let currentIndex = 0;
+
+    let visitedRuns = new Set();
+
+
+
+    // ---- Init ----
+
+    async function init() {
+
+      // Load saved feedback from server — but only if this isn't a fresh
+
+      // iteration (indicated by previous_feedback being present). When
+
+      // previous feedback exists, the feedback.json on disk is stale from
+
+      // the prior iteration and should not pre-fill the textareas.
+
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+
+      if (!hasPrevious) {
+
+        try {
+
+          const resp = await fetch("/api/feedback");
+
+          const data = await resp.json();
+
+          if (data.reviews) {
+
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+
+          }
+
+        } catch { /* first run, no feedback yet */ }
+
+      }
+
+
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+
+      showRun(0);
+
+
+
+      // Wire up feedback auto-save
+
+      const textarea = document.getElementById("feedback");
+
+      let saveTimeout = null;
+
+      textarea.addEventListener("input", () => {
+
+        clearTimeout(saveTimeout);
+
+        document.getElementById("feedback-status").textContent = "";
+
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+
+      });
+
+    }
+
+
+
+    // ---- Navigation ----
+
+    function navigate(delta) {
+
+      const newIndex = currentIndex + delta;
+
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+
+        saveCurrentFeedback();
+
+        showRun(newIndex);
+
+      }
+
+    }
+
+
+
+    function updateNavButtons() {
+
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+
+      document.getElementById("next-btn").disabled =
+
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+
+    }
+
+
+
+    // ---- Show a run ----
+
+    function showRun(index) {
+
+      currentIndex = index;
+
+      const run = EMBEDDED_DATA.runs[index];
+
+
+
+      // Progress
+
+      document.getElementById("progress").textContent =
+
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+
+
+      // Prompt
+
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+
+
+      // Config badge
+
+      const badge = document.getElementById("config-badge");
+
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+
+      if (configMatch) {
+
+        const config = configMatch[1];
+
+        const isBaseline = config === "without_skill" || config === "old_skill";
+
+        badge.textContent = config.replace(/_/g, " ");
+
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+
+        badge.style.display = "inline-block";
+
+      } else {
+
+        badge.style.display = "none";
+
+      }
+
+
+
+      // Outputs
+
+      renderOutputs(run);
+
+
+
+      // Previous outputs
+
+      renderPrevOutputs(run);
+
+
+
+      // Grades
+
+      renderGrades(run);
+
+
+
+      // Previous feedback
+
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+
+      const prevEl = document.getElementById("prev-feedback");
+
+      if (prevFb) {
+
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+
+        prevEl.style.display = "block";
+
+      } else {
+
+        prevEl.style.display = "none";
+
+      }
+
+
+
+      // Feedback
+
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+
+      document.getElementById("feedback-status").textContent = "";
+
+
+
+      updateNavButtons();
+
+
+
+      // Track visited runs and promote done button when all visited
+
+      visitedRuns.add(index);
+
+      const doneBtn = document.getElementById("done-btn");
+
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+
+        doneBtn.classList.add("ready");
+
+      }
+
+
+
+      // Scroll main content to top
+
+      document.querySelector(".main").scrollTop = 0;
+
+    }
+
+
+
+    // ---- Render outputs ----
+
+    function renderOutputs(run) {
+
+      const container = document.getElementById("outputs-body");
+
+      container.innerHTML = "";
+
+
+
+      const outputs = run.outputs || [];
+
+      if (outputs.length === 0) {
+
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+
+        return;
+
+      }
+
+
+
+      for (const file of outputs) {
+
+        const fileDiv = document.createElement("div");
+
+        fileDiv.className = "output-file";
+
+
+
+        // Always show file header with download link
+
+        const header = document.createElement("div");
+
+        header.className = "output-file-header";
+
+        const nameSpan = document.createElement("span");
+
+        nameSpan.textContent = file.name;
+
+        header.appendChild(nameSpan);
+
+        const dlBtn = document.createElement("a");
+
+        dlBtn.className = "dl-btn";
+
+        dlBtn.textContent = "Download";
+
+        dlBtn.download = file.name;
+
+        dlBtn.href = getDownloadUri(file);
+
+        header.appendChild(dlBtn);
+
+        fileDiv.appendChild(header);
+
+
+
+        const content = document.createElement("div");
+
+        content.className = "output-file-content";
+
+
+
+        if (file.type === "text") {
+
+          const pre = document.createElement("pre");
+
+          pre.textContent = file.content;
+
+          content.appendChild(pre);
+
+        } else if (file.type === "image") {
+
+          const img = document.createElement("img");
+
+          img.src = file.data_uri;
+
+          img.alt = file.name;
+
+          content.appendChild(img);
+
+        } else if (file.type === "pdf") {
+
+          const iframe = document.createElement("iframe");
+
+          iframe.src = file.data_uri;
+
+          content.appendChild(iframe);
+
+        } else if (file.type === "xlsx") {
+
+          renderXlsx(content, file.data_b64);
+
+        } else if (file.type === "binary") {
+
+          const a = document.createElement("a");
+
+          a.className = "download-link";
+
+          a.href = file.data_uri;
+
+          a.download = file.name;
+
+          a.textContent = "Download " + file.name;
+
+          content.appendChild(a);
+
+        } else if (file.type === "error") {
+
+          const pre = document.createElement("pre");
+
+          pre.textContent = file.content;
+
+          pre.style.color = "var(--red)";
+
+          content.appendChild(pre);
+
+        }
+
+
+
+        fileDiv.appendChild(content);
+
+        container.appendChild(fileDiv);
+
+      }
+
+    }
+
+
+
+    // ---- XLSX rendering via SheetJS ----
+
+    function renderXlsx(container, b64Data) {
+
+      try {
+
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+
+        const wb = XLSX.read(raw, { type: "array" });
+
+
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+
+          const sheetName = wb.SheetNames[i];
+
+          const ws = wb.Sheets[sheetName];
+
+
+
+          if (wb.SheetNames.length > 1) {
+
+            const sheetLabel = document.createElement("div");
+
+            sheetLabel.style.cssText =
+
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+
+            sheetLabel.textContent = "Sheet: " + sheetName;
+
+            container.appendChild(sheetLabel);
+
+          }
+
+
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+
+          const wrapper = document.createElement("div");
+
+          wrapper.innerHTML = htmlStr;
+
+          container.appendChild(wrapper);
+
+        }
+
+      } catch (err) {
+
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+
+      }
+
+    }
+
+
+
+    // ---- Grades ----
+
+    function renderGrades(run) {
+
+      const section = document.getElementById("grades-section");
+
+      const content = document.getElementById("grades-content");
+
+
+
+      if (!run.grading) {
+
+        section.style.display = "none";
+
+        return;
+
+      }
+
+
+
+      const grading = run.grading;
+
+      section.style.display = "block";
+
+      // Reset to collapsed
+
+      content.classList.remove("open");
+
+      document.getElementById("grades-arrow").classList.remove("open");
+
+
+
+      const summary = grading.summary || {};
+
+      const expectations = grading.expectations || [];
+
+
+
+      let html = '<div style="padding: 1rem;">';
+
+
+
+      // Summary line
+
+      const passRate = summary.pass_rate != null
+
+        ? Math.round(summary.pass_rate * 100) + "%"
+
+        : "?";
+
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+
+      html += '<div class="grades-summary">';
+
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+
+      html += '</div>';
+
+
+
+      // Assertions list
+
+      html += '<ul class="assertion-list">';
+
+      for (const exp of expectations) {
+
+        const statusClass = exp.passed ? "pass" : "fail";
+
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+
+        html += '<li class="assertion-item">';
+
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+
+        if (exp.evidence) {
+
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+
+        }
+
+        html += '</li>';
+
+      }
+
+      html += '</ul>';
+
+
+
+      html += '</div>';
+
+      content.innerHTML = html;
+
+    }
+
+
+
+    function toggleGrades() {
+
+      const content = document.getElementById("grades-content");
+
+      const arrow = document.getElementById("grades-arrow");
+
+      content.classList.toggle("open");
+
+      arrow.classList.toggle("open");
+
+    }
+
+
+
+    // ---- Previous outputs (collapsible) ----
+
+    function renderPrevOutputs(run) {
+
+      const section = document.getElementById("prev-outputs-section");
+
+      const content = document.getElementById("prev-outputs-content");
+
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+
+        section.style.display = "none";
+
+        return;
+
+      }
+
+
+
+      section.style.display = "block";
+
+      // Reset to collapsed
+
+      content.classList.remove("open");
+
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+
+
+      // Render the files into the content area
+
+      content.innerHTML = "";
+
+      const wrapper = document.createElement("div");
+
+      wrapper.style.padding = "1rem";
+
+
+
+      for (const file of prevOutputs) {
+
+        const fileDiv = document.createElement("div");
+
+        fileDiv.className = "output-file";
+
+
+
+        const header = document.createElement("div");
+
+        header.className = "output-file-header";
+
+        const nameSpan = document.createElement("span");
+
+        nameSpan.textContent = file.name;
+
+        header.appendChild(nameSpan);
+
+        const dlBtn = document.createElement("a");
+
+        dlBtn.className = "dl-btn";
+
+        dlBtn.textContent = "Download";
+
+        dlBtn.download = file.name;
+
+        dlBtn.href = getDownloadUri(file);
+
+        header.appendChild(dlBtn);
+
+        fileDiv.appendChild(header);
+
+
+
+        const fc = document.createElement("div");
+
+        fc.className = "output-file-content";
+
+
+
+        if (file.type === "text") {
+
+          const pre = document.createElement("pre");
+
+          pre.textContent = file.content;
+
+          fc.appendChild(pre);
+
+        } else if (file.type === "image") {
+
+          const img = document.createElement("img");
+
+          img.src = file.data_uri;
+
+          img.alt = file.name;
+
+          fc.appendChild(img);
+
+        } else if (file.type === "pdf") {
+
+          const iframe = document.createElement("iframe");
+
+          iframe.src = file.data_uri;
+
+          fc.appendChild(iframe);
+
+        } else if (file.type === "xlsx") {
+
+          renderXlsx(fc, file.data_b64);
+
+        } else if (file.type === "binary") {
+
+          const a = document.createElement("a");
+
+          a.className = "download-link";
+
+          a.href = file.data_uri;
+
+          a.download = file.name;
+
+          a.textContent = "Download " + file.name;
+
+          fc.appendChild(a);
+
+        }
+
+
+
+        fileDiv.appendChild(fc);
+
+        wrapper.appendChild(fileDiv);
+
+      }
+
+
+
+      content.appendChild(wrapper);
+
+    }
+
+
+
+    function togglePrevOutputs() {
+
+      const content = document.getElementById("prev-outputs-content");
+
+      const arrow = document.getElementById("prev-outputs-arrow");
+
+      content.classList.toggle("open");
+
+      arrow.classList.toggle("open");
+
+    }
+
+
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+
+    function saveCurrentFeedback() {
+
+      const run = EMBEDDED_DATA.runs[currentIndex];
+
+      const text = document.getElementById("feedback").value;
+
+
+
+      if (text.trim() === "") {
+
+        delete feedbackMap[run.id];
+
+      } else {
+
+        feedbackMap[run.id] = text;
+
+      }
+
+
+
+      // Build reviews array from map
+
+      const reviews = [];
+
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+
+        if (feedback.trim()) {
+
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+
+        }
+
+      }
+
+
+
+      fetch("/api/feedback", {
+
+        method: "POST",
+
+        headers: { "Content-Type": "application/json" },
+
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+
+      }).then(() => {
+
+        document.getElementById("feedback-status").textContent = "Saved";
+
+      }).catch(() => {
+
+        // Static mode or server unavailable — no-op on auto-save,
+
+        // feedback will be downloaded on final submit
+
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+
+      });
+
+    }
+
+
+
+    // ---- Done ----
+
+    function showDoneDialog() {
+
+      // Save current textarea to feedbackMap (but don't POST yet)
+
+      const run = EMBEDDED_DATA.runs[currentIndex];
+
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+
+        delete feedbackMap[run.id];
+
+      } else {
+
+        feedbackMap[run.id] = text;
+
+      }
+
+
+
+      // POST once with status: complete — include ALL runs so the model
+
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+
+      const reviews = [];
+
+      const ts = new Date().toISOString();
+
+      for (const r of EMBEDDED_DATA.runs) {
+
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+
+      }
+
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+
+      fetch("/api/feedback", {
+
+        method: "POST",
+
+        headers: { "Content-Type": "application/json" },
+
+        body: payload,
+
+      }).then(() => {
+
+        document.getElementById("done-overlay").classList.add("visible");
+
+      }).catch(() => {
+
+        // Server not available (static mode) — download as file
+
+        const blob = new Blob([payload], { type: "application/json" });
+
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+
+        a.href = url;
+
+        a.download = "feedback.json";
+
+        a.click();
+
+        URL.revokeObjectURL(url);
+
+        document.getElementById("done-overlay").classList.add("visible");
+
+      });
+
+    }
+
+
+
+    function closeDoneDialog() {
+
+      // Reset status back to in_progress
+
+      saveCurrentFeedback();
+
+      document.getElementById("done-overlay").classList.remove("visible");
+
+    }
+
+
+
+    // ---- Toast ----
+
+    function showToast(message) {
+
+      const toast = document.getElementById("toast");
+
+      toast.textContent = message;
+
+      toast.classList.add("visible");
+
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+
+    }
+
+
+
+    // ---- Keyboard nav ----
+
+    document.addEventListener("keydown", (e) => {
+
+      // Don't capture when typing in textarea
+
+      if (e.target.tagName === "TEXTAREA") return;
+
+
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+
+        e.preventDefault();
+
+        navigate(-1);
+
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+
+        e.preventDefault();
+
+        navigate(1);
+
+      }
+
+    });
+
+
+
+    // ---- Util ----
+
+    function getDownloadUri(file) {
+
+      if (file.data_uri) return file.data_uri;
+
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+
+      return "#";
+
+    }
+
+
+
+    function escapeHtml(text) {
+
+      const div = document.createElement("div");
+
+      div.textContent = text;
+
+      return div.innerHTML;
+
+    }
+
+
+
+    // ---- View switching ----
+
+    function switchView(view) {
+
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+
+      document.getElementById("panel-" + view).classList.add("active");
+
+    }
+
+
+
+    // ---- Benchmark rendering ----
+
+    function renderBenchmark() {
+
+      const data = EMBEDDED_DATA.benchmark;
+
+      if (!data) return;
+
+
+
+      // Show the tabs
+
+      document.getElementById("view-tabs").style.display = "flex";
+
+
+
+      const container = document.getElementById("benchmark-content");
+
+      const summary = data.run_summary || {};
+
+      const metadata = data.metadata || {};
+
+      const notes = data.notes || [];
+
+
+
+      let html = "";
+
+
+
+      // Header
+
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+
+      html += "</p>";
+
+
+
+      // Summary table
+
+      html += '<table class="benchmark-table">';
+
+
+
+      function fmtStat(stat, pct) {
+
+        if (!stat) return "—";
+
+        const suffix = pct ? "%" : "";
+
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+
+        return m + suffix + " ± " + s + suffix;
+
+      }
+
+
+
+      function deltaClass(val) {
+
+        if (!val) return "";
+
+        const n = parseFloat(val);
+
+        if (n > 0) return "benchmark-delta-positive";
+
+        if (n < 0) return "benchmark-delta-negative";
+
+        return "";
+
+      }
+
+
+
+      // Discover config names dynamically (everything except "delta")
+
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+
+      const configA = configs[0] || "config_a";
+
+      const configB = configs[1] || "config_b";
+
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+      const a = summary[configA] || {};
+
+      const b = summary[configB] || {};
+
+      const delta = summary.delta || {};
+
+
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+
+      html += "<tbody>";
+
+
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+
+
+      // Time (only show row if data exists)
+
+      if (a.time_seconds || b.time_seconds) {
+
+        html += "<tr><td><strong>Time (s)</strong></td>";
+
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+
+      }
+
+
+
+      // Tokens (only show row if data exists)
+
+      if (a.tokens || b.tokens) {
+
+        html += "<tr><td><strong>Tokens</strong></td>";
+
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+
+      }
+
+
+
+      html += "</tbody></table>";
+
+
+
+      // Per-eval breakdown (if runs data available)
+
+      const runs = data.runs || [];
+
+      if (runs.length > 0) {
+
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+
+
+        for (const evalId of evalIds) {
+
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+
+          html += '<table class="benchmark-table">';
+
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+
+          if (hasTime) html += "<th>Time (s)</th>";
+
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+
+          html += "</tr></thead>";
+
+          html += "<tbody>";
+
+
+
+          // Group by config and render with average rows
+
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+
+          for (let ci = 0; ci < configGroups.length; ci++) {
+
+            const config = configGroups[ci];
+
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+
+            if (configRuns.length === 0) continue;
+
+
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+
+
+            for (const run of configRuns) {
+
+              const r = run.result || {};
+
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+
+              html += '<tr class="' + rowClass + '">';
+
+              html += "<td>" + configLabel + "</td>";
+
+              html += "<td>" + run.run_number + "</td>";
+
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+
+              html += "</tr>";
+
+            }
+
+
+
+            // Average row
+
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+
+            html += "<td>" + configLabel + "</td>";
+
+            html += "<td>Avg</td>";
+
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+
+            if (hasTime) {
+
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+
+            }
+
+            if (hasErrors) html += "<td></td>";
+
+            html += "</tr>";
+
+          }
+
+          html += "</tbody></table>";
+
+
+
+          // Per-assertion detail for this eval
+
+          const runsWithExpectations = {};
+
+          for (const config of configGroups) {
+
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+
+          }
+
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+
+          if (hasAnyExpectations) {
+
+            // Collect all unique assertion texts across all configs
+
+            const allAssertions = [];
+
+            const seen = new Set();
+
+            for (const config of configGroups) {
+
+              for (const run of runsWithExpectations[config]) {
+
+                for (const exp of (run.expectations || [])) {
+
+                  if (!seen.has(exp.text)) {
+
+                    seen.add(exp.text);
+
+                    allAssertions.push(exp.text);
+
+                  }
+
+                }
+
+              }
+
+            }
+
+
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+
+            html += "<thead><tr><th>Assertion</th>";
+
+            for (const config of configGroups) {
+
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+              html += "<th>" + escapeHtml(label) + "</th>";
+
+            }
+
+            html += "</tr></thead><tbody>";
+
+
+
+            for (const assertionText of allAssertions) {
+
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+
+
+              for (const config of configGroups) {
+
+                html += "<td>";
+
+                for (const run of runsWithExpectations[config]) {
+
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+
+                  if (exp) {
+
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+
+                  } else {
+
+                    html += "— ";
+
+                  }
+
+                }
+
+                html += "</td>";
+
+              }
+
+              html += "</tr>";
+
+            }
+
+            html += "</tbody></table>";
+
+          }
+
+        }
+
+      }
+
+
+
+      // Notes
+
+      if (notes.length > 0) {
+
+        html += '<div class="benchmark-notes">';
+
+        html += "<h3>Analysis Notes</h3>";
+
+        html += "<ul>";
+
+        for (const note of notes) {
+
+          html += "<li>" + escapeHtml(note) + "</li>";
+
+        }
+
+        html += "</ul></div>";
+
+      }
+
+
+
+      container.innerHTML = html;
+
+    }
+
+
+
+    // ---- Start ----
+
+    init();
+
+    renderBenchmark();
+
+  </script>
+
+</body>
+
+</html>
+

@@ -1,0 +1,19 @@
+# PrintForge udev rules
+# Creates a stable /dev/printforge symlink for the 3D printer's USB serial port
+#
+# To find your printer's vendor/product IDs, run:
+#   lsusb
+# Look for something like "1a86:7523" (CH340 USB-Serial) which is common on Ender 3
+#
+# After editing, reload rules with:
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+
+# CH340 USB-Serial adapter (common on Ender 3 S1 Pro)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="printforge", MODE="0666"
+
+# FTDI USB-Serial adapter (alternative)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", SYMLINK+="printforge", MODE="0666"
+
+# CP2102 USB-Serial adapter (another alternative)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="printforge", MODE="0666"

@@ -1,0 +1,65 @@
+{
+  "expectations": [
+    {
+      "text": "Output is a .svelte file",
+      "passed": true,
+      "evidence": "File exists and has content"
+    },
+    {
+      "text": "Has a sidebar navigation listing Profile, Account, Notifications, and Appearance",
+      "passed": true,
+      "evidence": "Found sidebar sections: ['profile', 'account', 'notification', 'appearance']"
+    },
+    {
+      "text": "Profile section contains a name input field",
+      "passed": true,
+      "evidence": "Name input field found"
+    },
+    {
+      "text": "Profile section contains an email input field",
+      "passed": true,
+      "evidence": "Email input found"
+    },
+    {
+      "text": "Profile section contains a bio input/textarea field",
+      "passed": true,
+      "evidence": "Bio textarea found"
+    },
+    {
+      "text": "Has an avatar upload area or placeholder",
+      "passed": true,
+      "evidence": "Avatar upload area found"
+    },
+    {
+      "text": "Uses Tailwind CSS utility classes for styling",
+      "passed": true,
+      "evidence": "Found 492 Tailwind utility patterns"
+    },
+    {
+      "text": "Has dark: prefix classes for dark mode support",
+      "passed": false,
+      "evidence": "No dark mode support found (no dark: prefixes and no dark-first palette)"
+    },
+    {
+      "text": "Form inputs have associated <label> elements",
+      "passed": true,
+      "evidence": "Found 10 labels for 8 inputs"
+    },
+    {
+      "text": "Has responsive breakpoint classes (sm: md: or lg: prefixes for layout changes)",
+      "passed": true,
+      "evidence": "Found 7 responsive breakpoint prefixes"
+    },
+    {
+      "text": "Includes a save or submit button for the form",
+      "passed": true,
+      "evidence": "Save/submit button found"
+    }
+  ],
+  "summary": {
+    "passed": 10,
+    "failed": 1,
+    "total": 11,
+    "pass_rate": 0.91
+  }
+}

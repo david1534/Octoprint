@@ -1,0 +1,17 @@
+{
+  "eval_id": 3,
+  "eval_name": "dashboard-page",
+  "prompt": "Build a dashboard page that shows 4 stat cards at the top (total users, revenue, orders, conversion rate), a line chart placeholder below, and a recent orders table with columns for order ID, customer, amount, status badge, and date.",
+  "assertions": [
+    "Output is a .svelte file",
+    "Shows 4 stat cards with distinct metric labels (users, revenue, orders, conversion)",
+    "Has a chart placeholder area or section",
+    "Has a table element with proper <thead> and <tbody> structure",
+    "Table includes columns for order ID, customer, amount, status, and date",
+    "Status column uses colored badge styling (distinct background colors for different statuses)",
+    "Uses Tailwind CSS utility classes for styling",
+    "Has dark: prefix classes for dark mode support",
+    "Stat card grid uses responsive classes (grid-cols with breakpoint variants)",
+    "Includes hover: or focus-visible: state classes on interactive elements"
+  ]
+}

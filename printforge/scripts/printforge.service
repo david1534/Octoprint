@@ -1,0 +1,27 @@
+# PrintForge systemd service
+# NOTE: The install script (scripts/install.sh) generates this file dynamically
+# with auto-detected values for serial port, user, and paths. This static copy
+# is a reference template — the installed version may differ.
+
+[Unit]
+Description=PrintForge 3D Printer Control System
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/printforge
+ExecStart=/opt/printforge/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PRINTFORGE_SERIAL_PORT=/dev/ttyUSB0
+Environment=PRINTFORGE_SERIAL_BAUDRATE=115200
+Environment=PRINTFORGE_GCODE_DIR=/home/pi/printforge/gcodes
+Environment=PRINTFORGE_DATA_DIR=/home/pi/printforge/data
+Environment=PRINTFORGE_LOG_LEVEL=INFO
+
+[Install]
+WantedBy=multi-user.target

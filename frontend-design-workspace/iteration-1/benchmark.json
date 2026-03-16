@@ -1,0 +1,204 @@
+{
+  "metadata": {
+    "skill_name": "frontend-design",
+    "skill_path": "C:\\Users\\danyr\\OneDrive\\Documents\\Personal Files\\Coding Projects\\Octoprint\\frontend-design",
+    "timestamp": "2026-03-16T00:00:00Z",
+    "evals_run": [1, 2, 3],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "eval_name": "Notification Dropdown",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 10,
+        "failed": 0,
+        "total": 10,
+        "time_seconds": 113.7,
+        "tokens": 41716,
+        "tool_calls": 15,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output is a .svelte file", "passed": true, "evidence": "File exists and has content"},
+        {"text": "Uses Tailwind CSS utility classes for styling", "passed": true, "evidence": "Found many Tailwind utility patterns"},
+        {"text": "Has dark: prefix classes for dark mode support", "passed": true, "evidence": "Uses project's dark-first surface-* palette"},
+        {"text": "Contains a bell icon", "passed": true, "evidence": "Bell icon SVG found"},
+        {"text": "Has dropdown toggle logic", "passed": true, "evidence": "Toggle state and click handler found"},
+        {"text": "Shows unread indicators", "passed": true, "evidence": "Unread indicator styling found"},
+        {"text": "Includes timestamps on notifications", "passed": true, "evidence": "Timestamp formatting found"},
+        {"text": "Has a mark-all-as-read action", "passed": true, "evidence": "Mark all as read action found"},
+        {"text": "Uses <button> elements for actions", "passed": true, "evidence": "Uses button elements throughout"},
+        {"text": "Includes hover/focus-visible states", "passed": true, "evidence": "hover: and focus-visible: classes found"}
+      ]
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "Notification Dropdown",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.9,
+        "passed": 9,
+        "failed": 1,
+        "total": 10,
+        "time_seconds": 81.0,
+        "tokens": 27466,
+        "tool_calls": 4,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output is a .svelte file", "passed": true, "evidence": "File exists and has content"},
+        {"text": "Uses Tailwind CSS utility classes for styling", "passed": true, "evidence": "Found many Tailwind utility patterns"},
+        {"text": "Has dark: prefix classes for dark mode support", "passed": false, "evidence": "No dark mode support found - light mode only"},
+        {"text": "Contains a bell icon", "passed": true, "evidence": "Bell icon SVG found"},
+        {"text": "Has dropdown toggle logic", "passed": true, "evidence": "Toggle state and click handler found"},
+        {"text": "Shows unread indicators", "passed": true, "evidence": "Unread indicator styling found"},
+        {"text": "Includes timestamps on notifications", "passed": true, "evidence": "Timestamp formatting found"},
+        {"text": "Has a mark-all-as-read action", "passed": true, "evidence": "Mark all as read action found"},
+        {"text": "Uses <button> elements for actions", "passed": true, "evidence": "Uses button elements throughout"},
+        {"text": "Includes hover/focus-visible states", "passed": true, "evidence": "hover: and focus: classes found"}
+      ]
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "Settings Page",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 11,
+        "failed": 0,
+        "total": 11,
+        "time_seconds": 197.0,
+        "tokens": 50756,
+        "tool_calls": 16,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output is a .svelte file", "passed": true, "evidence": "File exists"},
+        {"text": "Sidebar nav with all 4 sections", "passed": true, "evidence": "Profile, Account, Notifications, Appearance found"},
+        {"text": "Name input field", "passed": true, "evidence": "Display name text input found"},
+        {"text": "Email input field", "passed": true, "evidence": "Email input found"},
+        {"text": "Bio textarea", "passed": true, "evidence": "Bio textarea found"},
+        {"text": "Avatar upload area", "passed": true, "evidence": "Avatar file input found"},
+        {"text": "Uses Tailwind CSS", "passed": true, "evidence": "Tailwind utilities throughout"},
+        {"text": "Dark mode support", "passed": true, "evidence": "Uses project's surface-* dark-first palette"},
+        {"text": "Labels on inputs", "passed": true, "evidence": "Labels associated with inputs"},
+        {"text": "Responsive layout", "passed": true, "evidence": "lg: and sm: breakpoints found"},
+        {"text": "Save button", "passed": true, "evidence": "Save Changes button found"}
+      ]
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "Settings Page",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.91,
+        "passed": 10,
+        "failed": 1,
+        "total": 11,
+        "time_seconds": 137.3,
+        "tokens": 35144,
+        "tool_calls": 4,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output is a .svelte file", "passed": true, "evidence": "File exists"},
+        {"text": "Sidebar nav with all 4 sections", "passed": true, "evidence": "Profile, Account, Notifications, Appearance found"},
+        {"text": "Name input field", "passed": true, "evidence": "Name text input found"},
+        {"text": "Email input field", "passed": true, "evidence": "Email input found"},
+        {"text": "Bio textarea", "passed": true, "evidence": "Bio textarea found"},
+        {"text": "Avatar upload area", "passed": true, "evidence": "Avatar file input found"},
+        {"text": "Uses Tailwind CSS", "passed": true, "evidence": "Tailwind utilities throughout"},
+        {"text": "Dark mode support", "passed": false, "evidence": "No dark mode support - light mode only (bg-white, text-gray-900)"},
+        {"text": "Labels on inputs", "passed": true, "evidence": "Labels associated with inputs"},
+        {"text": "Responsive layout", "passed": true, "evidence": "lg: breakpoints found"},
+        {"text": "Save button", "passed": true, "evidence": "Save Changes button found"}
+      ]
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "Dashboard Page",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.9,
+        "passed": 9,
+        "failed": 1,
+        "total": 10,
+        "time_seconds": 141.1,
+        "tokens": 44538,
+        "tool_calls": 17,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output is a .svelte file", "passed": true, "evidence": "File exists"},
+        {"text": "4 stat cards with distinct metrics", "passed": true, "evidence": "Users, Revenue, Orders, Conversion found"},
+        {"text": "Chart placeholder area", "passed": true, "evidence": "SVG chart with polyline and gradient found"},
+        {"text": "Table with thead/tbody", "passed": true, "evidence": "thead and tbody elements present"},
+        {"text": "Table has 5 columns", "passed": true, "evidence": "Order ID, Customer, Amount, Status, Date"},
+        {"text": "Colored status badges", "passed": true, "evidence": "Emerald, blue, amber, red badge colors"},
+        {"text": "Uses Tailwind CSS", "passed": true, "evidence": "Tailwind utilities throughout"},
+        {"text": "Dark mode support", "passed": true, "evidence": "Uses project's surface-* dark-first palette"},
+        {"text": "Responsive stat grid", "passed": true, "evidence": "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"},
+        {"text": "Hover/focus states", "passed": false, "evidence": "Has hover:bg-surface-800/50 on table rows but script grader detected insufficient focus-visible patterns on buttons"}
+      ]
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "Dashboard Page",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.8,
+        "passed": 8,
+        "failed": 2,
+        "total": 10,
+        "time_seconds": 94.2,
+        "tokens": 29339,
+        "tool_calls": 2,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output is a .svelte file", "passed": true, "evidence": "File exists"},
+        {"text": "4 stat cards with distinct metrics", "passed": true, "evidence": "Users, Revenue, Orders, Conversion found"},
+        {"text": "Chart placeholder area", "passed": true, "evidence": "SVG chart placeholder found"},
+        {"text": "Table with thead/tbody", "passed": true, "evidence": "thead and tbody elements present"},
+        {"text": "Table has 5 columns", "passed": true, "evidence": "Order ID, Customer, Amount, Status, Date"},
+        {"text": "Colored status badges", "passed": true, "evidence": "Green, blue, yellow, red badge colors"},
+        {"text": "Uses Tailwind CSS", "passed": true, "evidence": "Tailwind utilities throughout"},
+        {"text": "Dark mode support", "passed": false, "evidence": "No dark mode support - light mode only (bg-gray-50, text-gray-900)"},
+        {"text": "Responsive stat grid", "passed": true, "evidence": "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"},
+        {"text": "Hover/focus states", "passed": false, "evidence": "hover:shadow-md on cards, hover:bg-gray-50 on rows, but minimal focus states"}
+      ]
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {"mean": 0.97, "stddev": 0.05, "min": 0.90, "max": 1.0},
+      "time_seconds": {"mean": 150.6, "stddev": 34.3, "min": 113.7, "max": 197.0},
+      "tokens": {"mean": 45670, "stddev": 3752, "min": 41716, "max": 50756}
+    },
+    "without_skill": {
+      "pass_rate": {"mean": 0.87, "stddev": 0.05, "min": 0.80, "max": 0.91},
+      "time_seconds": {"mean": 104.2, "stddev": 24.1, "min": 81.0, "max": 137.3},
+      "tokens": {"mean": 30650, "stddev": 3245, "min": 27466, "max": 35144}
+    },
+    "delta": {
+      "pass_rate": "+0.10",
+      "time_seconds": "+46.4",
+      "tokens": "+15020"
+    }
+  },
+  "notes": [
+    "Dark mode assertion differentiates skill vs no-skill: with-skill adapts to project's dark-first surface-* palette, without-skill always produces light-mode-only output",
+    "With-skill runs use ~1.5x more tokens because they read the project's existing components and tailwind config to match conventions",
+    "With-skill runs produce Svelte 5 runes ($state/$derived) matching the project; without-skill uses legacy Svelte 4 patterns",
+    "Both configurations generate functional, correct components - the skill's value add is in project integration and dark mode"
+  ]
+}

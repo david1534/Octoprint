@@ -1,0 +1,18 @@
+# go2rtc configuration for PrintForge
+# Documentation: https://github.com/AlexxIT/go2rtc
+
+streams:
+  printer_cam:
+    # USB Webcam (most common)
+    - ffmpeg:device=/dev/video0#video=1280x720#raw
+    # If using Raspberry Pi Camera Module, comment above and uncomment below:
+    # - exec:libcamera-vid -t 0 --inline -o - --width 1280 --height 720 --framerate 15
+
+api:
+  listen: ":1984"
+
+webrtc:
+  listen: ":8555"
+  # ICE servers for WebRTC (needed for remote access through tunnel)
+  # ice_servers:
+  #   - urls: [stun:stun.l.google.com:19302]

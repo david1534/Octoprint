@@ -1,0 +1,60 @@
+{
+  "expectations": [
+    {
+      "text": "Output is a .svelte file",
+      "passed": true,
+      "evidence": "File exists and has content"
+    },
+    {
+      "text": "Uses Tailwind CSS utility classes for styling (not custom CSS as primary approach)",
+      "passed": true,
+      "evidence": "Found 70 Tailwind utility patterns"
+    },
+    {
+      "text": "Has dark: prefix classes for dark mode support",
+      "passed": true,
+      "evidence": "No dark: prefixes, but uses project's dark-first surface-* palette (22 occurrences) which inherently supports dark mode"
+    },
+    {
+      "text": "Contains a bell icon (SVG element or icon component import)",
+      "passed": true,
+      "evidence": "Bell icon SVG found"
+    },
+    {
+      "text": "Has dropdown toggle logic (click handler with visibility state variable)",
+      "passed": true,
+      "evidence": "Toggle state and click handler found"
+    },
+    {
+      "text": "Shows unread indicators (visual dot or badge on notification items)",
+      "passed": true,
+      "evidence": "Unread indicator styling found"
+    },
+    {
+      "text": "Includes timestamps on notification items",
+      "passed": true,
+      "evidence": "Timestamp formatting found"
+    },
+    {
+      "text": "Has a mark-all-as-read action (button or link)",
+      "passed": true,
+      "evidence": "Mark all as read action found"
+    },
+    {
+      "text": "Uses <button> elements for interactive actions rather than div with onclick",
+      "passed": true,
+      "evidence": "Found 5 <button> elements, 1 div onclick"
+    },
+    {
+      "text": "Includes hover: and/or focus-visible: state classes on interactive elements",
+      "passed": true,
+      "evidence": "Found 8 hover: and 16 focus states"
+    }
+  ],
+  "summary": {
+    "passed": 10,
+    "failed": 0,
+    "total": 10,
+    "pass_rate": 1.0
+  }
+}

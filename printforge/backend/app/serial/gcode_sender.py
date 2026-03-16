@@ -1,0 +1,265 @@
+"""G-code file sender for print jobs.
+
+Streams G-code line by line from disk through the command queue.
+Handles pause, resume, and cancel operations with safe nozzle parking.
+"""
+
+import asyncio
+import logging
+import time
+from pathlib import Path
+from typing import Optional
+
+from .command_queue import CommandPriority, CommandQueue
+from .protocol import CommandResult
+
+logger = logging.getLogger(__name__)
+
+
+class GcodeSender:
+    """Streams G-code from a file through the command queue."""
+
+    def __init__(self, command_queue: CommandQueue):
+        self._queue = command_queue
+        self._paused = False
+        self._cancelled = False
+        self._current_line = 0
+        self._total_lines = 0
+        self._current_file: Optional[str] = None
+        self._start_time: Optional[float] = None
+        self._pause_time: Optional[float] = None
+        self._total_pause_duration: float = 0.0
+        self._current_layer = 0
+        self._total_layers = 0
+        self._task: Optional[asyncio.Task] = None
+        # Saved position for resume
+        self._saved_x: float = 0
+        self._saved_y: float = 0
+        self._saved_z: float = 0
+        self._saved_e: float = 0
+        self._saved_feedrate: int = 1000
+
+    @property
+    def is_printing(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
+    @property
+    def progress(self) -> float:
+        if self._total_lines == 0:
+            return 0.0
+        return min(100.0, (self._current_line / self._total_lines) * 100)
+
+    @property
+    def current_line(self) -> int:
+        return self._current_line
+
+    @property
+    def total_lines(self) -> int:
+        return self._total_lines
+
+    @property
+    def current_layer(self) -> int:
+        return self._current_layer
+
+    @property
+    def total_layers(self) -> int:
+        return self._total_layers
+
+    @property
+    def current_file(self) -> Optional[str]:
+        return self._current_file
+
+    @property
+    def elapsed_seconds(self) -> float:
+        if self._start_time is None:
+            return 0.0
+        return time.time() - self._start_time - self._total_pause_duration
+
+    @property
+    def estimated_remaining(self) -> float:
+        if self._current_line == 0 or self.elapsed_seconds == 0:
+            return 0.0
+        rate = self._current_line / self.elapsed_seconds
+        remaining_lines = self._total_lines - self._current_line
+        return remaining_lines / rate if rate > 0 else 0.0
+
+    async def start_print(self, filepath: Path) -> None:
+        """Start printing a G-code file."""
+        if self.is_printing:
+            raise RuntimeError("A print is already in progress")
+
+        self._current_file = filepath.name
+        self._paused = False
+        self._cancelled = False
+        self._current_line = 0
+        self._current_layer = 0
+        self._total_pause_duration = 0.0
+
+        # Count printable lines and layers
+        self._total_lines = 0
+        self._total_layers = 0
+        with open(filepath, "r") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped and not stripped.startswith(";"):
+                    self._total_lines += 1
+                # Count layer changes (slicer comments)
+                if ";LAYER:" in stripped or "; LAYER:" in stripped:
+                    self._total_layers += 1
+
+        self._start_time = time.time()
+        self._task = asyncio.create_task(self._print_loop(filepath))
+        logger.info(
+            "Print started: %s (%d lines, %d layers)",
+            filepath.name,
+            self._total_lines,
+            self._total_layers,
+        )
+
+    async def _print_loop(self, filepath: Path) -> None:
+        """Stream G-code lines to the command queue."""
+        try:
+            with open(filepath, "r") as f:
+                for line in f:
+                    if self._cancelled:
+                        await self._on_cancel()
+                        return
+
+                    # Wait while paused
+                    while self._paused and not self._cancelled:
+                        await asyncio.sleep(0.1)
+                    if self._cancelled:
+                        await self._on_cancel()
+                        return
+
+                    stripped = line.strip()
+
+                    # Track layer changes
+                    if ";LAYER:" in stripped or "; LAYER:" in stripped:
+                        try:
+                            layer_str = stripped.split("LAYER:")[-1].strip()
+                            self._current_layer = int(layer_str) + 1
+                        except ValueError:
+                            self._current_layer += 1
+
+                    # Skip empty lines and comments
+                    if not stripped or stripped.startswith(";"):
+                        continue
+
+                    # Strip inline comments
+                    if ";" in stripped:
+                        stripped = stripped[: stripped.index(";")].strip()
+                    if not stripped:
+                        continue
+
+                    # Send through command queue with checksum for reliability
+                    future = await self._queue.enqueue(
+                        stripped,
+                        priority=CommandPriority.PRINT,
+                        with_checksum=True,
+                    )
+                    # Wait for command to complete before sending next
+                    result: CommandResult = await future
+                    if not result.ok:
+                        logger.error(
+                            "Print command failed at line %d: %s -> %s",
+                            self._current_line,
+                            stripped,
+                            result.error,
+                        )
+                    self._current_line += 1
+
+            logger.info("Print completed: %s", filepath.name)
+        except asyncio.CancelledError:
+            logger.info("Print task cancelled")
+        except Exception:
+            logger.exception("Error during print")
+
+    async def pause(self) -> None:
+        """Pause the print with safe nozzle parking."""
+        if not self.is_printing or self._paused:
+            return
+        self._paused = True
+        self._pause_time = time.time()
+        self._queue.pause()
+
+        # Safe parking sequence
+        # Retract filament slightly to prevent ooze
+        await self._queue.enqueue("G91", CommandPriority.SYSTEM)
+        await self._queue.enqueue("G1 E-2 F1800", CommandPriority.SYSTEM)
+        # Lift Z to clear the print
+        await self._queue.enqueue("G1 Z5 F600", CommandPriority.SYSTEM)
+        await self._queue.enqueue("G90", CommandPriority.SYSTEM)
+        # Park to front-left corner
+        await self._queue.enqueue("G1 X5 Y5 F3000", CommandPriority.SYSTEM)
+
+        logger.info("Print paused at line %d", self._current_line)
+
+    async def resume(self) -> None:
+        """Resume the print from paused state."""
+        if not self.is_printing or not self._paused:
+            return
+
+        # Return to print position
+        # Move back to X/Y first (Z stays lifted)
+        await self._queue.enqueue("G90", CommandPriority.SYSTEM)
+        # Lower Z back (relative -5 to undo the lift)
+        await self._queue.enqueue("G91", CommandPriority.SYSTEM)
+        await self._queue.enqueue("G1 Z-5 F600", CommandPriority.SYSTEM)
+        # Prime filament (push back what we retracted)
+        await self._queue.enqueue("G1 E2 F1800", CommandPriority.SYSTEM)
+        await self._queue.enqueue("G90", CommandPriority.SYSTEM)
+
+        if self._pause_time:
+            self._total_pause_duration += time.time() - self._pause_time
+        self._paused = False
+        self._queue.resume()
+        logger.info("Print resumed at line %d", self._current_line)
+
+    async def cancel(self) -> None:
+        """Cancel the current print."""
+        if not self.is_printing:
+            return
+        self._cancelled = True
+        self._paused = False
+        self._queue.resume()
+        # Wait for the print task to finish its cleanup
+        if self._task:
+            try:
+                await asyncio.wait_for(self._task, timeout=10.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                self._task.cancel()
+        logger.info("Print cancelled")
+
+    async def _on_cancel(self) -> None:
+        """Clean up after cancellation."""
+        await self._queue.clear()
+        # Retract, lift, and cool down
+        await self._queue.enqueue("G91", CommandPriority.SYSTEM)
+        await self._queue.enqueue("G1 E-5 F1800", CommandPriority.SYSTEM)
+        await self._queue.enqueue("G1 Z10 F600", CommandPriority.SYSTEM)
+        await self._queue.enqueue("G90", CommandPriority.SYSTEM)
+        await self._queue.enqueue("G28 X Y", CommandPriority.SYSTEM)
+        # Turn off heaters
+        await self._queue.enqueue("M104 S0", CommandPriority.SYSTEM)
+        await self._queue.enqueue("M140 S0", CommandPriority.SYSTEM)
+        # Turn off fan
+        await self._queue.enqueue("M106 S0", CommandPriority.SYSTEM)
+        # Disable steppers after a delay
+        await self._queue.enqueue("M84", CommandPriority.SYSTEM)
+
+    def reset(self) -> None:
+        """Reset state after print completes or is cancelled."""
+        self._current_file = None
+        self._current_line = 0
+        self._total_lines = 0
+        self._current_layer = 0
+        self._total_layers = 0
+        self._start_time = None
+        self._paused = False
+        self._cancelled = False
+        self._task = None

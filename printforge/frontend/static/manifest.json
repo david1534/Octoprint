@@ -1,0 +1,16 @@
+{
+	"name": "PrintForge",
+	"short_name": "PrintForge",
+	"description": "3D Printer Control System",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#020617",
+	"theme_color": "#0f172a",
+	"icons": [
+		{
+			"src": "/favicon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml"
+		}
+	]
+}

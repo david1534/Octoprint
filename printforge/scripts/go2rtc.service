@@ -1,0 +1,20 @@
+# go2rtc systemd service for PrintForge camera streaming
+# NOTE: The install script (scripts/install.sh) generates this file dynamically
+# with the correct user. This static copy is a reference template.
+
+[Unit]
+Description=go2rtc Camera Streaming for PrintForge
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+ExecStart=/opt/printforge/go2rtc -config /opt/printforge/go2rtc.yaml
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

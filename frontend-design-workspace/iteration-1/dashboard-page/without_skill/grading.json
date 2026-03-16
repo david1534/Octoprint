@@ -1,0 +1,60 @@
+{
+  "expectations": [
+    {
+      "text": "Output is a .svelte file",
+      "passed": true,
+      "evidence": "File exists and has content"
+    },
+    {
+      "text": "Shows 4 stat cards with distinct metric labels (users, revenue, orders, conversion)",
+      "passed": true,
+      "evidence": "Found 17 stat metric labels"
+    },
+    {
+      "text": "Has a chart placeholder area or section",
+      "passed": true,
+      "evidence": "Chart placeholder area found"
+    },
+    {
+      "text": "Has a table element with proper <thead> and <tbody> structure",
+      "passed": true,
+      "evidence": "thead: True, tbody: True"
+    },
+    {
+      "text": "Table includes columns for order ID, customer, amount, status, and date",
+      "passed": true,
+      "evidence": "Found columns: ['order', 'customer', 'amount', 'status', 'date']"
+    },
+    {
+      "text": "Status column uses colored badge styling (distinct background colors for different statuses)",
+      "passed": true,
+      "evidence": "Colored status badges found"
+    },
+    {
+      "text": "Uses Tailwind CSS utility classes for styling",
+      "passed": true,
+      "evidence": "Found 176 Tailwind utility patterns"
+    },
+    {
+      "text": "Has dark: prefix classes for dark mode support",
+      "passed": false,
+      "evidence": "No dark mode support found (no dark: prefixes and no dark-first palette)"
+    },
+    {
+      "text": "Stat card grid uses responsive classes (grid-cols with breakpoint variants)",
+      "passed": true,
+      "evidence": "Found 3 responsive breakpoint prefixes"
+    },
+    {
+      "text": "Includes hover: or focus-visible: state classes on interactive elements",
+      "passed": false,
+      "evidence": "Insufficient hover/focus states"
+    }
+  ],
+  "summary": {
+    "passed": 8,
+    "failed": 2,
+    "total": 10,
+    "pass_rate": 0.8
+  }
+}
