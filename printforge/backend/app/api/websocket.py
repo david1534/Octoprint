@@ -82,6 +82,17 @@ manager = ConnectionManager()
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # Validate API key if authentication is enabled
+    from ..middleware.auth import verify_api_key
+    from ..storage.models import get_setting
+
+    api_key_hash = await get_setting("api_key_hash", "")
+    if api_key_hash:
+        key = websocket.query_params.get("apikey", "")
+        if not key or not verify_api_key(key, api_key_hash):
+            await websocket.close(code=4401, reason="Invalid or missing API key")
+            return
+
     await manager.connect(websocket)
     manager.start_broadcasting()
 

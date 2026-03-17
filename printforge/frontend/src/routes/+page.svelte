@@ -18,6 +18,7 @@
 	let paused = $derived($isPaused);
 	let loading = $state('');
 	let health = $state<any>(null);
+	let activeSpool = $state<any>(null);
 
 	// Recent files for quick print
 	let recentFiles = $derived(
@@ -29,7 +30,15 @@
 			refreshFiles();
 		}
 		loadHealth();
+		loadActiveSpool();
 	});
+
+	async function loadActiveSpool() {
+		try {
+			const data = await api.getActiveSpool();
+			activeSpool = data.spool;
+		} catch { /* not critical */ }
+	}
 
 	async function loadHealth() {
 		try {
@@ -234,6 +243,35 @@
 				</div>
 			</div>
 		</div>
+
+		<!-- Active Spool -->
+		{#if activeSpool}
+			<div class="card flex items-center gap-3 py-3">
+				<div class="w-8 h-8 rounded-full shrink-0 border border-surface-600" style="background-color: {activeSpool.color}"></div>
+				<div class="flex-1 min-w-0">
+					<div class="flex items-center gap-2">
+						<span class="text-xs text-surface-500">Active Spool</span>
+						<span class="text-xs px-1.5 py-0.5 rounded bg-surface-700 text-surface-400">{activeSpool.material}</span>
+					</div>
+					<p class="text-sm font-medium text-surface-200 truncate">{activeSpool.name}</p>
+				</div>
+				<div class="text-right shrink-0">
+					{#if activeSpool}
+						{@const remaining = Math.max(0, activeSpool.total_weight_g - activeSpool.used_weight_g)}
+						{@const pct = activeSpool.total_weight_g > 0 ? (remaining / activeSpool.total_weight_g) * 100 : 0}
+						<p class="text-sm font-medium tabular-nums {pct > 20 ? 'text-surface-200' : pct > 5 ? 'text-amber-400' : 'text-red-400'}">
+							{remaining.toFixed(0)}g
+						</p>
+						<div class="w-16 h-1.5 bg-surface-700 rounded-full mt-1 overflow-hidden">
+							<div
+								class="h-full rounded-full {pct > 20 ? 'bg-accent' : pct > 5 ? 'bg-amber-500' : 'bg-red-500'}"
+								style="width: {Math.min(100, pct)}%"
+							></div>
+						</div>
+					{/if}
+				</div>
+			</div>
+		{/if}
 
 		<!-- Quick Actions Row (when idle) -->
 		{#if !printing && !paused}

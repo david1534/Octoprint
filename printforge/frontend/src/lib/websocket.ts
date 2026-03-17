@@ -30,7 +30,14 @@ class WebSocketManager {
 		this.cleanup();
 
 		try {
-			this.ws = new WebSocket(this.url);
+			// Append API key as query param if configured
+			let wsUrl = this.url;
+			const apiKey = typeof localStorage !== 'undefined' ? localStorage.getItem('printforge:apiKey') : null;
+			if (apiKey) {
+				const sep = wsUrl.includes('?') ? '&' : '?';
+				wsUrl = `${wsUrl}${sep}apikey=${encodeURIComponent(apiKey)}`;
+			}
+			this.ws = new WebSocket(wsUrl);
 
 			this.ws.onopen = () => {
 				this._connected = true;
