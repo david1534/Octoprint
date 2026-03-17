@@ -1,5 +1,5 @@
 /**
- * File management store.
+ * File management store with folder support.
  */
 
 import { writable } from 'svelte/store';
@@ -20,16 +20,29 @@ export interface GcodeFile {
 	slicer: string | null;
 	nozzleTemp: number | null;
 	bedTemp: number | null;
+	path: string;
+}
+
+export interface Folder {
+	name: string;
+	path: string;
+	fileCount: number;
 }
 
 export const files = writable<GcodeFile[]>([]);
+export const folders = writable<Folder[]>([]);
+export const currentPath = writable<string>('');
+export const parentPath = writable<string | null>(null);
 export const filesLoading = writable<boolean>(false);
 
-export async function refreshFiles(): Promise<void> {
+export async function refreshFiles(path = ''): Promise<void> {
 	filesLoading.set(true);
 	try {
-		const data = await api.listFiles();
+		const data = await api.listFiles(path);
 		files.set(data.files || []);
+		folders.set(data.folders || []);
+		currentPath.set(data.currentPath || '');
+		parentPath.set(data.parentPath ?? null);
 	} catch (e) {
 		console.error('Failed to load files:', e);
 	} finally {

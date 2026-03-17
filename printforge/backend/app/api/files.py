@@ -1,122 +1,211 @@
-"""File management REST API endpoints."""
+"""File management REST API endpoints with folder support."""
 
 import os
 import shutil
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile, Query
 
+from ..config import settings
 from ..printer.gcode_parser import parse_gcode_file
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
-GCODE_DIR = Path("/home/pi/printforge/gcodes")
+GCODE_DIR = Path(settings.gcode_dir)
+ALLOWED_EXTENSIONS = {".gcode", ".g", ".gc"}
 
 
 def _ensure_gcode_dir() -> None:
     GCODE_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _safe_resolve(subpath: str) -> Path:
+    """Resolve a subpath within GCODE_DIR, preventing path traversal."""
+    resolved = (GCODE_DIR / subpath).resolve()
+    if not str(resolved).startswith(str(GCODE_DIR.resolve())):
+        raise HTTPException(400, "Invalid path")
+    return resolved
+
+
+def _file_info(filepath: Path, relative_to: Path) -> dict:
+    """Get file info dict for a gcode file."""
+    try:
+        metadata = parse_gcode_file(filepath)
+        info = metadata.to_dict()
+        info["path"] = str(filepath.relative_to(GCODE_DIR)).replace("\\", "/")
+        return info
+    except Exception:
+        return {
+            "filename": filepath.name,
+            "fileSize": filepath.stat().st_size,
+            "totalLines": 0,
+            "printableLines": 0,
+            "path": str(filepath.relative_to(GCODE_DIR)).replace("\\", "/"),
+        }
+
+
 @router.get("/")
-async def list_files():
-    """List all uploaded G-code files with metadata."""
+async def list_files(path: str = Query("", description="Subfolder path to list")):
+    """List files and folders in a directory."""
     _ensure_gcode_dir()
+
+    target_dir = _safe_resolve(path) if path else GCODE_DIR
+    if not target_dir.exists() or not target_dir.is_dir():
+        raise HTTPException(404, f"Directory not found: {path}")
+
+    folders = []
     files = []
-    for filepath in sorted(GCODE_DIR.glob("*.gcode")):
-        try:
-            metadata = parse_gcode_file(filepath)
-            files.append(metadata.to_dict())
-        except Exception:
-            # If parsing fails, return basic info
-            files.append({
-                "filename": filepath.name,
-                "fileSize": filepath.stat().st_size,
-                "totalLines": 0,
-                "printableLines": 0,
+
+    for entry in sorted(target_dir.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+        if entry.name.startswith("."):
+            continue
+
+        if entry.is_dir():
+            # Count files in subfolder recursively
+            gcode_count = sum(
+                1 for _ in entry.rglob("*")
+                if _.is_file() and _.suffix.lower() in ALLOWED_EXTENSIONS
+            )
+            folders.append({
+                "name": entry.name,
+                "path": str(entry.relative_to(GCODE_DIR)).replace("\\", "/"),
+                "fileCount": gcode_count,
             })
-    # Also check for .g and .gc extensions
-    for ext in ("*.g", "*.gc"):
-        for filepath in sorted(GCODE_DIR.glob(ext)):
-            try:
-                metadata = parse_gcode_file(filepath)
-                files.append(metadata.to_dict())
-            except Exception:
-                files.append({
-                    "filename": filepath.name,
-                    "fileSize": filepath.stat().st_size,
-                })
-    return {"files": files}
+        elif entry.suffix.lower() in ALLOWED_EXTENSIONS:
+            files.append(_file_info(entry, GCODE_DIR))
+
+    return {
+        "currentPath": path,
+        "parentPath": str(Path(path).parent).replace("\\", "/") if path else None,
+        "folders": folders,
+        "files": files,
+    }
+
+
+@router.post("/folder")
+async def create_folder(path: str = Query(..., description="Folder path to create")):
+    """Create a new folder."""
+    _ensure_gcode_dir()
+    target = _safe_resolve(path)
+    if target.exists():
+        raise HTTPException(409, f"Folder already exists: {path}")
+    target.mkdir(parents=True, exist_ok=True)
+    return {"ok": True, "path": path}
+
+
+@router.delete("/folder")
+async def delete_folder(path: str = Query(..., description="Folder path to delete")):
+    """Delete an empty folder."""
+    _ensure_gcode_dir()
+    target = _safe_resolve(path)
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(404, f"Folder not found: {path}")
+    if target == GCODE_DIR.resolve():
+        raise HTTPException(400, "Cannot delete root folder")
+    # Check if empty (ignoring .metadata.json)
+    contents = [f for f in target.iterdir() if f.name != ".metadata.json"]
+    if contents:
+        raise HTTPException(400, "Folder is not empty")
+    shutil.rmtree(target)
+    return {"ok": True, "deleted": path}
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile):
-    """Upload a G-code file."""
+async def upload_file(
+    file: UploadFile,
+    path: str = Query("", description="Subfolder to upload into"),
+):
+    """Upload a G-code file, optionally into a subfolder."""
     _ensure_gcode_dir()
 
     if not file.filename:
         raise HTTPException(400, "No filename provided")
 
-    # Validate extension
-    allowed_extensions = {".gcode", ".g", ".gc"}
     ext = Path(file.filename).suffix.lower()
-    if ext not in allowed_extensions:
+    if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
-            400, f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"
+            400, f"Invalid file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
         )
 
     # Sanitize filename
     safe_name = "".join(
-        c for c in file.filename if c.isalnum() or c in "._- "
+        c for c in file.filename if c.isalnum() or c in "._- ()"
     ).strip()
     if not safe_name:
         raise HTTPException(400, "Invalid filename")
 
-    filepath = GCODE_DIR / safe_name
+    target_dir = _safe_resolve(path) if path else GCODE_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    filepath = target_dir / safe_name
 
-    # Write file
     with open(filepath, "wb") as f:
-        while chunk := await file.read(1024 * 64):  # 64KB chunks
+        while chunk := await file.read(1024 * 64):
             f.write(chunk)
 
-    # Parse metadata
     try:
         metadata = parse_gcode_file(filepath)
-        return {"ok": True, "file": metadata.to_dict()}
+        result = metadata.to_dict()
+        result["path"] = str(filepath.relative_to(GCODE_DIR)).replace("\\", "/")
+        return {"ok": True, "file": result}
     except Exception:
         return {
             "ok": True,
             "file": {
                 "filename": safe_name,
                 "fileSize": filepath.stat().st_size,
+                "path": str(filepath.relative_to(GCODE_DIR)).replace("\\", "/"),
             },
         }
 
 
-@router.delete("/{filename}")
-async def delete_file(filename: str):
-    """Delete a G-code file."""
-    filepath = GCODE_DIR / filename
-    if not filepath.exists():
-        raise HTTPException(404, f"File not found: {filename}")
+@router.post("/move")
+async def move_file(
+    src: str = Query(..., description="Source file path"),
+    dest: str = Query(..., description="Destination folder path"),
+):
+    """Move a file to a different folder."""
+    _ensure_gcode_dir()
+    src_path = _safe_resolve(src)
+    if not src_path.exists() or not src_path.is_file():
+        raise HTTPException(404, f"File not found: {src}")
 
-    # Prevent path traversal
-    if filepath.resolve().parent != GCODE_DIR.resolve():
-        raise HTTPException(400, "Invalid filename")
+    dest_dir = _safe_resolve(dest) if dest else GCODE_DIR
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / src_path.name
+
+    if dest_path.exists():
+        raise HTTPException(409, f"File already exists at destination: {dest_path.name}")
+
+    shutil.move(str(src_path), str(dest_path))
+    return {
+        "ok": True,
+        "path": str(dest_path.relative_to(GCODE_DIR)).replace("\\", "/"),
+    }
+
+
+@router.delete("/{filename:path}")
+async def delete_file(filename: str):
+    """Delete a G-code file by its path."""
+    filepath = _safe_resolve(filename)
+    if not filepath.exists() or not filepath.is_file():
+        raise HTTPException(404, f"File not found: {filename}")
 
     filepath.unlink()
     return {"ok": True, "deleted": filename}
 
 
-@router.get("/{filename}/metadata")
+@router.get("/{filename:path}/metadata")
 async def get_file_metadata(filename: str):
     """Get detailed metadata for a G-code file."""
-    filepath = GCODE_DIR / filename
-    if not filepath.exists():
+    filepath = _safe_resolve(filename)
+    if not filepath.exists() or not filepath.is_file():
         raise HTTPException(404, f"File not found: {filename}")
 
     metadata = parse_gcode_file(filepath)
-    return metadata.to_dict()
+    result = metadata.to_dict()
+    result["path"] = filename
+    return result
 
 
 @router.get("/disk-usage")
@@ -124,7 +213,9 @@ async def disk_usage():
     """Get disk usage info for the G-code storage directory."""
     _ensure_gcode_dir()
     total_size = sum(
-        f.stat().st_size for f in GCODE_DIR.iterdir() if f.is_file()
+        f.stat().st_size
+        for f in GCODE_DIR.rglob("*")
+        if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS
     )
     disk = shutil.disk_usage(GCODE_DIR)
     return {

@@ -63,12 +63,18 @@ export const api = {
 	motorsOff: () => post<any>('/printer/motors-off'),
 	getTemperatureHistory: () => request<any>('/printer/temperature/history'),
 
-	// Files
-	listFiles: () => request<any>('/files/'),
-	uploadFile: async (file: File) => {
+	// Files (with folder support)
+	listFiles: (path = '') => request<any>(`/files/?path=${encodeURIComponent(path)}`),
+	createFolder: (path: string) =>
+		request<any>(`/files/folder?path=${encodeURIComponent(path)}`, { method: 'POST' }),
+	deleteFolder: (path: string) =>
+		request<any>(`/files/folder?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
+	moveFile: (src: string, dest: string) =>
+		request<any>(`/files/move?src=${encodeURIComponent(src)}&dest=${encodeURIComponent(dest)}`, { method: 'POST' }),
+	uploadFile: async (file: File, path = '') => {
 		const formData = new FormData();
 		formData.append('file', file);
-		const res = await fetch(`${BASE}/files/upload`, {
+		const res = await fetch(`${BASE}/files/upload?path=${encodeURIComponent(path)}`, {
 			method: 'POST',
 			body: formData
 		});
@@ -78,15 +84,24 @@ export const api = {
 		}
 		return res.json();
 	},
-	deleteFile: (filename: string) =>
-		request<any>(`/files/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
-	getFileMetadata: (filename: string) =>
-		request<any>(`/files/${encodeURIComponent(filename)}/metadata`),
+	deleteFile: (filePath: string) =>
+		request<any>(`/files/${encodeURIComponent(filePath)}`, { method: 'DELETE' }),
+	getFileMetadata: (filePath: string) =>
+		request<any>(`/files/${encodeURIComponent(filePath)}/metadata`),
 
 	// System
 	getHealth: () => request<any>('/system/health'),
 	getSerialPorts: () => request<any>('/system/serial-ports'),
 	getDiskUsage: () => request<any>('/system/disk-usage'),
+
+	// Timelapse
+	listTimelapses: () => request<any>('/timelapse/'),
+	deleteTimelapse: (filename: string) =>
+		request<any>(`/timelapse/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
+	getTimelapseVideoUrl: (filename: string) =>
+		`${BASE}/timelapse/video/${encodeURIComponent(filename)}`,
+	getTimelapseThumbnailUrl: (filename: string) =>
+		`${BASE}/timelapse/thumbnail/${encodeURIComponent(filename)}`,
 
 	// Camera
 	getCameraUrls: () => request<any>('/camera/stream'),

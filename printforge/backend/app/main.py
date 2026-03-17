@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import files, history, printer, system, websocket
+from .api import files, history, printer, system, timelapse, websocket
 from .config import settings
 from .printer.controller import PrinterController
 from .printer.state import PrinterState
@@ -78,6 +78,7 @@ app.include_router(files.router)
 app.include_router(system.router)
 app.include_router(websocket.router)
 app.include_router(history.router)
+app.include_router(timelapse.router)
 
 
 @app.get("/api/camera/stream")
