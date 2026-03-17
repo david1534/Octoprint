@@ -6,6 +6,7 @@ the API layer.
 """
 
 import asyncio
+import glob
 import logging
 from pathlib import Path
 from typing import Callable, Optional
@@ -35,6 +36,11 @@ class PrinterController:
         self._safety_task: Optional[asyncio.Task] = None
         self._state_callbacks: list[Callable[[], None]] = []
         self._terminal_callbacks: list[Callable[[str, str], None]] = []
+        # Print time correction
+        self._slicer_estimated_seconds: float = 0.0
+        self._time_correction_factor: float = 1.0
+        # Current print job ID for history tracking
+        self._current_job_id: Optional[int] = None
 
     @property
     def temp_monitor(self) -> TemperatureMonitor:
@@ -119,6 +125,49 @@ class PrinterController:
         elif alert.action == SafetyAction.PAUSE_PRINT:
             if self._sender and self._sender.is_printing:
                 asyncio.create_task(self.pause_print())
+
+    async def auto_connect(self) -> None:
+        """Auto-connect to the printer on startup if enabled in settings."""
+        from ..storage.models import get_setting, set_setting
+
+        enabled = await get_setting("auto_connect_enabled", "false")
+        if enabled != "true":
+            logger.info("Auto-connect disabled, skipping")
+            return
+
+        port = await get_setting("auto_connect_port", "auto")
+        baudrate = int(await get_setting("auto_connect_baudrate", "115200"))
+
+        if port == "auto":
+            # Scan common serial ports
+            candidates = sorted(
+                glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")
+            )
+            # Prefer /dev/printforge if it exists
+            if Path("/dev/printforge").exists():
+                candidates.insert(0, "/dev/printforge")
+            if not candidates:
+                logger.warning("Auto-connect: no serial ports found")
+                return
+            for candidate in candidates:
+                logger.info("Auto-connect: trying %s @ %d", candidate, baudrate)
+                try:
+                    if await self.connect(candidate, baudrate):
+                        await set_setting("auto_connect_port", candidate)
+                        logger.info("Auto-connect: success on %s", candidate)
+                        return
+                except Exception as e:
+                    logger.debug("Auto-connect: %s failed: %s", candidate, e)
+            logger.warning("Auto-connect: all ports failed")
+        else:
+            logger.info("Auto-connect: connecting to %s @ %d", port, baudrate)
+            try:
+                if await self.connect(port, baudrate):
+                    logger.info("Auto-connect: success")
+                else:
+                    logger.warning("Auto-connect: failed on %s", port)
+            except Exception as e:
+                logger.warning("Auto-connect: %s failed: %s", port, e)
 
     async def connect(
         self, port: str = "/dev/ttyUSB0", baudrate: int = 115200
@@ -247,9 +296,47 @@ class PrinterController:
         """Start printing a G-code file."""
         if not self._sender:
             raise ConnectionError("Not connected")
+
+        # Configure LCD progress from settings
+        from ..storage.models import get_setting
+
+        lcd_enabled = await get_setting("lcd_progress_enabled", "false") == "true"
+        lcd_interval = int(await get_setting("lcd_progress_interval", "50"))
+        self._sender.configure_lcd(enabled=lcd_enabled, interval=lcd_interval)
+
+        # Load slicer estimate and correction factor for better time estimates
+        from ..printer.gcode_parser import parse_gcode_file
+        from ..storage.models import get_time_correction_factor
+
+        try:
+            meta = parse_gcode_file(filepath)
+            self._slicer_estimated_seconds = meta.estimated_time_seconds or 0.0
+            self._time_correction_factor = await get_time_correction_factor()
+        except Exception:
+            self._slicer_estimated_seconds = 0.0
+            self._time_correction_factor = 1.0
+
         self._protocol.reset_line_number()
         await self._sender.start_print(filepath)
         self.state.status = PrinterStatus.PRINTING
+
+        # Record print job in history
+        from ..storage.models import create_print_job, update_job_estimated_seconds
+
+        try:
+            self._current_job_id = await create_print_job(
+                filename=filepath.name,
+                total_lines=self._sender.total_lines,
+                hotend_target=self.state.hotend_target,
+                bed_target=self.state.bed_target,
+            )
+            if self._slicer_estimated_seconds > 0 and self._current_job_id:
+                await update_job_estimated_seconds(
+                    self._current_job_id, self._slicer_estimated_seconds
+                )
+        except Exception:
+            logger.exception("Failed to record print job start")
+
         self._notify_state_change()
 
     async def pause_print(self) -> None:
@@ -269,6 +356,22 @@ class PrinterController:
     async def cancel_print(self) -> None:
         """Cancel the current print."""
         if self._sender:
+            # Record cancellation in history before resetting
+            if self._current_job_id:
+                from ..storage.models import complete_print_job
+
+                try:
+                    await complete_print_job(
+                        job_id=self._current_job_id,
+                        status="cancelled",
+                        duration_seconds=int(self._sender.elapsed_seconds),
+                        lines_printed=self._sender.current_line,
+                        filament_used_mm=self._sender._filament_used_mm,
+                    )
+                except Exception:
+                    logger.exception("Failed to record print cancellation")
+                self._current_job_id = None
+
             await self._sender.cancel()
             self._sender.reset()
             self.state.status = PrinterStatus.IDLE
@@ -298,6 +401,57 @@ class PrinterController:
         """Disable stepper motors."""
         await self.send_command("M84")
 
+    async def _on_print_complete(
+        self,
+        elapsed_seconds: float = 0,
+        lines_printed: int = 0,
+        filament_used_mm: float = 0,
+    ) -> None:
+        """Handle post-print actions (cooldown, filament deduction, history, notifications)."""
+        import math
+
+        from ..storage.models import (
+            complete_print_job,
+            deduct_filament,
+            get_active_spool,
+            get_setting,
+        )
+
+        try:
+            cooldown = await get_setting("post_print_cooldown", "true")
+            if cooldown == "true":
+                logger.info("Post-print cooldown: turning off heaters")
+                if self._queue:
+                    await self._queue.enqueue("M104 S0", CommandPriority.SYSTEM)
+                    await self._queue.enqueue("M140 S0", CommandPriority.SYSTEM)
+
+            # Deduct filament from active spool
+            if filament_used_mm > 0:
+                spool = await get_active_spool()
+                if spool:
+                    density = float(await get_setting("filament_density", "1.24"))
+                    radius_mm = 1.75 / 2.0
+                    volume_mm3 = math.pi * radius_mm * radius_mm * filament_used_mm
+                    grams = volume_mm3 / 1000.0 * density
+                    await deduct_filament(spool["id"], grams)
+                    logger.info("Deducted %.1fg from spool '%s'", grams, spool["name"])
+
+            # Record completion in history
+            if self._current_job_id:
+                await complete_print_job(
+                    job_id=self._current_job_id,
+                    status="completed",
+                    duration_seconds=int(elapsed_seconds),
+                    lines_printed=lines_printed,
+                    filament_used_mm=filament_used_mm,
+                )
+                self._current_job_id = None
+
+            # Notify via terminal so WebSocket picks it up
+            self._notify_terminal("[SYSTEM] Print complete", "system")
+        except Exception:
+            logger.exception("Error in post-print actions")
+
     async def _safety_loop(self) -> None:
         """Periodic safety checks."""
         try:
@@ -308,9 +462,24 @@ class PrinterController:
                     self.state.current_file = self._sender.current_file
                     self.state.print_progress = self._sender.progress
                     self.state.elapsed_seconds = self._sender.elapsed_seconds
-                    self.state.estimated_remaining = (
-                        self._sender.estimated_remaining
-                    )
+
+                    # Use corrected slicer estimate if available, else linear
+                    if (
+                        self._slicer_estimated_seconds > 0
+                        and self._sender.progress > 0
+                    ):
+                        corrected_total = (
+                            self._slicer_estimated_seconds
+                            * self._time_correction_factor
+                        )
+                        self.state.estimated_remaining = max(
+                            0,
+                            corrected_total - self._sender.elapsed_seconds,
+                        )
+                    else:
+                        self.state.estimated_remaining = (
+                            self._sender.estimated_remaining
+                        )
                     self.state.current_layer = self._sender.current_layer
                     self.state.total_layers = self._sender.total_layers
                     self.state.current_line = self._sender.current_line
@@ -323,7 +492,15 @@ class PrinterController:
                         and not self._sender._cancelled
                     ):
                         self.state.status = PrinterStatus.IDLE
+                        # Capture values before reset clears them
+                        _elapsed = self._sender.elapsed_seconds
+                        _lines = self._sender.current_line
+                        _filament = self._sender._filament_used_mm
                         self._sender.reset()
+                        # Post-print actions with captured data
+                        asyncio.create_task(
+                            self._on_print_complete(_elapsed, _lines, _filament)
+                        )
 
                     self._notify_state_change()
 

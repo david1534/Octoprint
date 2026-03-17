@@ -43,9 +43,33 @@ async def init_db() -> None:
             value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS filament_spools (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            material TEXT NOT NULL DEFAULT 'PLA',
+            color TEXT DEFAULT '#CCCCCC',
+            total_weight_g REAL NOT NULL DEFAULT 1000,
+            used_weight_g REAL NOT NULL DEFAULT 0,
+            cost_per_kg REAL NOT NULL DEFAULT 18,
+            active INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            notes TEXT DEFAULT ''
+        );
+
         CREATE INDEX IF NOT EXISTS idx_print_jobs_started
             ON print_jobs(started_at DESC);
     """)
+
+    # Add columns that may not exist in older databases
+    for alter in [
+        "ALTER TABLE print_jobs ADD COLUMN estimated_seconds REAL",
+        "ALTER TABLE print_jobs ADD COLUMN spool_id INTEGER",
+    ]:
+        try:
+            await _db.execute(alter)
+        except Exception:
+            pass  # Column already exists
+
     await _db.commit()
     logger.info("Database initialized at %s", DB_PATH)
 

@@ -141,11 +141,21 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq python3-pip python3-venv python3-dev curl git > /dev/null 2>&1
 success "Python 3 + build tools"
 
-# Install Node.js for frontend build (use NodeSource for a recent version)
+# Install Node.js for frontend build
+# NodeSource doesn't support armhf, so install from nodejs.org tarball on armv7l
 if ! command -v node &> /dev/null || [[ "$(node -v | cut -d. -f1 | tr -d v)" -lt 18 ]]; then
     echo "  Installing Node.js 20 LTS..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - > /dev/null 2>&1
-    sudo apt-get install -y -qq nodejs > /dev/null 2>&1
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "armv7l" ]; then
+        NODE_VERSION="v20.18.1"
+        NODE_TAR="node-${NODE_VERSION}-linux-armv7l.tar.xz"
+        curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/${NODE_TAR}" -o "/tmp/${NODE_TAR}"
+        sudo tar -xJf "/tmp/${NODE_TAR}" -C /usr/local --strip-components=1
+        rm -f "/tmp/${NODE_TAR}"
+    else
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - > /dev/null 2>&1
+        sudo apt-get install -y -qq nodejs > /dev/null 2>&1
+    fi
     success "Node.js $(node -v) installed"
 else
     success "Node.js $(node -v) already installed"
@@ -239,10 +249,12 @@ for dev in /dev/video0 /dev/video1 /dev/video2; do
 done
 
 # Generate go2rtc config with detected camera
+# Use exec:ffmpeg source (go2rtc 1.9+ with old ffmpeg 4.x doesn't support ffmpeg:device=)
+CAM_DEV="${DETECTED_CAMERA:-/dev/video0}"
 cat > "$INSTALL_DIR/go2rtc.yaml" << YAML
 streams:
   printer_cam:
-    - ffmpeg:device=${DETECTED_CAMERA:-/dev/video0}#video=1280x720#raw
+    - exec:ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 15 -i ${CAM_DEV} -c:v copy -f mjpeg -
 
 api:
   listen: ":1984"
@@ -294,6 +306,11 @@ success "udev rules installed (creates /dev/printforge symlink)"
 sudo usermod -aG dialout "$CURRENT_USER" 2>/dev/null || true
 sudo usermod -aG video "$CURRENT_USER" 2>/dev/null || true
 success "User added to dialout + video groups"
+
+# Add sudoers entry for power controls (shutdown, reboot, service restart)
+echo "$CURRENT_USER ALL=(ALL) NOPASSWD: /sbin/shutdown, /bin/systemctl restart printforge" | sudo tee /etc/sudoers.d/printforge > /dev/null
+sudo chmod 440 /etc/sudoers.d/printforge
+success "Sudoers entry for power controls"
 
 ###############################################################################
 step 8 "Installing systemd services"

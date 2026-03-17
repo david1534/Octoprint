@@ -13,8 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import files, history, printer, system, timelapse, websocket
+from .api import filament, files, history, printer, settings as settings_api, system, timelapse, websocket
 from .config import settings
+from .middleware.auth import APIKeyMiddleware
 from .printer.controller import PrinterController
 from .printer.state import PrinterState
 from .storage.database import close_db, init_db
@@ -47,6 +48,9 @@ async def lifespan(app: FastAPI):
     printer.set_controller(controller)
     websocket.set_controller(controller)
 
+    # Auto-connect to printer if enabled
+    await controller.auto_connect()
+
     logger.info("PrintForge ready at http://%s:%d", settings.host, settings.port)
     yield
 
@@ -72,6 +76,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# API key auth middleware (enforces auth when a key is configured)
+app.add_middleware(APIKeyMiddleware)
+
 # Register API routers
 app.include_router(printer.router)
 app.include_router(files.router)
@@ -79,6 +86,8 @@ app.include_router(system.router)
 app.include_router(websocket.router)
 app.include_router(history.router)
 app.include_router(timelapse.router)
+app.include_router(settings_api.router)
+app.include_router(filament.router)
 
 
 @app.get("/api/camera/stream")

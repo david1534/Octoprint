@@ -93,3 +93,122 @@ async def get_all_settings() -> dict:
     cursor = await db.execute("SELECT key, value FROM settings")
     rows = await cursor.fetchall()
     return {row["key"]: row["value"] for row in rows}
+
+
+# ── Filament spool management ──────────────────────────────────
+
+
+async def create_spool(
+    name: str,
+    material: str = "PLA",
+    color: str = "#CCCCCC",
+    total_weight_g: float = 1000,
+    cost_per_kg: float = 18,
+    notes: str = "",
+) -> int:
+    """Create a new filament spool. Returns the spool ID."""
+    db = await get_db()
+    cursor = await db.execute(
+        """INSERT INTO filament_spools
+           (name, material, color, total_weight_g, cost_per_kg, notes)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (name, material, color, total_weight_g, cost_per_kg, notes),
+    )
+    await db.commit()
+    return cursor.lastrowid
+
+
+async def get_spools() -> list[dict]:
+    """Get all filament spools."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM filament_spools ORDER BY active DESC, name ASC"
+    )
+    rows = await cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+async def get_active_spool() -> Optional[dict]:
+    """Get the currently active spool."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM filament_spools WHERE active = 1 LIMIT 1"
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def update_spool(spool_id: int, **kwargs) -> None:
+    """Update spool fields."""
+    if not kwargs:
+        return
+    db = await get_db()
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    values = list(kwargs.values()) + [spool_id]
+    await db.execute(
+        f"UPDATE filament_spools SET {sets} WHERE id = ?", values
+    )
+    await db.commit()
+
+
+async def set_active_spool(spool_id: int) -> None:
+    """Set a spool as active (deactivates all others)."""
+    db = await get_db()
+    await db.execute("UPDATE filament_spools SET active = 0")
+    await db.execute(
+        "UPDATE filament_spools SET active = 1 WHERE id = ?", (spool_id,)
+    )
+    await db.commit()
+
+
+async def deduct_filament(spool_id: int, grams: float) -> None:
+    """Deduct filament usage from a spool."""
+    db = await get_db()
+    await db.execute(
+        "UPDATE filament_spools SET used_weight_g = used_weight_g + ? WHERE id = ?",
+        (grams, spool_id),
+    )
+    await db.commit()
+
+
+async def delete_spool(spool_id: int) -> None:
+    """Delete a filament spool."""
+    db = await get_db()
+    await db.execute("DELETE FROM filament_spools WHERE id = ?", (spool_id,))
+    await db.commit()
+
+
+# ── Print time correction factor ─────────────────────────────────
+
+
+async def get_time_correction_factor() -> float:
+    """Calculate average actual/estimated time ratio from completed prints.
+
+    Returns 1.0 if there are fewer than 2 data points. Only considers
+    completed prints where both estimated_seconds and duration_seconds are
+    positive.
+    """
+    db = await get_db()
+    cursor = await db.execute(
+        """SELECT duration_seconds, estimated_seconds FROM print_jobs
+           WHERE status = 'completed'
+             AND estimated_seconds > 0
+             AND duration_seconds > 0
+           ORDER BY completed_at DESC
+           LIMIT 20"""
+    )
+    rows = await cursor.fetchall()
+    if len(rows) < 2:
+        return 1.0
+    ratios = [row["duration_seconds"] / row["estimated_seconds"] for row in rows]
+    return sum(ratios) / len(ratios)
+
+
+async def update_job_estimated_seconds(job_id: int, estimated_seconds: float) -> None:
+    """Store the slicer's estimated time on a print job."""
+    db = await get_db()
+    await db.execute(
+        "UPDATE print_jobs SET estimated_seconds = ? WHERE id = ?",
+        (estimated_seconds, job_id),
+    )
+    await db.commit()

@@ -3,6 +3,7 @@
 import os
 import platform
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -99,3 +100,45 @@ async def disk_usage():
         return {"total": usage.total, "used": usage.used, "free": usage.free}
     except Exception:
         return {"total": 0, "used": 0, "free": 0}
+
+
+@router.post("/restart-service")
+async def restart_service():
+    """Restart the PrintForge service."""
+    try:
+        subprocess.Popen(
+            ["sudo", "systemctl", "restart", "printforge"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return {"status": "restarting"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+@router.post("/restart-os")
+async def restart_os():
+    """Restart the operating system."""
+    try:
+        subprocess.Popen(
+            ["sudo", "shutdown", "-r", "now"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return {"status": "restarting"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+@router.post("/shutdown-os")
+async def shutdown_os():
+    """Shut down the operating system."""
+    try:
+        subprocess.Popen(
+            ["sudo", "shutdown", "-h", "now"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return {"status": "shutting_down"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}

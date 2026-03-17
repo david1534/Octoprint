@@ -5,14 +5,37 @@
 const BASE = '/api';
 const DEFAULT_TIMEOUT = 15_000; // 15 seconds
 
+/** Get stored API key for authenticated requests. */
+function getApiKey(): string | null {
+	if (typeof localStorage === 'undefined') return null;
+	return localStorage.getItem('printforge:apiKey');
+}
+
+/** Store API key in localStorage. */
+export function setApiKey(key: string | null) {
+	if (typeof localStorage === 'undefined') return;
+	if (key) {
+		localStorage.setItem('printforge:apiKey', key);
+	} else {
+		localStorage.removeItem('printforge:apiKey');
+	}
+}
+
 async function request<T>(path: string, options?: RequestInit & { timeout?: number }): Promise<T> {
 	const { timeout = DEFAULT_TIMEOUT, ...fetchOptions } = options || {};
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeout);
 
+	// Build headers with optional API key
+	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+	const apiKey = getApiKey();
+	if (apiKey) {
+		headers['Authorization'] = `Bearer ${apiKey}`;
+	}
+
 	try {
 		const res = await fetch(`${BASE}${path}`, {
-			headers: { 'Content-Type': 'application/json' },
+			headers,
 			signal: controller.signal,
 			...fetchOptions
 		});
@@ -74,8 +97,12 @@ export const api = {
 	uploadFile: async (file: File, path = '') => {
 		const formData = new FormData();
 		formData.append('file', file);
+		const uploadHeaders: Record<string, string> = {};
+		const apiKey = getApiKey();
+		if (apiKey) uploadHeaders['Authorization'] = `Bearer ${apiKey}`;
 		const res = await fetch(`${BASE}/files/upload?path=${encodeURIComponent(path)}`, {
 			method: 'POST',
+			headers: uploadHeaders,
 			body: formData
 		});
 		if (!res.ok) {
@@ -102,6 +129,34 @@ export const api = {
 		`${BASE}/timelapse/video/${encodeURIComponent(filename)}`,
 	getTimelapseThumbnailUrl: (filename: string) =>
 		`${BASE}/timelapse/thumbnail/${encodeURIComponent(filename)}`,
+
+	// Settings
+	getSettings: () => request<any>('/settings/'),
+	updateSettings: (settings: Record<string, string>) =>
+		request<any>('/settings/', { method: 'PUT', body: JSON.stringify(settings) }),
+
+	// API key management
+	getApiKeyStatus: () => request<any>('/settings/api-key/status'),
+	generateApiKey: () => post<any>('/settings/api-key/generate'),
+	revokeApiKey: () => request<any>('/settings/api-key', { method: 'DELETE' }),
+
+	// System power controls
+	restartService: () => post<any>('/system/restart-service'),
+	restartOS: () => post<any>('/system/restart-os'),
+	shutdownOS: () => post<any>('/system/shutdown-os'),
+
+	// Filament spools
+	getSpools: () => request<any>('/filament/'),
+	createSpool: (data: { name: string; material: string; color: string; total_weight_g: number; cost_per_kg: number; notes?: string }) =>
+		post<any>('/filament/', data),
+	getActiveSpool: () => request<any>('/filament/active'),
+	activateSpool: (id: number) => post<any>(`/filament/${id}/activate`),
+	updateSpool: (id: number, data: Record<string, any>) =>
+		request<any>(`/filament/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+	deductFilament: (id: number, grams: number) =>
+		post<any>(`/filament/${id}/deduct`, { grams }),
+	deleteSpool: (id: number) =>
+		request<any>(`/filament/${id}`, { method: 'DELETE' }),
 
 	// Camera
 	getCameraUrls: () => request<any>('/camera/stream'),
