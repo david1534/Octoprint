@@ -81,7 +81,7 @@
 
 <!-- Stats cards -->
 {#if $historyStats}
-	<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+	<div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
 		<div class="card py-3">
 			<span class="text-xs text-surface-500">Total Prints</span>
 			<p class="text-2xl font-bold tabular-nums text-surface-100">{$historyStats.total_prints}</p>
@@ -99,6 +99,10 @@
 		<div class="card py-3">
 			<span class="text-xs text-surface-500">Filament Used</span>
 			<p class="text-2xl font-bold tabular-nums text-surface-100">{$historyStats.total_filament_m}m</p>
+		</div>
+		<div class="card py-3">
+			<span class="text-xs text-surface-500">Total Cost</span>
+			<p class="text-2xl font-bold tabular-nums text-emerald-400">${$historyStats.total_cost?.toFixed(2) || '0.00'}</p>
 		</div>
 	</div>
 {:else}
@@ -156,6 +160,7 @@
 					<th class="pb-2 font-medium">Duration</th>
 					<th class="pb-2 font-medium">Status</th>
 					<th class="pb-2 font-medium">Filament</th>
+					<th class="pb-2 font-medium">Cost</th>
 					<th class="pb-2 font-medium w-10"></th>
 				</tr>
 			</thead>
@@ -176,6 +181,9 @@
 						</td>
 						<td class="py-3 pr-4 text-surface-400 tabular-nums">
 							{job.filament_used_mm ? `${(job.filament_used_mm / 1000).toFixed(1)}m` : '--'}
+						</td>
+						<td class="py-3 pr-4 text-emerald-400 tabular-nums">
+							{job.estimated_cost ? `$${job.estimated_cost.toFixed(2)}` : '--'}
 						</td>
 						<td class="py-3">
 							<button

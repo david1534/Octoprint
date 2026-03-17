@@ -8,7 +8,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, UploadFile, Query
 
 from ..config import settings
-from ..printer.gcode_parser import parse_gcode_file
+from ..printer.gcode_parser import calculate_filament_cost, parse_gcode_file
+from ..storage.models import get_setting
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
@@ -28,12 +29,19 @@ def _safe_resolve(subpath: str) -> Path:
     return resolved
 
 
-def _file_info(filepath: Path, relative_to: Path) -> dict:
+async def _file_info(filepath: Path, relative_to: Path) -> dict:
     """Get file info dict for a gcode file."""
     try:
         metadata = parse_gcode_file(filepath)
         info = metadata.to_dict()
         info["path"] = str(filepath.relative_to(GCODE_DIR)).replace("\\", "/")
+        # Calculate cost if filament data available
+        if metadata.filament_used_mm:
+            cost_per_kg = float(await get_setting("filament_cost_per_kg", "18"))
+            density = float(await get_setting("filament_density", "1.24"))
+            info["estimatedCost"] = calculate_filament_cost(
+                metadata.filament_used_mm, cost_per_kg, density
+            )
         return info
     except Exception:
         return {
@@ -73,7 +81,7 @@ async def list_files(path: str = Query("", description="Subfolder path to list")
                 "fileCount": gcode_count,
             })
         elif entry.suffix.lower() in ALLOWED_EXTENSIONS:
-            files.append(_file_info(entry, GCODE_DIR))
+            files.append(await _file_info(entry, GCODE_DIR))
 
     return {
         "currentPath": path,
@@ -205,6 +213,12 @@ async def get_file_metadata(filename: str):
     metadata = parse_gcode_file(filepath)
     result = metadata.to_dict()
     result["path"] = filename
+    if metadata.filament_used_mm:
+        cost_per_kg = float(await get_setting("filament_cost_per_kg", "18"))
+        density = float(await get_setting("filament_density", "1.24"))
+        result["estimatedCost"] = calculate_filament_cost(
+            metadata.filament_used_mm, cost_per_kg, density
+        )
     return result
 
 

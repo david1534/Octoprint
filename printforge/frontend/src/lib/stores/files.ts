@@ -20,6 +20,7 @@ export interface GcodeFile {
 	slicer: string | null;
 	nozzleTemp: number | null;
 	bedTemp: number | null;
+	estimatedCost: number | null;
 	path: string;
 }
 

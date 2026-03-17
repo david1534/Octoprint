@@ -46,6 +46,33 @@ class GcodeMetadata:
         }
 
 
+def calculate_filament_cost(
+    filament_mm: float,
+    cost_per_kg: float = 18.0,
+    density_g_per_cm3: float = 1.24,
+    diameter_mm: float = 1.75,
+) -> float:
+    """Calculate filament cost from length in mm.
+
+    Args:
+        filament_mm: Length of filament used in mm.
+        cost_per_kg: Cost per kilogram of filament.
+        density_g_per_cm3: Filament density (PLA ~1.24, PETG ~1.27, ABS ~1.04).
+        diameter_mm: Filament diameter in mm (1.75 or 2.85).
+
+    Returns:
+        Estimated cost in the same currency as cost_per_kg.
+    """
+    import math
+
+    radius_mm = diameter_mm / 2.0
+    cross_section_mm2 = math.pi * radius_mm * radius_mm
+    volume_mm3 = cross_section_mm2 * filament_mm
+    volume_cm3 = volume_mm3 / 1000.0
+    weight_g = volume_cm3 * density_g_per_cm3
+    return round(weight_g / 1000.0 * cost_per_kg, 2)
+
+
 # Comment patterns from popular slicers
 RE_TIME_PRUSASLICER = re.compile(
     r";\s*estimated printing time.*?=\s*(.+)", re.IGNORECASE

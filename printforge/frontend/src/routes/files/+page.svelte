@@ -527,6 +527,9 @@
 								{#if file.layerCount}
 									<span>{file.layerCount} layers</span>
 								{/if}
+								{#if file.estimatedCost}
+									<span class="text-emerald-400">${file.estimatedCost.toFixed(2)}</span>
+								{/if}
 								{#if file.slicer}
 									<span class="hidden sm:inline">{file.slicer}</span>
 								{/if}
@@ -574,6 +577,7 @@
 							{#if file.estimatedTime}<div><span class="text-xs text-surface-500">Est. Time</span><p class="text-surface-300">{formatDuration(file.estimatedTime)}</p></div>{/if}
 							{#if file.layerCount}<div><span class="text-xs text-surface-500">Layers</span><p class="text-surface-300 tabular-nums">{file.layerCount}</p></div>{/if}
 							{#if file.filamentUsedMm}<div><span class="text-xs text-surface-500">Filament</span><p class="text-surface-300">{(file.filamentUsedMm / 1000).toFixed(1)} m</p></div>{/if}
+							{#if file.estimatedCost}<div><span class="text-xs text-surface-500">Est. Cost</span><p class="text-emerald-400">${file.estimatedCost.toFixed(2)}</p></div>{/if}
 							{#if file.slicer}<div><span class="text-xs text-surface-500">Slicer</span><p class="text-surface-300">{file.slicer}</p></div>{/if}
 							{#if file.nozzleTemp}<div><span class="text-xs text-surface-500">Nozzle Temp</span><p class="text-surface-300 tabular-nums">{file.nozzleTemp}°C</p></div>{/if}
 							{#if file.bedTemp}<div><span class="text-xs text-surface-500">Bed Temp</span><p class="text-surface-300 tabular-nums">{file.bedTemp}°C</p></div>{/if}

@@ -38,6 +38,14 @@ class GcodeSender:
         self._saved_z: float = 0
         self._saved_e: float = 0
         self._saved_feedrate: int = 1000
+        # Filament usage tracking (mm of filament extruded)
+        self._filament_used_mm: float = 0.0
+        self._last_e_position: float = 0.0
+        self._e_relative: bool = False
+        # LCD progress display
+        self._lcd_enabled: bool = False
+        self._lcd_interval: int = 50  # lines between updates
+        self._lcd_last_layer: int = -1
 
     @property
     def is_printing(self) -> bool:
@@ -87,17 +95,26 @@ class GcodeSender:
         remaining_lines = self._total_lines - self._current_line
         return remaining_lines / rate if rate > 0 else 0.0
 
+    def configure_lcd(self, enabled: bool = False, interval: int = 50) -> None:
+        """Configure LCD progress display (M117 messages)."""
+        self._lcd_enabled = enabled
+        self._lcd_interval = max(10, interval)
+
     async def start_print(self, filepath: Path) -> None:
         """Start printing a G-code file."""
         if self.is_printing:
             raise RuntimeError("A print is already in progress")
 
         self._current_file = filepath.name
+        self._lcd_last_layer = -1
         self._paused = False
         self._cancelled = False
         self._current_line = 0
         self._current_layer = 0
         self._total_pause_duration = 0.0
+        self._filament_used_mm = 0.0
+        self._last_e_position = 0.0
+        self._e_relative = False
 
         # Count printable lines and layers
         self._total_lines = 0
@@ -172,6 +189,24 @@ class GcodeSender:
                             result.error,
                         )
                     self._current_line += 1
+
+                    # Track filament usage from E values
+                    self._track_filament(stripped)
+
+                    # Send LCD progress update (M117)
+                    if self._lcd_enabled and (
+                        self._current_line % self._lcd_interval == 0
+                        or self._current_layer != self._lcd_last_layer
+                    ):
+                        self._lcd_last_layer = self._current_layer
+                        pct = self.progress
+                        layer_str = f"L{self._current_layer}/{self._total_layers}" if self._total_layers > 0 else ""
+                        msg = f"M117 {layer_str} {pct:.0f}%".strip()
+                        await self._queue.enqueue(msg, CommandPriority.PRINT)
+
+            # Clear LCD at end
+            if self._lcd_enabled:
+                await self._queue.enqueue("M117 Print Complete", CommandPriority.PRINT)
 
             logger.info("Print completed: %s", filepath.name)
         except asyncio.CancelledError:
@@ -252,8 +287,51 @@ class GcodeSender:
         # Disable steppers after a delay
         await self._queue.enqueue("M84", CommandPriority.SYSTEM)
 
+    def _track_filament(self, command: str) -> None:
+        """Track filament usage from G0/G1 E values."""
+        import re
+
+        upper = command.upper()
+
+        # Detect relative/absolute extrusion mode
+        if upper.startswith("M83"):
+            self._e_relative = True
+            return
+        if upper.startswith("M82"):
+            self._e_relative = False
+            return
+        # G92 E0 resets extruder position
+        if upper.startswith("G92"):
+            match = re.search(r"E([-\d.]+)", upper)
+            if match:
+                self._last_e_position = float(match.group(1))
+            return
+
+        # Only track G0/G1 moves with E parameter
+        if not (upper.startswith("G0 ") or upper.startswith("G1 ") or
+                upper.startswith("G0\t") or upper.startswith("G1\t")):
+            return
+
+        match = re.search(r"E([-\d.]+)", upper)
+        if not match:
+            return
+
+        e_value = float(match.group(1))
+        if self._e_relative:
+            if e_value > 0:
+                self._filament_used_mm += e_value
+        else:
+            delta = e_value - self._last_e_position
+            if delta > 0:
+                self._filament_used_mm += delta
+            self._last_e_position = e_value
+
     def reset(self) -> None:
-        """Reset state after print completes or is cancelled."""
+        """Reset state after print completes or is cancelled.
+
+        NOTE: _filament_used_mm is intentionally NOT reset here so that
+        _on_print_complete() can read it after reset is called.
+        """
         self._current_file = None
         self._current_line = 0
         self._total_lines = 0
