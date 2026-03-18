@@ -99,6 +99,38 @@ M117 Print Complete`;
 	let editingSpoolId = $state<number | null>(null);
 	let newSpool = $state({ name: '', material: 'PLA', color: '#CCCCCC', total_weight_g: 1000, cost_per_kg: 18, notes: '' });
 	const materials = ['PLA', 'PETG', 'ABS', 'TPU', 'ASA', 'Nylon', 'PVA', 'HIPS', 'PC', 'Other'];
+	let lowFilamentThreshold = $state(50);
+
+	// Spool filtering & sorting
+	let spoolFilterMaterial = $state('all');
+	let spoolSortBy = $state<'name' | 'remaining' | 'material'>('name');
+	let spoolSortAsc = $state(true);
+
+	let filteredSpools = $derived(() => {
+		let result = spools.filter(s => {
+			if (spoolFilterMaterial !== 'all' && s.material !== spoolFilterMaterial) return false;
+			return true;
+		});
+		result.sort((a, b) => {
+			let cmp = 0;
+			if (spoolSortBy === 'name') cmp = a.name.localeCompare(b.name);
+			else if (spoolSortBy === 'remaining') cmp = spoolRemaining(a) - spoolRemaining(b);
+			else if (spoolSortBy === 'material') cmp = a.material.localeCompare(b.material);
+			return spoolSortAsc ? cmp : -cmp;
+		});
+		// Always keep active spool at the top
+		const activeIdx = result.findIndex(s => s.active);
+		if (activeIdx > 0) {
+			const [active] = result.splice(activeIdx, 1);
+			result.unshift(active);
+		}
+		return result;
+	});
+
+	let spoolMaterialsInUse = $derived(() => {
+		const mats = new Set(spools.map(s => s.material));
+		return Array.from(mats).sort();
+	});
 
 	// Preheat presets management
 	interface Preset {
@@ -170,6 +202,7 @@ M117 Print Complete`;
 			lcdProgressInterval = parseInt(serverSettings.lcd_progress_interval || '50');
 			filamentCostPerKg = parseFloat(serverSettings.filament_cost_per_kg || '18');
 			filamentDensity = parseFloat(serverSettings.filament_density || '1.24');
+			lowFilamentThreshold = parseFloat(serverSettings.low_filament_threshold_g || '50');
 			// Printer profile
 			if (serverSettings.printer_profile) {
 				try {
