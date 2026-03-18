@@ -94,6 +94,10 @@ export const api = {
 		request<any>(`/files/folder?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
 	moveFile: (src: string, dest: string) =>
 		request<any>(`/files/move?src=${encodeURIComponent(src)}&dest=${encodeURIComponent(dest)}`, { method: 'POST' }),
+	renameFile: (src: string, name: string) =>
+		request<any>(`/files/rename?src=${encodeURIComponent(src)}&name=${encodeURIComponent(name)}`, { method: 'POST' }),
+	renameFolder: (src: string, name: string) =>
+		request<any>(`/files/rename-folder?src=${encodeURIComponent(src)}&name=${encodeURIComponent(name)}`, { method: 'POST' }),
 	uploadFile: async (file: File, path = '') => {
 		const formData = new FormData();
 		formData.append('file', file);

@@ -31,6 +31,24 @@
 	let showNewFolder = $state(false);
 	let newFolderName = $state('');
 
+	// Rename state
+	let renamingFile = $state<string | null>(null);
+	let renameValue = $state('');
+	let renamingFolder = $state<string | null>(null);
+	let renameFolderValue = $state('');
+
+	// Drag and drop state
+	let draggedFile = $state<GcodeFile | null>(null);
+	let dragOverFolder = $state<string | null>(null);
+	let dragOverParent = $state(false);
+
+	// Move-to dialog
+	let moveTargetFile = $state<GcodeFile | null>(null);
+	let moveTargetFolder = $state('');
+
+	// Context menu
+	let contextMenu = $state<{ x: number; y: number; file?: GcodeFile; folder?: Folder } | null>(null);
+
 	// Breadcrumbs
 	let breadcrumbs = $derived(() => {
 		const path = $currentPath;
@@ -72,6 +90,10 @@
 	onMount(() => {
 		refreshFiles('');
 		loadDiskUsage();
+		// Close context menu on click elsewhere
+		const handler = () => { contextMenu = null; };
+		document.addEventListener('click', handler);
+		return () => document.removeEventListener('click', handler);
 	});
 
 	async function loadDiskUsage() {
@@ -85,6 +107,7 @@
 		expandedFile = null;
 		selectedFiles = new Set();
 		selectMode = false;
+		contextMenu = null;
 		refreshFiles(path);
 	}
 
@@ -224,14 +247,171 @@
 		}
 	}
 
+	async function batchMove() {
+		if (selectedFiles.size === 0) return;
+		const paths = Array.from(selectedFiles);
+		// Show a simple prompt for target folder
+		const dest = prompt(`Move ${paths.length} file(s) to folder (path relative to root, empty for root):`);
+		if (dest === null) return;
+		loading = 'batch-move';
+		let moved = 0;
+		try {
+			for (const src of paths) {
+				try {
+					await api.moveFile(src, dest);
+					moved++;
+				} catch { /* skip conflicts */ }
+			}
+			selectedFiles = new Set();
+			selectMode = false;
+			await refreshFiles($currentPath);
+			toast.success(`Moved ${moved}/${paths.length} file(s)`);
+		} catch (e: any) {
+			toast.error('Batch move failed: ' + e.message);
+		} finally {
+			loading = '';
+		}
+	}
+
 	function toggleExpand(filePath: string) {
 		expandedFile = expandedFile === filePath ? null : filePath;
+	}
+
+	// ─── Rename ──────────────────────────────────────────
+	function startRenameFile(file: GcodeFile) {
+		renamingFile = file.path;
+		renameValue = file.filename;
+		contextMenu = null;
+	}
+
+	async function submitRenameFile() {
+		if (!renamingFile || !renameValue.trim()) { renamingFile = null; return; }
+		try {
+			await api.renameFile(renamingFile, renameValue.trim());
+			toast.success('File renamed');
+			await refreshFiles($currentPath);
+		} catch (e: any) {
+			toast.error('Rename failed: ' + e.message);
+		}
+		renamingFile = null;
+	}
+
+	function startRenameFolder(folder: Folder) {
+		renamingFolder = folder.path;
+		renameFolderValue = folder.name;
+		contextMenu = null;
+	}
+
+	async function submitRenameFolder() {
+		if (!renamingFolder || !renameFolderValue.trim()) { renamingFolder = null; return; }
+		try {
+			await api.renameFolder(renamingFolder, renameFolderValue.trim());
+			toast.success('Folder renamed');
+			await refreshFiles($currentPath);
+		} catch (e: any) {
+			toast.error('Rename failed: ' + e.message);
+		}
+		renamingFolder = null;
+	}
+
+	// ─── Drag and Drop ──────────────────────────────────
+	function onFileDragStart(e: DragEvent, file: GcodeFile) {
+		draggedFile = file;
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', file.path);
+		}
+	}
+
+	function onFolderDragOver(e: DragEvent, folderPath: string) {
+		if (!draggedFile) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		dragOverFolder = folderPath;
+	}
+
+	function onParentDragOver(e: DragEvent) {
+		if (!draggedFile) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		dragOverParent = true;
+	}
+
+	async function onFolderDrop(e: DragEvent, destFolder: string) {
+		e.preventDefault();
+		dragOverFolder = null;
+		dragOverParent = false;
+		if (!draggedFile) return;
+
+		const src = draggedFile.path;
+		draggedFile = null;
+
+		try {
+			await api.moveFile(src, destFolder);
+			toast.success(`Moved to ${destFolder || 'root'}`);
+			await refreshFiles($currentPath);
+		} catch (e: any) {
+			toast.error('Move failed: ' + e.message);
+		}
+	}
+
+	async function onParentDrop(e: DragEvent) {
+		e.preventDefault();
+		dragOverParent = false;
+		if (!draggedFile) return;
+
+		const src = draggedFile.path;
+		draggedFile = null;
+		const dest = $parentPath === '.' ? '' : ($parentPath || '');
+
+		try {
+			await api.moveFile(src, dest);
+			toast.success('Moved to parent folder');
+			await refreshFiles($currentPath);
+		} catch (e: any) {
+			toast.error('Move failed: ' + e.message);
+		}
+	}
+
+	function onDragEnd() {
+		draggedFile = null;
+		dragOverFolder = null;
+		dragOverParent = false;
+	}
+
+	// ─── Move-to Dialog ──────────────────────────────────
+	function showMoveDialog(file: GcodeFile) {
+		moveTargetFile = file;
+		moveTargetFolder = '';
+		contextMenu = null;
+	}
+
+	async function submitMove() {
+		if (!moveTargetFile) return;
+		try {
+			await api.moveFile(moveTargetFile.path, moveTargetFolder);
+			toast.success(`Moved to ${moveTargetFolder || 'root'}`);
+			moveTargetFile = null;
+			await refreshFiles($currentPath);
+		} catch (e: any) {
+			toast.error('Move failed: ' + e.message);
+		}
+	}
+
+	// ─── Context Menu ────────────────────────────────────
+	function onContextMenu(e: MouseEvent, file?: GcodeFile, folder?: Folder) {
+		e.preventDefault();
+		e.stopPropagation();
+		contextMenu = { x: e.clientX, y: e.clientY, file, folder };
 	}
 </script>
 
 <svelte:head>
 	<title>PrintForge - Files</title>
 </svelte:head>
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div onclick={() => contextMenu = null}>
 
 <div class="flex items-center justify-between mb-4">
 	<h1 class="text-xl font-bold">G-code Files</h1>
@@ -364,6 +544,16 @@
 	</div>
 {/if}
 
+<!-- Drag hint -->
+{#if draggedFile}
+	<div class="mb-3 px-3 py-2 bg-accent/10 border border-accent/30 rounded-lg text-sm text-accent flex items-center gap-2">
+		<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+		</svg>
+		Dragging "{draggedFile.filename}" — drop on a folder to move
+	</div>
+{/if}
+
 <!-- New folder input -->
 {#if showNewFolder}
 	<div class="flex gap-2 mb-4">
@@ -372,7 +562,7 @@
 			class="input flex-1 text-sm"
 			placeholder="Folder name..."
 			bind:value={newFolderName}
-			onkeydown={(e) => { if (e.key === 'Enter') createFolder(); }}
+			onkeydown={(e) => { if (e.key === 'Enter') createFolder(); if (e.key === 'Escape') { showNewFolder = false; newFolderName = ''; } }}
 		/>
 		<button class="btn-primary text-sm px-3" onclick={createFolder} disabled={!newFolderName.trim()}>
 			Create
@@ -393,20 +583,64 @@
 			{allSelected ? 'Deselect all' : 'Select all'}
 		</button>
 		<span class="text-xs text-surface-500">{selectedFiles.size} selected</span>
-		<button
-			class="ml-auto btn-danger text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
-			onclick={batchDelete}
-			disabled={loading === 'batch-delete'}
-		>
-			{#if loading === 'batch-delete'}
-				<span class="animate-spin rounded-full h-3 w-3 border-2 border-red-300/30 border-t-white"></span>
-			{:else}
+		<div class="ml-auto flex gap-2">
+			<button
+				class="btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
+				onclick={batchMove}
+				disabled={loading === 'batch-move'}
+			>
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
 				</svg>
-			{/if}
-			Delete selected
-		</button>
+				Move to...
+			</button>
+			<button
+				class="btn-danger text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
+				onclick={batchDelete}
+				disabled={loading === 'batch-delete'}
+			>
+				{#if loading === 'batch-delete'}
+					<span class="animate-spin rounded-full h-3 w-3 border-2 border-red-300/30 border-t-white"></span>
+				{:else}
+					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+					</svg>
+				{/if}
+				Delete
+			</button>
+		</div>
+	</div>
+{/if}
+
+<!-- Move-to dialog -->
+{#if moveTargetFile}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onclick={() => moveTargetFile = null}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="bg-surface-900 border border-surface-700 rounded-xl p-5 w-80 shadow-xl" onclick={(e) => e.stopPropagation()}>
+			<h3 class="text-lg font-semibold mb-2">Move File</h3>
+			<p class="text-sm text-surface-400 mb-4">Moving: <span class="text-surface-200">{moveTargetFile.filename}</span></p>
+
+			<label class="block text-sm text-surface-400 mb-1">Destination folder</label>
+			<select class="input w-full mb-1" bind:value={moveTargetFolder}>
+				<option value="">/ (root)</option>
+				{#each $folders as folder}
+					<option value={folder.path}>{folder.name}</option>
+				{/each}
+			</select>
+			<p class="text-xs text-surface-500 mb-4">Or type a new path:</p>
+			<input
+				type="text"
+				class="input w-full text-sm mb-4"
+				placeholder="e.g. My Project/subfolder"
+				bind:value={moveTargetFolder}
+			/>
+
+			<div class="flex gap-2 justify-end">
+				<button class="btn-secondary text-sm" onclick={() => moveTargetFile = null}>Cancel</button>
+				<button class="btn-primary text-sm" onclick={submitMove}>Move</button>
+			</div>
+		</div>
 	</div>
 {/if}
 
@@ -433,16 +667,23 @@
 		</button>
 	</div>
 {:else}
-	<!-- Back button when in subfolder -->
+	<!-- Back / parent drop zone (when in subfolder) -->
 	{#if $currentPath}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<button
-			class="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg text-sm text-surface-400 hover:bg-surface-800 hover:text-surface-200 transition-colors w-full text-left"
+			class="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg text-sm w-full text-left transition-all duration-150
+				   {dragOverParent
+					? 'bg-accent/20 border-2 border-dashed border-accent text-accent'
+					: 'text-surface-400 hover:bg-surface-800 hover:text-surface-200'}"
 			onclick={goUp}
+			ondragover={(e) => onParentDragOver(e)}
+			ondragleave={() => dragOverParent = false}
+			ondrop={(e) => onParentDrop(e)}
 		>
 			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
 			</svg>
-			..
+			..{#if dragOverParent} <span class="text-xs font-medium">(drop here to move to parent)</span>{/if}
 		</button>
 	{/if}
 
@@ -450,30 +691,65 @@
 	{#if filteredFolders().length > 0}
 		<div class="space-y-1 mb-3">
 			{#each filteredFolders() as folder}
-				<div class="flex items-center gap-3 card !py-2.5 cursor-pointer hover:border-accent/30 group">
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					class="flex items-center gap-3 card !py-2.5 group transition-all duration-150
+						   {dragOverFolder === folder.path
+							? 'ring-2 ring-accent bg-accent/10 scale-[1.01]'
+							: 'cursor-pointer hover:border-accent/30'}"
+					ondragover={(e) => onFolderDragOver(e, folder.path)}
+					ondragleave={() => dragOverFolder = null}
+					ondrop={(e) => onFolderDrop(e, folder.path)}
+					oncontextmenu={(e) => onContextMenu(e, undefined, folder)}
+				>
 					<button
 						class="flex items-center gap-3 flex-1 min-w-0 text-left"
 						onclick={() => navigateToFolder(folder.path)}
 					>
-						<div class="w-10 h-10 bg-amber-500/10 rounded-lg flex items-center justify-center shrink-0">
-							<svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 transition-colors
+								{dragOverFolder === folder.path ? 'bg-accent/20' : 'bg-amber-500/10'}">
+							<svg class="w-5 h-5 {dragOverFolder === folder.path ? 'text-accent' : 'text-amber-400'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
 							</svg>
 						</div>
 						<div class="min-w-0">
-							<p class="text-surface-100 font-medium truncate">{folder.name}</p>
-							<p class="text-xs text-surface-500">{folder.fileCount} file{folder.fileCount !== 1 ? 's' : ''}</p>
+							{#if renamingFolder === folder.path}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<div onclick={(e) => e.stopPropagation()}>
+									<input
+										type="text"
+										class="input text-sm w-full py-0.5"
+										bind:value={renameFolderValue}
+										onkeydown={(e) => { if (e.key === 'Enter') submitRenameFolder(); if (e.key === 'Escape') renamingFolder = null; }}
+										onblur={submitRenameFolder}
+									/>
+								</div>
+							{:else}
+								<p class="text-surface-100 font-medium truncate">{folder.name}</p>
+								<p class="text-xs text-surface-500">{folder.fileCount} file{folder.fileCount !== 1 ? 's' : ''}</p>
+							{/if}
 						</div>
 					</button>
-					<button
-						class="btn-icon p-1.5 opacity-0 group-hover:opacity-100 text-red-400/50 hover:text-red-400 transition-all"
-						onclick={() => deleteFolder(folder)}
-						title="Delete folder (must be empty)"
-					>
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-						</svg>
-					</button>
+					<div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all shrink-0">
+						<button
+							class="btn-icon p-1.5 text-surface-500 hover:text-surface-200"
+							onclick={(e) => { e.stopPropagation(); startRenameFolder(folder); }}
+							title="Rename folder"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+							</svg>
+						</button>
+						<button
+							class="btn-icon p-1.5 text-red-400/50 hover:text-red-400"
+							onclick={(e) => { e.stopPropagation(); deleteFolder(folder); }}
+							title="Delete folder (must be empty)"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+							</svg>
+						</button>
+					</div>
 				</div>
 			{/each}
 		</div>
@@ -491,7 +767,14 @@
 		<!-- List view -->
 		<div class="space-y-2">
 			{#each filteredFiles() as file}
-				<div class="card {expandedFile === file.path ? 'ring-1 ring-accent/30' : ''}">
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					class="card {expandedFile === file.path ? 'ring-1 ring-accent/30' : ''} {draggedFile?.path === file.path ? 'opacity-40' : ''}"
+					draggable="true"
+					ondragstart={(e) => onFileDragStart(e, file)}
+					ondragend={onDragEnd}
+					oncontextmenu={(e) => onContextMenu(e, file)}
+				>
 					<div class="flex items-center gap-3">
 						{#if selectMode}
 							<button
@@ -505,6 +788,13 @@
 									</svg>
 								{/if}
 							</button>
+						{:else}
+							<!-- Drag handle -->
+							<div class="cursor-grab active:cursor-grabbing text-surface-600 hover:text-surface-400 shrink-0" title="Drag to move">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" />
+								</svg>
+							</div>
 						{/if}
 
 						<button
@@ -518,22 +808,32 @@
 						</button>
 
 						<div class="flex-1 min-w-0">
-							<p class="text-surface-100 font-medium truncate">{file.filename}</p>
-							<div class="flex gap-3 text-xs text-surface-500 mt-0.5">
-								<span>{formatFileSize(file.fileSize)}</span>
-								{#if file.estimatedTime}
-									<span>{formatDuration(file.estimatedTime)}</span>
-								{/if}
-								{#if file.layerCount}
-									<span>{file.layerCount} layers</span>
-								{/if}
-								{#if file.estimatedCost}
-									<span class="text-emerald-400">${file.estimatedCost.toFixed(2)}</span>
-								{/if}
-								{#if file.slicer}
-									<span class="hidden sm:inline">{file.slicer}</span>
-								{/if}
-							</div>
+							{#if renamingFile === file.path}
+								<input
+									type="text"
+									class="input text-sm w-full py-0.5"
+									bind:value={renameValue}
+									onkeydown={(e) => { if (e.key === 'Enter') submitRenameFile(); if (e.key === 'Escape') renamingFile = null; }}
+									onblur={submitRenameFile}
+								/>
+							{:else}
+								<p class="text-surface-100 font-medium truncate">{file.filename}</p>
+								<div class="flex gap-3 text-xs text-surface-500 mt-0.5">
+									<span>{formatFileSize(file.fileSize)}</span>
+									{#if file.estimatedTime}
+										<span>{formatDuration(file.estimatedTime)}</span>
+									{/if}
+									{#if file.layerCount}
+										<span>{file.layerCount} layers</span>
+									{/if}
+									{#if file.estimatedCost}
+										<span class="text-emerald-400">${file.estimatedCost.toFixed(2)}</span>
+									{/if}
+									{#if file.slicer}
+										<span class="hidden sm:inline">{file.slicer}</span>
+									{/if}
+								</div>
+							{/if}
 						</div>
 
 						<div class="flex gap-1 shrink-0">
@@ -553,18 +853,13 @@
 								Print
 							</button>
 							<button
-								class="btn-icon text-red-400 hover:text-red-300 hover:bg-red-500/10"
-								onclick={() => deleteFile(file)}
-								disabled={!!loading}
-								title="Delete file"
+								class="btn-icon text-surface-500 hover:text-surface-200 hover:bg-surface-700"
+								onclick={(e) => onContextMenu(e, file)}
+								title="More actions"
 							>
-								{#if loading === 'delete:' + file.path}
-									<span class="animate-spin rounded-full h-4 w-4 border-2 border-red-400/30 border-t-red-400"></span>
-								{:else}
-									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-									</svg>
-								{/if}
+								<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+									<path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+								</svg>
 							</button>
 						</div>
 					</div>
@@ -591,7 +886,14 @@
 		<!-- Grid view -->
 		<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
 			{#each filteredFiles() as file}
-				<div class="card flex flex-col">
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					class="card flex flex-col {draggedFile?.path === file.path ? 'opacity-40' : ''}"
+					draggable="true"
+					ondragstart={(e) => onFileDragStart(e, file)}
+					ondragend={onDragEnd}
+					oncontextmenu={(e) => onContextMenu(e, file)}
+				>
 					<div class="w-full aspect-square bg-surface-800 rounded-lg flex items-center justify-center mb-3 relative">
 						<svg class="w-10 h-10 text-surface-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -626,13 +928,12 @@
 							Print
 						</button>
 						<button
-							class="btn-icon text-red-400 hover:text-red-300 hover:bg-red-500/10"
-							onclick={() => deleteFile(file)}
-							disabled={!!loading}
-							title="Delete"
+							class="btn-icon text-surface-500 hover:text-surface-200 hover:bg-surface-700"
+							onclick={(e) => onContextMenu(e, file)}
+							title="More actions"
 						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+							<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+								<path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
 							</svg>
 						</button>
 					</div>
@@ -640,4 +941,81 @@
 			{/each}
 		</div>
 	{/if}
+{/if}
+
+</div>
+
+<!-- Context menu -->
+{#if contextMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="fixed z-50 bg-surface-800 border border-surface-600 rounded-lg shadow-xl py-1 min-w-[180px]"
+		style="left: {Math.min(contextMenu.x, window.innerWidth - 200)}px; top: {Math.min(contextMenu.y, window.innerHeight - 250)}px"
+		onclick={(e) => e.stopPropagation()}
+	>
+		{#if contextMenu.file}
+			{@const file = contextMenu.file}
+			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
+				onclick={() => { startPrint(file); contextMenu = null; }}
+				disabled={!isConnected || isPrinting}
+			>
+				<svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+				</svg>
+				Print
+			</button>
+			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
+				onclick={() => startRenameFile(file)}
+			>
+				<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+				</svg>
+				Rename
+			</button>
+			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
+				onclick={() => showMoveDialog(file)}
+			>
+				<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+				</svg>
+				Move to...
+			</button>
+			<div class="border-t border-surface-700 my-1"></div>
+			<button class="w-full px-3 py-2 text-sm text-left text-red-400 hover:bg-surface-700 flex items-center gap-2"
+				onclick={() => { deleteFile(file); contextMenu = null; }}
+			>
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+				</svg>
+				Delete
+			</button>
+		{:else if contextMenu.folder}
+			{@const folder = contextMenu.folder}
+			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
+				onclick={() => { navigateToFolder(folder.path); }}
+			>
+				<svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+				</svg>
+				Open
+			</button>
+			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
+				onclick={() => startRenameFolder(folder)}
+			>
+				<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+				</svg>
+				Rename
+			</button>
+			<div class="border-t border-surface-700 my-1"></div>
+			<button class="w-full px-3 py-2 text-sm text-left text-red-400 hover:bg-surface-700 flex items-center gap-2"
+				onclick={() => { deleteFolder(folder); contextMenu = null; }}
+			>
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+				</svg>
+				Delete
+			</button>
+		{/if}
+	</div>
 {/if}

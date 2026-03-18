@@ -192,6 +192,65 @@ async def move_file(
     }
 
 
+@router.post("/rename")
+async def rename_file(
+    src: str = Query(..., description="Source file path"),
+    name: str = Query(..., description="New filename"),
+):
+    """Rename a file (keeps it in the same folder)."""
+    _ensure_gcode_dir()
+    src_path = _safe_resolve(src)
+    if not src_path.exists() or not src_path.is_file():
+        raise HTTPException(404, f"File not found: {src}")
+
+    import re
+    safe_name = re.sub(r"[^\w.\-() ]", "_", name.strip())
+    if not safe_name:
+        raise HTTPException(400, "Invalid filename")
+    # Ensure gcode extension
+    if not any(safe_name.lower().endswith(ext) for ext in ALLOWED_EXTENSIONS):
+        safe_name += src_path.suffix
+
+    dest_path = src_path.parent / safe_name
+    if dest_path.exists() and dest_path != src_path:
+        raise HTTPException(409, f"File already exists: {safe_name}")
+
+    src_path.rename(dest_path)
+    return {
+        "ok": True,
+        "path": str(dest_path.relative_to(GCODE_DIR)).replace("\\", "/"),
+        "filename": safe_name,
+    }
+
+
+@router.post("/rename-folder")
+async def rename_folder(
+    src: str = Query(..., description="Source folder path"),
+    name: str = Query(..., description="New folder name"),
+):
+    """Rename a folder."""
+    _ensure_gcode_dir()
+    src_path = _safe_resolve(src)
+    if not src_path.exists() or not src_path.is_dir():
+        raise HTTPException(404, f"Folder not found: {src}")
+
+    import re
+    safe_name = re.sub(r"[^\w.\-() ]", "_", name.strip())
+    if not safe_name:
+        raise HTTPException(400, "Invalid folder name")
+
+    dest_path = src_path.parent / safe_name
+    if dest_path.exists() and dest_path != src_path:
+        raise HTTPException(409, f"Folder already exists: {safe_name}")
+
+    src_path.rename(dest_path)
+    return {
+        "ok": True,
+        "path": str(dest_path.relative_to(GCODE_DIR)).replace("\\", "/"),
+        "name": safe_name,
+    }
+
+
 @router.delete("/{filename:path}")
 async def delete_file(filename: str):
     """Delete a G-code file by its path."""
