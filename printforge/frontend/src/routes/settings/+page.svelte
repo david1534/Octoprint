@@ -984,6 +984,40 @@ M117 Print Complete`;
 					</div>
 				{/if}
 
+				<!-- Filter & Sort Controls -->
+				{#if spoolsLoaded && spools.length > 1}
+					<div class="flex flex-wrap items-center gap-2 mb-3">
+						<select class="input text-xs py-1 px-2 w-auto" bind:value={spoolFilterMaterial}>
+							<option value="all">All Materials</option>
+							{#each spoolMaterialsInUse() as mat}
+								<option value={mat}>{mat}</option>
+							{/each}
+						</select>
+						<select class="input text-xs py-1 px-2 w-auto" bind:value={spoolSortBy}>
+							<option value="name">Sort: Name</option>
+							<option value="remaining">Sort: Remaining</option>
+							<option value="material">Sort: Material</option>
+						</select>
+						<button
+							class="p-1 rounded text-surface-500 hover:text-surface-300 transition-colors"
+							onclick={() => spoolSortAsc = !spoolSortAsc}
+							title={spoolSortAsc ? 'Ascending' : 'Descending'}
+						>
+							<svg class="w-4 h-4 transition-transform {spoolSortAsc ? '' : 'rotate-180'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+							</svg>
+						</button>
+						{#if spoolFilterMaterial !== 'all'}
+							<button
+								class="text-xs text-surface-500 hover:text-surface-300 transition-colors"
+								onclick={() => spoolFilterMaterial = 'all'}
+							>
+								Clear filter
+							</button>
+						{/if}
+					</div>
+				{/if}
+
 				<!-- Spool List -->
 				{#if !spoolsLoaded}
 					<p class="text-sm text-surface-500">Loading spools...</p>
@@ -995,9 +1029,11 @@ M117 Print Complete`;
 						<p class="text-sm text-surface-500">No spools added yet</p>
 						<p class="text-xs text-surface-600 mt-1">Add a spool to start tracking filament usage</p>
 					</div>
+				{:else if filteredSpools().length === 0}
+					<p class="text-sm text-surface-500 text-center py-4">No spools match the current filter.</p>
 				{:else}
 					<div class="space-y-3">
-						{#each spools as spool (spool.id)}
+						{#each filteredSpools() as spool (spool.id)}
 							<div class="bg-surface-800/50 rounded-lg p-3 {spool.active ? 'ring-1 ring-accent/40' : ''}">
 								{#if editingSpoolId === spool.id}
 									<!-- Edit mode -->
@@ -1055,6 +1091,9 @@ M117 Print Complete`;
 												<span class="text-xs px-1.5 py-0.5 rounded bg-surface-700 text-surface-400">{spool.material}</span>
 												{#if spool.active}
 													<span class="text-xs px-1.5 py-0.5 rounded bg-accent/20 text-accent font-medium">Active</span>
+												{/if}
+												{#if spoolRemaining(spool) <= lowFilamentThreshold}
+													<span class="text-xs px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium">Low</span>
 												{/if}
 											</div>
 											<!-- Progress bar -->
@@ -1115,6 +1154,33 @@ M117 Print Complete`;
 						{/each}
 					</div>
 				{/if}
+			</div>
+
+			<!-- Low Filament Warning Settings -->
+			<div class="card">
+				<h2 class="text-sm font-semibold text-surface-300 mb-2">Low Filament Warning</h2>
+				<p class="text-xs text-surface-500 mb-3">
+					Get warned when a spool's remaining filament drops below this threshold.
+				</p>
+				<div class="flex items-center gap-3">
+					<label class="text-xs text-surface-400">Threshold (g)</label>
+					<input
+						type="number"
+						class="input w-24 text-sm"
+						min="0"
+						step="10"
+						bind:value={lowFilamentThreshold}
+					/>
+					<button
+						class="btn-secondary text-xs px-3 py-1.5"
+						onclick={() => {
+							saveSetting('low_filament_threshold_g', String(lowFilamentThreshold));
+							toast.success('Low filament threshold saved');
+						}}
+					>
+						Save
+					</button>
+				</div>
 			</div>
 		{/if}
 

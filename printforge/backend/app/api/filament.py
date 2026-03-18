@@ -44,6 +44,22 @@ async def get_active():
     return {"spool": spool}
 
 
+@router.get("/warnings")
+async def get_low_filament_warnings():
+    """Get spools that are below the low-filament warning threshold."""
+    threshold_g = float(await get_setting("low_filament_threshold_g", "50"))
+    all_spools = await get_spools()
+    warnings = []
+    for spool in all_spools:
+        remaining = max(0, spool["total_weight_g"] - spool["used_weight_g"])
+        if remaining <= threshold_g:
+            warnings.append({
+                **spool,
+                "remaining_g": round(remaining, 1),
+            })
+    return {"warnings": warnings, "threshold_g": threshold_g}
+
+
 @router.post("/{spool_id}/activate")
 async def activate_spool(spool_id: int):
     """Set a spool as the active spool."""
@@ -77,19 +93,3 @@ async def remove_spool(spool_id: int):
     """Delete a filament spool."""
     await delete_spool(spool_id)
     return {"ok": True}
-
-
-@router.get("/warnings")
-async def get_low_filament_warnings():
-    """Get spools that are below the low-filament warning threshold."""
-    threshold_g = float(await get_setting("low_filament_threshold_g", "50"))
-    spools = await get_spools()
-    warnings = []
-    for spool in spools:
-        remaining = max(0, spool["total_weight_g"] - spool["used_weight_g"])
-        if remaining <= threshold_g:
-            warnings.append({
-                **spool,
-                "remaining_g": round(remaining, 1),
-            })
-    return {"warnings": warnings, "threshold_g": threshold_g}
