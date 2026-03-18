@@ -122,8 +122,10 @@ async def camera_webrtc_signaling(request: Request):
                 content=body,
                 headers={"Content-Type": request.headers.get("content-type", "application/sdp")},
             )
-            return JSONResponse(
-                content=resp.text,
+            # Return raw SDP text — NOT JSONResponse which would
+            # JSON-encode the string (adding quotes), breaking WebRTC.
+            return Response(
+                content=resp.content,
                 status_code=resp.status_code,
                 media_type=resp.headers.get("content-type", "application/sdp"),
             )
@@ -156,8 +158,8 @@ async def camera_mjpeg_proxy():
                         yield f"Content-Length: {len(resp.content)}\r\n\r\n".encode()
                         yield resp.content
                         yield b"\r\n"
-                    # ~10 FPS for the fallback stream
-                    await asyncio.sleep(0.1)
+                    # ~15 FPS for the fallback MJPEG stream
+                    await asyncio.sleep(0.066)
                 except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException):
                     await asyncio.sleep(1.0)
                 except Exception:

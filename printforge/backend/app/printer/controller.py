@@ -525,6 +525,11 @@ M117 Print Complete"""
                     await self._queue.enqueue("M140 S0", CommandPriority.SYSTEM)
 
             # Deduct filament from selected spool (or fall back to active spool)
+            logger.info(
+                "Post-print filament stats: %.1fmm extruded, spool_id=%s",
+                filament_used_mm,
+                self._current_spool_id,
+            )
             if filament_used_mm > 0:
                 spool = None
                 if self._current_spool_id:
@@ -537,7 +542,18 @@ M117 Print Complete"""
                     volume_mm3 = math.pi * radius_mm * radius_mm * filament_used_mm
                     grams = volume_mm3 / 1000.0 * density
                     await deduct_filament(spool["id"], grams)
-                    logger.info("Deducted %.1fg from spool '%s'", grams, spool["name"])
+                    logger.info(
+                        "Deducted %.1fg (%.0fmm) from spool '%s' (id=%d)",
+                        grams, filament_used_mm, spool["name"], spool["id"],
+                    )
+                else:
+                    logger.warning(
+                        "No spool found for filament deduction "
+                        "(spool_id=%s, no active spool)",
+                        self._current_spool_id,
+                    )
+            else:
+                logger.info("No filament usage tracked (0mm extruded)")
 
             # Record completion in history
             if self._current_job_id:
