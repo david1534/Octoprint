@@ -446,7 +446,12 @@ M117 Print Complete"""
     async def cancel_print(self) -> None:
         """Cancel the current print."""
         if self._sender:
-            # Record cancellation in history before resetting
+            # Capture filament usage before cancel/reset clears state
+            filament_used = self._sender._filament_used_mm
+            elapsed = self._sender.elapsed_seconds
+            lines = self._sender.current_line
+
+            # Record cancellation in history
             if self._current_job_id:
                 from ..storage.models import complete_print_job
 
@@ -454,14 +459,17 @@ M117 Print Complete"""
                     await complete_print_job(
                         job_id=self._current_job_id,
                         status="cancelled",
-                        duration_seconds=int(self._sender.elapsed_seconds),
-                        lines_printed=self._sender.current_line,
-                        filament_used_mm=self._sender._filament_used_mm,
+                        duration_seconds=int(elapsed),
+                        lines_printed=lines,
+                        filament_used_mm=filament_used,
                     )
                 except Exception:
                     logger.exception("Failed to record print cancellation")
                 self._current_job_id = None
-                self._current_spool_id = None
+
+            # Deduct filament actually used before cancellation
+            await self._deduct_filament(filament_used)
+            self._current_spool_id = None
 
             await self._sender.cancel()
             self._sender.reset()
@@ -492,6 +500,56 @@ M117 Print Complete"""
         """Disable stepper motors."""
         await self.send_command("M84")
 
+    async def _deduct_filament(self, filament_used_mm: float) -> None:
+        """Deduct filament from the selected spool (or active spool fallback).
+
+        Called on ALL print endings — success, cancel, or failure — so that
+        filament tracking stays accurate regardless of outcome.
+        """
+        import math
+
+        from ..storage.models import (
+            deduct_filament,
+            get_active_spool,
+            get_setting,
+            get_spool,
+        )
+
+        logger.info(
+            "Filament deduction: %.1fmm extruded, spool_id=%s",
+            filament_used_mm,
+            self._current_spool_id,
+        )
+        if filament_used_mm <= 0:
+            logger.info("No filament usage tracked (0mm extruded)")
+            return
+
+        try:
+            spool = None
+            if self._current_spool_id:
+                spool = await get_spool(self._current_spool_id)
+            if not spool:
+                spool = await get_active_spool()
+            if not spool:
+                logger.warning(
+                    "No spool found for filament deduction "
+                    "(spool_id=%s, no active spool)",
+                    self._current_spool_id,
+                )
+                return
+
+            density = float(await get_setting("filament_density", "1.24"))
+            radius_mm = 1.75 / 2.0
+            volume_mm3 = math.pi * radius_mm * radius_mm * filament_used_mm
+            grams = volume_mm3 / 1000.0 * density
+            await deduct_filament(spool["id"], grams)
+            logger.info(
+                "Deducted %.1fg (%.0fmm) from spool '%s' (id=%d)",
+                grams, filament_used_mm, spool["name"], spool["id"],
+            )
+        except Exception:
+            logger.exception("Failed to deduct filament")
+
     async def _on_print_complete(
         self,
         elapsed_seconds: float = 0,
@@ -499,15 +557,7 @@ M117 Print Complete"""
         filament_used_mm: float = 0,
     ) -> None:
         """Handle post-print actions (cooldown, filament deduction, history, notifications)."""
-        import math
-
-        from ..storage.models import (
-            complete_print_job,
-            deduct_filament,
-            get_active_spool,
-            get_setting,
-            get_spool,
-        )
+        from ..storage.models import complete_print_job, get_setting
 
         try:
             # Run end G-code sequence (retract, present, cool down, disable motors)
@@ -524,36 +574,9 @@ M117 Print Complete"""
                     await self._queue.enqueue("M104 S0", CommandPriority.SYSTEM)
                     await self._queue.enqueue("M140 S0", CommandPriority.SYSTEM)
 
-            # Deduct filament from selected spool (or fall back to active spool)
-            logger.info(
-                "Post-print filament stats: %.1fmm extruded, spool_id=%s",
-                filament_used_mm,
-                self._current_spool_id,
-            )
-            if filament_used_mm > 0:
-                spool = None
-                if self._current_spool_id:
-                    spool = await get_spool(self._current_spool_id)
-                if not spool:
-                    spool = await get_active_spool()
-                if spool:
-                    density = float(await get_setting("filament_density", "1.24"))
-                    radius_mm = 1.75 / 2.0
-                    volume_mm3 = math.pi * radius_mm * radius_mm * filament_used_mm
-                    grams = volume_mm3 / 1000.0 * density
-                    await deduct_filament(spool["id"], grams)
-                    logger.info(
-                        "Deducted %.1fg (%.0fmm) from spool '%s' (id=%d)",
-                        grams, filament_used_mm, spool["name"], spool["id"],
-                    )
-                else:
-                    logger.warning(
-                        "No spool found for filament deduction "
-                        "(spool_id=%s, no active spool)",
-                        self._current_spool_id,
-                    )
-            else:
-                logger.info("No filament usage tracked (0mm extruded)")
+            # Deduct filament used during the print
+            await self._deduct_filament(filament_used_mm)
+            self._current_spool_id = None
 
             # Record completion in history
             if self._current_job_id:
@@ -565,7 +588,6 @@ M117 Print Complete"""
                     filament_used_mm=filament_used_mm,
                 )
                 self._current_job_id = None
-                self._current_spool_id = None
 
             # Notify via terminal so WebSocket picks it up
             self._notify_terminal("[SYSTEM] Print complete", "system")
@@ -641,11 +663,14 @@ M117 Print Complete"""
                             logger.exception("Error in post-print actions")
                         self.state.status = PrinterStatus.IDLE
                     else:
-                        # Aborted due to consecutive failures or cancel
+                        # Aborted due to consecutive failures
                         logger.warning(
                             "Print task aborted (cancelled=%s)", was_cancelled
                         )
-                        # Record cancellation in history
+                        _filament = self._sender._filament_used_mm
+                        # Deduct filament used before the abort
+                        await self._deduct_filament(_filament)
+                        # Record failure in history
                         if self._current_job_id:
                             from ..storage.models import complete_print_job
 
@@ -657,14 +682,14 @@ M117 Print Complete"""
                                         self._sender.elapsed_seconds
                                     ),
                                     lines_printed=self._sender.current_line,
-                                    filament_used_mm=self._sender._filament_used_mm,
+                                    filament_used_mm=_filament,
                                 )
                             except Exception:
                                 logger.exception(
                                     "Failed to record print abort"
                                 )
                             self._current_job_id = None
-                            self._current_spool_id = None
+                        self._current_spool_id = None
                         self._sender.reset()
                         self.state.status = PrinterStatus.ERROR
                         self.state.error_message = (

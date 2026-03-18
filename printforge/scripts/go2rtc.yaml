@@ -13,5 +13,9 @@ api:
 
 webrtc:
   listen: ":8555"
+  # Advertise the Tailscale IP so browsers connecting via Tailscale
+  # can reach the WebRTC UDP port directly.
+  candidates:
+    - 100.108.194.105:8555
   ice_servers:
     - urls: [stun:stun.l.google.com:19302]
