@@ -61,6 +61,14 @@ class PrinterState:
     # Timestamps
     last_update: float = field(default_factory=time.time)
 
+    # Timelapse status (set by controller)
+    timelapse_recording: bool = False
+    timelapse_frame_count: int = 0
+    timelapse_assembling: bool = False
+
+    # Bed mesh data (populated by G29 / M420 V response parsing)
+    bed_mesh: Optional[dict] = None
+
     def to_dict(self) -> dict:
         """Serialize state for WebSocket transmission."""
         return {
@@ -93,6 +101,12 @@ class PrinterState:
             "fan_speed": self.fan_speed,
             "firmware": self.firmware_name,
             "error": self.error_message,
+            "timelapse": {
+                "recording": self.timelapse_recording,
+                "frameCount": self.timelapse_frame_count,
+                "assembling": self.timelapse_assembling,
+            },
+            "bed_mesh": self.bed_mesh,
         }
 
     def update_temperatures(

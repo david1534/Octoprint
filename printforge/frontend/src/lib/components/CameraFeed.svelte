@@ -2,12 +2,12 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '../api';
 
-	type StreamMode = 'webrtc' | 'mjpeg-direct' | 'mjpeg-proxy';
+	type StreamMode = 'snapshot' | 'mjpeg-direct' | 'mjpeg-proxy';
 
-	let webrtcUrl = $state('');
 	let mjpegUrl = $state('');
 	let proxyUrl = $state('');
-	let streamMode = $state<StreamMode>('webrtc');
+	let snapshotUrl = $state('');
+	let streamMode = $state<StreamMode>('snapshot');
 	let error = $state('');
 	let loading = $state(true);
 	let retryCount = $state(0);
@@ -15,9 +15,19 @@
 	let paused = $state(false);
 	let fullscreen = $state(false);
 	let containerEl: HTMLDivElement;
-	let videoEl: HTMLVideoElement;
-	let pc: RTCPeerConnection | null = null;
+	let canvasEl: HTMLCanvasElement;
+	let imgEl: HTMLImageElement;
 	const MAX_RETRIES = 5;
+
+	// Snapshot polling state
+	let pollActive = false;
+	let pollTimer: ReturnType<typeof setTimeout> | null = null;
+	let fps = $state(0);
+	let frameTimestamps: number[] = [];
+	const POLL_INTERVAL = 100; // ms between snapshot fetches (~10fps baseline)
+	const FAST_POLL_INTERVAL = 67; // ms for higher quality mode (~15fps)
+	let currentInterval = POLL_INTERVAL;
+	let fetchInFlight = false; // prevents overlapping fetches
 
 	onMount(async () => {
 		await loadCamera();
@@ -26,26 +36,21 @@
 	});
 
 	onDestroy(() => {
+		stopPolling();
 		if (retryTimer) clearTimeout(retryTimer);
-		cleanupWebRTC();
 		document.removeEventListener('visibilitychange', onVisibility);
 		document.removeEventListener('fullscreenchange', onFullscreenChange);
 	});
 
-	function cleanupWebRTC() {
-		if (pc) {
-			pc.close();
-			pc = null;
-		}
-	}
-
 	function onVisibility() {
 		if (document.hidden) {
 			paused = true;
-			cleanupWebRTC();
+			stopPolling();
 		} else {
 			paused = false;
-			if (error || streamMode === 'webrtc') {
+			if (streamMode === 'snapshot') {
+				startPolling();
+			} else if (error) {
 				loadCamera();
 			}
 		}
@@ -60,22 +65,13 @@
 		error = '';
 		try {
 			const urls = await api.getCameraUrls();
-			webrtcUrl = urls.webrtc || '';
 			mjpegUrl = urls.mjpeg || '';
 			proxyUrl = urls.proxy || '';
+			snapshotUrl = urls.snapshot || '/api/camera/snapshot';
 
-			// Prefer direct MJPEG (lowest latency, most reliable).
-			// WebRTC is attempted only if no MJPEG URL is available.
-			if (mjpegUrl) {
-				streamMode = 'mjpeg-direct';
-				loading = false;
-			} else if (webrtcUrl) {
-				streamMode = 'webrtc';
-				await startWebRTC();
-			} else if (proxyUrl) {
-				streamMode = 'mjpeg-proxy';
-				loading = false;
-			}
+			// Default to snapshot polling (most reliable, lowest latency)
+			streamMode = 'snapshot';
+			startPolling();
 			retryCount = 0;
 		} catch (e) {
 			error = 'Camera not available';
@@ -83,92 +79,131 @@
 		}
 	}
 
-	async function startWebRTC() {
-		cleanupWebRTC();
+	function switchMode(mode: StreamMode) {
+		stopPolling();
+		streamMode = mode;
+		error = '';
+		loading = true;
 
-		try {
-			pc = new RTCPeerConnection({
-				iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-			});
-
-			pc.addTransceiver('video', { direction: 'recvonly' });
-
-			pc.ontrack = (event) => {
-				if (videoEl && event.streams[0]) {
-					videoEl.srcObject = event.streams[0];
-					loading = false;
-					error = '';
-				}
-			};
-
-			pc.oniceconnectionstatechange = () => {
-				if (!pc) return;
-				const state = pc.iceConnectionState;
-				if (state === 'failed' || state === 'disconnected' || state === 'closed') {
-					fallbackToMJPEG();
-				}
-			};
-
-			const offer = await pc.createOffer();
-			await pc.setLocalDescription(offer);
-
-			// Wait for ICE gathering to complete (or timeout after 2s)
-			await new Promise<void>((resolve) => {
-				if (!pc) return resolve();
-				if (pc.iceGatheringState === 'complete') return resolve();
-				const timeout = setTimeout(resolve, 2000);
-				pc.onicegatheringstatechange = () => {
-					if (pc?.iceGatheringState === 'complete') {
-						clearTimeout(timeout);
-						resolve();
-					}
-				};
-			});
-
-			const resp = await fetch(webrtcUrl, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/sdp' },
-				body: pc.localDescription!.sdp,
-			});
-
-			if (!resp.ok) {
-				throw new Error(`Signaling failed: ${resp.status}`);
-			}
-
-			const answerSdp = await resp.text();
-			await pc.setRemoteDescription(
-				new RTCSessionDescription({ type: 'answer', sdp: answerSdp })
-			);
-
-			// If no video track arrives within 5 seconds, fall back
-			setTimeout(() => {
-				if (loading && streamMode === 'webrtc') {
-					fallbackToMJPEG();
-				}
-			}, 5000);
-		} catch (e) {
-			fallbackToMJPEG();
-		}
-	}
-
-	function fallbackToMJPEG() {
-		cleanupWebRTC();
-		if (mjpegUrl) {
-			streamMode = 'mjpeg-direct';
-			loading = false;
-		} else if (proxyUrl) {
-			streamMode = 'mjpeg-proxy';
-			loading = false;
+		if (mode === 'snapshot') {
+			startPolling();
 		} else {
-			error = 'Camera stream unavailable';
+			// MJPEG modes use an <img> tag
 			loading = false;
-			scheduleRetry();
 		}
 	}
+
+	// ── Snapshot polling with canvas rendering ──────────────────
+
+	function startPolling() {
+		if (pollActive) return;
+		pollActive = true;
+		frameTimestamps = [];
+		pollNext();
+	}
+
+	function stopPolling() {
+		pollActive = false;
+		if (pollTimer) {
+			clearTimeout(pollTimer);
+			pollTimer = null;
+		}
+	}
+
+	// Detect createImageBitmap support once (older Safari/iOS may lack it)
+	const hasImageBitmap = typeof createImageBitmap === 'function';
+
+	/** Convert blob to a drawable image source (off-thread if possible). */
+	function blobToDrawable(blob: Blob): Promise<ImageBitmap | HTMLImageElement> {
+		if (hasImageBitmap) return createImageBitmap(blob);
+		// Fallback: create an <img> from an object URL
+		return new Promise((resolve, reject) => {
+			const img = new Image();
+			const objUrl = URL.createObjectURL(blob);
+			img.onload = () => { URL.revokeObjectURL(objUrl); resolve(img); };
+			img.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error('decode')); };
+			img.src = objUrl;
+		});
+	}
+
+	function pollNext() {
+		if (!pollActive || paused || fetchInFlight) return;
+		fetchInFlight = true;
+
+		// Use fetch + createImageBitmap for off-thread decode (faster than new Image())
+		const url = `${snapshotUrl}?t=${Date.now()}`;
+
+		fetch(url)
+			.then(r => {
+				if (!r.ok) throw new Error(`HTTP ${r.status}`);
+				return r.blob();
+			})
+			.then(blob => blobToDrawable(blob))
+			.then(drawable => {
+				if (!pollActive) {
+					if ('close' in drawable) drawable.close();
+					return;
+				}
+				fetchInFlight = false;
+
+				// Draw to canvas for smooth rendering
+				if (canvasEl) {
+					const ctx = canvasEl.getContext('2d');
+					if (ctx) {
+						const w = drawable instanceof HTMLImageElement ? drawable.naturalWidth : drawable.width;
+						const h = drawable instanceof HTMLImageElement ? drawable.naturalHeight : drawable.height;
+						if (canvasEl.width !== w || canvasEl.height !== h) {
+							canvasEl.width = w;
+							canvasEl.height = h;
+						}
+						ctx.drawImage(drawable, 0, 0);
+					}
+				}
+				if ('close' in drawable) drawable.close();
+
+				loading = false;
+				error = '';
+				retryCount = 0;
+
+				// Track FPS
+				const now = performance.now();
+				frameTimestamps.push(now);
+				const cutoff = now - 2000;
+				frameTimestamps = frameTimestamps.filter(t => t > cutoff);
+				fps = Math.round(frameTimestamps.length / 2);
+
+				// Immediately start next fetch (overlap with render) — minimal gap
+				if (pollActive) {
+					pollTimer = setTimeout(pollNext, currentInterval);
+				}
+			})
+			.catch(() => {
+				fetchInFlight = false;
+				if (!pollActive) return;
+				retryCount++;
+
+				if (retryCount >= MAX_RETRIES) {
+					error = 'Camera stream unavailable';
+					stopPolling();
+					return;
+				}
+
+				// Back off on errors
+				const delay = Math.min(1000 * retryCount, 5000);
+				pollTimer = setTimeout(pollNext, delay);
+			});
+	}
+
+	// ── MJPEG error handling ───────────────────────────────────
 
 	function onImgError() {
 		if (streamMode === 'mjpeg-direct' && proxyUrl) {
 			streamMode = 'mjpeg-proxy';
+			return;
+		}
+		if (streamMode === 'mjpeg-proxy') {
+			// Fall back to snapshot polling
+			switchMode('snapshot');
 			return;
 		}
 		error = 'Camera stream unavailable';
@@ -176,6 +211,7 @@
 	}
 
 	function onImgLoad() {
+		loading = false;
 		error = '';
 		retryCount = 0;
 	}
@@ -190,6 +226,7 @@
 
 	function manualRetry() {
 		retryCount = 0;
+		error = '';
 		loadCamera();
 	}
 
@@ -205,9 +242,9 @@
 	}
 
 	let modeLabel = $derived(
-		streamMode === 'webrtc' ? 'WebRTC' :
+		streamMode === 'snapshot' ? `Snapshot ${fps}fps` :
 		streamMode === 'mjpeg-direct' ? 'MJPEG' :
-		'proxied'
+		'Proxied'
 	);
 
 	let currentMjpegSrc = $derived(
@@ -221,6 +258,21 @@
 		<div class="flex items-center gap-2">
 			{#if !error && !loading}
 				<span class="text-xs text-surface-600">{modeLabel}</span>
+				<!-- Mode switcher -->
+				<div class="flex gap-0.5 bg-surface-800 rounded-md p-0.5">
+					<button
+						class="px-1.5 py-0.5 text-[10px] rounded transition-colors
+							   {streamMode === 'snapshot' ? 'bg-surface-700 text-surface-200' : 'text-surface-500 hover:text-surface-300'}"
+						onclick={() => switchMode('snapshot')}
+						title="Snapshot polling (most reliable)"
+					>SNAP</button>
+					<button
+						class="px-1.5 py-0.5 text-[10px] rounded transition-colors
+							   {streamMode.startsWith('mjpeg') ? 'bg-surface-700 text-surface-200' : 'text-surface-500 hover:text-surface-300'}"
+						onclick={() => switchMode(mjpegUrl ? 'mjpeg-direct' : 'mjpeg-proxy')}
+						title="MJPEG stream (higher FPS when available)"
+					>MJPEG</button>
+				</div>
 			{/if}
 			{#if !loading && !error}
 				<button
@@ -266,20 +318,19 @@
 			<div class="absolute inset-0 flex items-center justify-center text-surface-500">
 				<p class="text-sm">Camera paused (tab hidden)</p>
 			</div>
-		{:else if streamMode === 'webrtc'}
-			<!-- svelte-ignore a11y_media_has_caption -->
-			<video
-				bind:this={videoEl}
-				autoplay
-				playsinline
-				muted
+		{:else if streamMode === 'snapshot'}
+			<canvas
+				bind:this={canvasEl}
 				class="w-full h-full object-cover"
-			></video>
+			></canvas>
 		{:else}
 			<img
+				bind:this={imgEl}
 				src={currentMjpegSrc}
 				alt="Printer camera"
 				class="w-full h-full object-cover"
+				decoding="async"
+				fetchpriority="high"
 				onerror={onImgError}
 				onload={onImgLoad}
 			/>

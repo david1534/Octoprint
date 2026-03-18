@@ -1,12 +1,19 @@
 # go2rtc configuration for PrintForge
 # Documentation: https://github.com/AlexxIT/go2rtc
+#
+# Latency tuning notes:
+#   - 640x480 is plenty for monitoring a print bed (75% fewer pixels than 720p)
+#   - 15fps keeps the stream smooth without saturating the Pi's encoder
+#   - -bf 0 disables B-frames, removing one frame of encoding latency
+#   - -g 15 puts a keyframe every second (faster stream start / recovery)
+#   - -b:v 1M is sufficient for 480p at 15fps
 
 streams:
   printer_cam:
-    # USB Webcam (most common)
-    - exec:ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 30 -i /dev/video0 -pix_fmt yuv420p -c:v h264_v4l2m2m -b:v 2M -g 30 -f h264 -
+    # USB Webcam — low-latency H.264 for WebRTC, go2rtc transcodes to MJPEG on demand
+    - exec:ffmpeg -f v4l2 -input_format mjpeg -video_size 640x480 -framerate 15 -i /dev/video0 -pix_fmt yuv420p -c:v h264_v4l2m2m -b:v 1M -g 15 -bf 0 -f h264 -
     # If using Raspberry Pi Camera Module, comment above and uncomment below:
-    # - exec:libcamera-vid -t 0 --inline -o - --width 1280 --height 720 --framerate 15
+    # - exec:libcamera-vid -t 0 --inline -o - --width 640 --height 480 --framerate 15
 
 api:
   listen: ":1984"

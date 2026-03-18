@@ -11,12 +11,15 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
+from ..serial.bed_mesh import BedMeshParser
 from ..serial.command_queue import CommandPriority, CommandQueue
 from ..serial.connection import SerialConnection
 from ..serial.gcode_sender import GcodeSender
 from ..serial.protocol import CommandResult, MarlinProtocol
 from ..serial.safety import SafetyAction, SafetyAlert, SafetyMonitor
 from ..serial.temperature import TemperatureMonitor, TemperatureSnapshot
+from ..services.camera import CameraService
+from ..services.timelapse import TimelapseRecorder
 from .state import PrinterState, PrinterStatus
 
 logger = logging.getLogger(__name__)
@@ -43,6 +46,11 @@ class PrinterController:
         self._current_job_id: Optional[int] = None
         # Spool selected for current print
         self._current_spool_id: Optional[int] = None
+        # Camera and timelapse
+        self._camera: Optional[CameraService] = None
+        self._timelapse: Optional[TimelapseRecorder] = None
+        # Bed mesh parser (fed by terminal callback)
+        self._bed_mesh_parser = BedMeshParser()
 
     @property
     def temp_monitor(self) -> TemperatureMonitor:
@@ -56,6 +64,27 @@ class PrinterController:
     def sender(self) -> Optional[GcodeSender]:
         return self._sender
 
+    @property
+    def timelapse(self) -> Optional[TimelapseRecorder]:
+        return self._timelapse
+
+    @property
+    def camera(self) -> Optional[CameraService]:
+        return self._camera
+
+    async def init_camera_and_timelapse(
+        self, go2rtc_url: str, timelapse_dir: Path
+    ) -> None:
+        """Initialize camera service and timelapse recorder."""
+        self._camera = CameraService(go2rtc_url)
+        await self._camera.init()
+        self._timelapse = TimelapseRecorder(self._camera, timelapse_dir)
+        logger.info(
+            "Camera + timelapse initialized (chain: %s, output: %s)",
+            " -> ".join(self._camera.health_dict()["captureChain"]),
+            timelapse_dir,
+        )
+
     def add_state_callback(self, callback: Callable[[], None]) -> None:
         """Register a callback for state changes (used by WebSocket)."""
         self._state_callbacks.append(callback)
@@ -64,15 +93,11 @@ class PrinterController:
         if callback in self._state_callbacks:
             self._state_callbacks.remove(callback)
 
-    def add_terminal_callback(
-        self, callback: Callable[[str, str], None]
-    ) -> None:
+    def add_terminal_callback(self, callback: Callable[[str, str], None]) -> None:
         """Register callback for terminal lines. callback(line, direction)."""
         self._terminal_callbacks.append(callback)
 
-    def remove_terminal_callback(
-        self, callback: Callable[[str, str], None]
-    ) -> None:
+    def remove_terminal_callback(self, callback: Callable[[str, str], None]) -> None:
         if callback in self._terminal_callbacks:
             self._terminal_callbacks.remove(callback)
 
@@ -114,9 +139,19 @@ class PrinterController:
         self._safety.record_serial_activity()
         self._notify_terminal(line, direction)
 
+        # Feed received lines to the bed mesh parser
+        if direction == "recv":
+            mesh = self._bed_mesh_parser.feed_line(line)
+            if mesh:
+                self.state.bed_mesh = mesh.to_dict()
+                self._notify_state_change()
+            # Also check for M420 mesh activation status
+            self._bed_mesh_parser.parse_m420_status(line)
+
     def _on_position_line(self, line: str) -> None:
         """Called when position report is received."""
         import re
+
         match = re.search(r"X:([\d.-]+)\s*Y:([\d.-]+)\s*Z:([\d.-]+)", line)
         if match:
             self.state.x = float(match.group(1))
@@ -146,9 +181,7 @@ class PrinterController:
 
         if port == "auto":
             # Scan common serial ports
-            candidates = sorted(
-                glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")
-            )
+            candidates = sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
             # Prefer /dev/printforge if it exists
             if Path("/dev/printforge").exists():
                 candidates.insert(0, "/dev/printforge")
@@ -175,9 +208,7 @@ class PrinterController:
             except Exception as e:
                 logger.warning("Auto-connect: %s failed: %s", port, e)
 
-    async def connect(
-        self, port: str = "/dev/ttyUSB0", baudrate: int = 115200
-    ) -> bool:
+    async def connect(self, port: str = "/dev/ttyUSB0", baudrate: int = 115200) -> bool:
         """Connect to the printer."""
         self.state.status = PrinterStatus.CONNECTING
         self.state.port = port
@@ -300,6 +331,44 @@ class PrinterController:
         await self.send_command(f"G1 E{length} F{feedrate}")
         await self.send_command("G90")
 
+    async def probe_bed_mesh(self) -> dict:
+        """Run G29 bed-leveling probe and return the parsed mesh.
+
+        Homes first (G28) then probes (G29). The mesh parser picks up
+        the grid from the response lines automatically via the terminal
+        callback. After probing, sends M420 S1 to ensure the mesh is
+        activated, then M420 V to confirm status.
+        """
+        if not self._queue:
+            raise ConnectionError("Not connected")
+
+        self._notify_terminal("[SYSTEM] Starting bed mesh probe...", "system")
+
+        # Home all axes first (G29 requires known position)
+        await self.send_command("G28")
+        # Probe the bed
+        await self.send_command("G29")
+        # Activate the mesh (some firmware needs explicit activation)
+        await self.send_command("M420 S1")
+        # Query mesh status for confirmation
+        await self.send_command("M420 V")
+
+        self._notify_terminal("[SYSTEM] Bed mesh probe complete", "system")
+
+        mesh = self._bed_mesh_parser.mesh
+        if mesh:
+            self.state.bed_mesh = mesh.to_dict()
+            self._notify_state_change()
+            return mesh.to_dict()
+        return {}
+
+    def get_bed_mesh(self) -> dict:
+        """Return the current bed mesh data (if any)."""
+        mesh = self._bed_mesh_parser.mesh
+        if mesh:
+            return mesh.to_dict()
+        return self.state.bed_mesh or {}
+
     # Default start G-code for Ender 3 style printers.
     # Homes all axes, probes bed level, heats up, and prints a purge line.
     # Template variables: {nozzle_temp}, {bed_temp}
@@ -308,6 +377,7 @@ M140 S{bed_temp} ; Start heating bed (non-blocking)
 M104 S{nozzle_temp} ; Start heating nozzle (non-blocking)
 G28 ; Home all axes
 G29 ; Auto bed leveling probe (remove if no ABL)
+M420 S1 ; Activate mesh compensation (ensures G29 values are used)
 M190 S{bed_temp} ; Wait for bed to reach temperature
 M109 S{nozzle_temp} ; Wait for nozzle to reach temperature
 G92 E0 ; Reset extruder position
@@ -355,12 +425,12 @@ M117 Print Complete"""
             if not line:
                 continue
             self._notify_terminal(line, "send")
-            future = await self._queue.enqueue(
-                line, CommandPriority.SYSTEM
-            )
+            future = await self._queue.enqueue(line, CommandPriority.SYSTEM)
             result = await future
             if not result.ok:
-                logger.warning("Start/end gcode command failed: %s -> %s", line, result.error)
+                logger.warning(
+                    "Start/end gcode command failed: %s -> %s", line, result.error
+                )
 
     async def start_print(self, filepath: Path, spool_id: Optional[int] = None) -> None:
         """Start printing a G-code file."""
@@ -388,8 +458,8 @@ M117 Print Complete"""
             meta = None
 
         # Determine temperatures from file metadata or defaults
-        nozzle_temp = (meta.nozzle_temp if meta and meta.nozzle_temp else 200)
-        bed_temp = (meta.bed_temp if meta and meta.bed_temp else 60)
+        nozzle_temp = meta.nozzle_temp if meta and meta.nozzle_temp else 200
+        bed_temp = meta.bed_temp if meta and meta.bed_temp else 60
 
         # Prepare start G-code with temperature substitution
         start_gcode_raw = await get_setting("start_gcode", self.DEFAULT_START_GCODE)
@@ -405,6 +475,21 @@ M117 Print Complete"""
 
         self._protocol.reset_line_number()
         self._safety.record_serial_activity()
+
+        # Start timelapse recording
+        if self._timelapse:
+            await self._timelapse.start_recording(filepath.name)
+            # Register layer change callback for frame capture
+            if self._timelapse.is_recording:
+
+                def _on_layer(layer: int) -> None:
+                    if self._timelapse and self._timelapse.is_recording:
+                        asyncio.create_task(self._timelapse.capture_frame())
+
+                self._sender.add_layer_callback(_on_layer)
+                # Stash ref so we can remove it later
+                self._timelapse_layer_cb = _on_layer
+
         # Pass start gcode to sender — it runs asynchronously in the print
         # task so this method returns immediately without blocking the API.
         await self._sender.start_print(filepath, start_gcode=start_gcode)
@@ -446,6 +531,9 @@ M117 Print Complete"""
     async def cancel_print(self) -> None:
         """Cancel the current print."""
         if self._sender:
+            # Stop timelapse (mark as failed)
+            await self._stop_timelapse(success=False)
+
             # Capture filament usage before cancel/reset clears state
             filament_used = self._sender._filament_used_mm
             elapsed = self._sender.elapsed_seconds
@@ -545,10 +633,30 @@ M117 Print Complete"""
             await deduct_filament(spool["id"], grams)
             logger.info(
                 "Deducted %.1fg (%.0fmm) from spool '%s' (id=%d)",
-                grams, filament_used_mm, spool["name"], spool["id"],
+                grams,
+                filament_used_mm,
+                spool["name"],
+                spool["id"],
             )
         except Exception:
             logger.exception("Failed to deduct filament")
+
+    async def _stop_timelapse(self, success: bool = True) -> None:
+        """Stop timelapse recording and remove the layer callback."""
+        if self._sender and hasattr(self, "_timelapse_layer_cb"):
+            self._sender.remove_layer_callback(self._timelapse_layer_cb)
+            del self._timelapse_layer_cb
+
+        if self._timelapse and self._timelapse.is_recording:
+            self._notify_terminal("[SYSTEM] Assembling timelapse video...", "system")
+            video = await self._timelapse.stop_recording(success=success)
+            if video:
+                self._notify_terminal(f"[SYSTEM] Timelapse saved: {video}", "system")
+            else:
+                self._notify_terminal(
+                    "[SYSTEM] Timelapse: not enough frames or assembly failed",
+                    "system",
+                )
 
     async def _on_print_complete(
         self,
@@ -556,11 +664,22 @@ M117 Print Complete"""
         lines_printed: int = 0,
         filament_used_mm: float = 0,
     ) -> None:
-        """Handle post-print actions (cooldown, filament deduction, history, notifications)."""
+        """Handle post-print actions (cooldown, filament deduction, history, notifications).
+
+        Each action is isolated in its own try/except so that a failure in
+        one step (e.g. end G-code or timelapse) cannot prevent filament
+        deduction or history recording from running.
+        """
         from ..storage.models import complete_print_job, get_setting
 
+        # 1. Stop timelapse recording
         try:
-            # Run end G-code sequence (retract, present, cool down, disable motors)
+            await self._stop_timelapse(success=True)
+        except Exception:
+            logger.exception("Error stopping timelapse after print")
+
+        # 2. Run end G-code (retract, present, cool down, disable motors)
+        try:
             end_gcode = await get_setting("end_gcode", self.DEFAULT_END_GCODE)
             if end_gcode.strip():
                 self._notify_terminal("[SYSTEM] Running end G-code...", "system")
@@ -568,17 +687,23 @@ M117 Print Complete"""
 
             cooldown = await get_setting("post_print_cooldown", "true")
             if cooldown == "true" and not end_gcode.strip():
-                # Only do simple cooldown if no end G-code (end gcode handles it)
                 logger.info("Post-print cooldown: turning off heaters")
                 if self._queue:
                     await self._queue.enqueue("M104 S0", CommandPriority.SYSTEM)
                     await self._queue.enqueue("M140 S0", CommandPriority.SYSTEM)
+        except Exception:
+            logger.exception("Error running end G-code")
 
-            # Deduct filament used during the print
+        # 3. Deduct filament — MUST run regardless of end-gcode outcome
+        try:
             await self._deduct_filament(filament_used_mm)
+        except Exception:
+            logger.exception("Error deducting filament after print")
+        finally:
             self._current_spool_id = None
 
-            # Record completion in history
+        # 4. Record completion in history — MUST run regardless of above
+        try:
             if self._current_job_id:
                 await complete_print_job(
                     job_id=self._current_job_id,
@@ -588,11 +713,10 @@ M117 Print Complete"""
                     filament_used_mm=filament_used_mm,
                 )
                 self._current_job_id = None
-
-            # Notify via terminal so WebSocket picks it up
-            self._notify_terminal("[SYSTEM] Print complete", "system")
         except Exception:
-            logger.exception("Error in post-print actions")
+            logger.exception("Error recording print completion in history")
+
+        self._notify_terminal("[SYSTEM] Print complete", "system")
 
     async def _safety_loop(self) -> None:
         """Periodic safety checks and print state updates."""
@@ -602,6 +726,12 @@ M117 Print Complete"""
                 await asyncio.sleep(1.0)
                 tick += 1
 
+                # --- Timelapse state sync ---
+                if self._timelapse:
+                    self.state.timelapse_recording = self._timelapse.is_recording
+                    self.state.timelapse_frame_count = self._timelapse.frame_count
+                    self.state.timelapse_assembling = self._timelapse.is_assembling
+
                 # --- Print state updates ---
                 if self._sender and self._sender.is_printing:
                     self.state.current_file = self._sender.current_file
@@ -609,10 +739,7 @@ M117 Print Complete"""
                     self.state.elapsed_seconds = self._sender.elapsed_seconds
 
                     # Use corrected slicer estimate if available, else linear
-                    if (
-                        self._slicer_estimated_seconds > 0
-                        and self._sender.progress > 0
-                    ):
+                    if self._slicer_estimated_seconds > 0 and self._sender.progress > 0:
                         corrected_total = (
                             self._slicer_estimated_seconds
                             * self._time_correction_factor
@@ -646,9 +773,7 @@ M117 Print Complete"""
 
                     if not was_cancelled:
                         # Normal completion — run end gcode and cleanup
-                        logger.info(
-                            "Print task completed, running post-print actions"
-                        )
+                        logger.info("Print task completed, running post-print actions")
                         self.state.status = PrinterStatus.FINISHING
                         self._notify_state_change()
                         _elapsed = self._sender.elapsed_seconds
@@ -656,9 +781,7 @@ M117 Print Complete"""
                         _filament = self._sender._filament_used_mm
                         self._sender.reset()
                         try:
-                            await self._on_print_complete(
-                                _elapsed, _lines, _filament
-                            )
+                            await self._on_print_complete(_elapsed, _lines, _filament)
                         except Exception:
                             logger.exception("Error in post-print actions")
                         self.state.status = PrinterStatus.IDLE
@@ -667,6 +790,8 @@ M117 Print Complete"""
                         logger.warning(
                             "Print task aborted (cancelled=%s)", was_cancelled
                         )
+                        # Stop timelapse on abort
+                        await self._stop_timelapse(success=False)
                         _filament = self._sender._filament_used_mm
                         # Deduct filament used before the abort
                         await self._deduct_filament(_filament)
@@ -678,16 +803,12 @@ M117 Print Complete"""
                                 await complete_print_job(
                                     job_id=self._current_job_id,
                                     status="failed",
-                                    duration_seconds=int(
-                                        self._sender.elapsed_seconds
-                                    ),
+                                    duration_seconds=int(self._sender.elapsed_seconds),
                                     lines_printed=self._sender.current_line,
                                     filament_used_mm=_filament,
                                 )
                             except Exception:
-                                logger.exception(
-                                    "Failed to record print abort"
-                                )
+                                logger.exception("Failed to record print abort")
                             self._current_job_id = None
                         self._current_spool_id = None
                         self._sender.reset()
@@ -712,14 +833,9 @@ M117 Print Complete"""
                 # for minutes with no intermediate serial output.
                 if tick % 5 == 0:
                     is_printing = self.state.status == PrinterStatus.PRINTING
-                    in_start_gcode = (
-                        self._sender
-                        and self._sender.in_start_gcode
-                    )
+                    in_start_gcode = self._sender and self._sender.in_start_gcode
                     if is_printing and not in_start_gcode:
-                        alert = self._safety.check_serial_watchdog(
-                            is_printing=True
-                        )
+                        alert = self._safety.check_serial_watchdog(is_printing=True)
                         if alert:
                             self._handle_safety_alert(alert)
 
@@ -737,9 +853,7 @@ M117 Print Complete"""
                     )
                     if last_temp_age > 15.0:
                         try:
-                            await self._queue.enqueue(
-                                "M105", CommandPriority.SYSTEM
-                            )
+                            await self._queue.enqueue("M105", CommandPriority.SYSTEM)
                         except Exception:
                             pass
 

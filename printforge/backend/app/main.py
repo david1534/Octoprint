@@ -14,7 +14,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import filament, files, history, printer, settings as settings_api, system, timelapse, websocket
+from .api import (
+    filament,
+    files,
+    history,
+    printer,
+    settings as settings_api,
+    system,
+    timelapse,
+    websocket,
+)
 from .config import settings
 from .middleware.auth import APIKeyMiddleware
 from .printer.controller import PrinterController
@@ -33,10 +42,14 @@ logger = logging.getLogger(__name__)
 state = PrinterState()
 controller = PrinterController(state)
 
+# Persistent HTTP client for camera proxying (reused across requests)
+_camera_client: httpx.AsyncClient | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown."""
+    global _camera_client
     logger.info("PrintForge starting up...")
 
     # Init database
@@ -49,6 +62,19 @@ async def lifespan(app: FastAPI):
     printer.set_controller(controller)
     websocket.set_controller(controller)
 
+    # Initialize camera service + timelapse recorder
+    timelapse_dir = Path(settings.data_dir).parent / "timelapse"
+    timelapse_dir.mkdir(parents=True, exist_ok=True)
+    await controller.init_camera_and_timelapse(settings.camera_url, timelapse_dir)
+    if controller.timelapse:
+        await controller.timelapse.load_settings()
+        timelapse.set_recorder(controller.timelapse)
+
+    # Create persistent camera HTTP client (used by MJPEG proxy + snapshot)
+    _camera_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=3.0, read=None, write=5.0, pool=5.0)
+    )
+
     # Auto-connect to printer if enabled
     await controller.auto_connect()
 
@@ -57,6 +83,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("PrintForge shutting down...")
+    if _camera_client:
+        await _camera_client.aclose()
+    if controller.camera:
+        await controller.camera.close()
     await controller.disconnect()
     await close_db()
 
@@ -91,6 +121,9 @@ app.include_router(settings_api.router)
 app.include_router(filament.router)
 
 
+# ── Camera endpoints ─────────────────────────────────────────────
+
+
 @app.get("/api/camera/stream")
 async def camera_stream_url(request: Request):
     """Return camera stream URLs for the frontend.
@@ -104,6 +137,7 @@ async def camera_stream_url(request: Request):
         "webrtc": "",
         "mjpeg": f"http://{host}:1984/api/stream.mjpeg?src=printer_cam",
         "proxy": "/api/camera/mjpeg",
+        "snapshot": "/api/camera/snapshot",
     }
 
 
@@ -122,7 +156,11 @@ async def camera_webrtc_signaling(request: Request):
             resp = await client.post(
                 upstream,
                 content=body,
-                headers={"Content-Type": request.headers.get("content-type", "application/sdp")},
+                headers={
+                    "Content-Type": request.headers.get(
+                        "content-type", "application/sdp"
+                    )
+                },
             )
             # Return raw SDP text — NOT JSONResponse which would
             # JSON-encode the string (adding quotes), breaking WebRTC.
@@ -142,21 +180,24 @@ async def camera_webrtc_signaling(request: Request):
 async def camera_mjpeg_proxy():
     """Proxy go2rtc's MJPEG stream to the browser.
 
-    Streams directly from go2rtc's stream.mjpeg endpoint which is far
-    more efficient than polling individual snapshots — single long-lived
-    HTTP connection with frames pushed as they arrive from the camera.
+    Reads frame boundaries from the MJPEG stream and yields complete
+    frames to avoid partial-frame stalls in the browser.
     """
     stream_url = f"{settings.camera_url}/api/stream.mjpeg?src=printer_cam"
 
     async def stream():
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=5.0, read=None, write=5.0, pool=5.0)
+            timeout=httpx.Timeout(connect=3.0, read=None, write=5.0, pool=5.0)
         ) as client:
             try:
                 async with client.stream("GET", stream_url) as resp:
                     if resp.status_code != 200:
                         return
-                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    # Stream raw bytes — the upstream already sends proper
+                    # multipart MJPEG with boundaries. We use small chunks
+                    # (8KB) to reduce buffering latency while still being
+                    # efficient.
+                    async for chunk in resp.aiter_bytes(chunk_size=8192):
                         yield chunk
             except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException):
                 return
@@ -168,6 +209,7 @@ async def camera_mjpeg_proxy():
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
@@ -176,19 +218,35 @@ async def camera_mjpeg_proxy():
 
 @app.get("/api/camera/snapshot")
 async def camera_snapshot():
-    """Return a single JPEG snapshot from the camera."""
+    """Return a single JPEG snapshot from the camera.
+
+    Uses the persistent HTTP client for minimal latency. Designed to be
+    polled rapidly by the frontend for smooth canvas-based rendering.
+    """
+    # Try go2rtc first via persistent client (fast path)
     snapshot_url = f"{settings.camera_url}/api/frame.jpeg?src=printer_cam"
-    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-        try:
-            resp = await client.get(snapshot_url)
-            if resp.status_code == 200:
-                return Response(
-                    content=resp.content,
-                    media_type="image/jpeg",
-                    headers={"Cache-Control": "no-cache"},
-                )
-        except Exception:
-            pass
+    jpg: bytes | None = None
+    try:
+        if _camera_client:
+            resp = await _camera_client.get(snapshot_url)
+            if resp.status_code == 200 and len(resp.content) > 100:
+                jpg = resp.content
+    except Exception:
+        pass
+
+    # Fallback: use camera service's full chain (ffmpeg direct, fswebcam)
+    if not jpg and controller.camera:
+        jpg = await controller.camera.snapshot()
+
+    if jpg:
+        return Response(
+            content=jpg,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-cache, no-store",
+                "Pragma": "no-cache",
+            },
+        )
     return JSONResponse({"error": "Camera unavailable"}, status_code=503)
 
 
@@ -209,7 +267,9 @@ if frontend_dir.exists():
                 # Path not found as a static file — serve SPA entry point
                 return await super().get_response("index.html", scope)
 
-    app.mount("/", SPAStaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+    app.mount(
+        "/", SPAStaticFiles(directory=str(frontend_dir), html=True), name="frontend"
+    )
 else:
     logger.warning(
         "Frontend build not found at %s. Run 'npm run build' in frontend/",

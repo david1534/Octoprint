@@ -141,6 +141,17 @@ export const api = {
 		`${BASE}/timelapse/video/${encodeURIComponent(filename)}`,
 	getTimelapseThumbnailUrl: (filename: string) =>
 		`${BASE}/timelapse/thumbnail/${encodeURIComponent(filename)}`,
+	getTimelapseRecordingStatus: () => request<any>('/timelapse/recording/status'),
+	updateTimelapseSettings: (settings: {
+		enabled?: boolean;
+		captureMode?: string;
+		captureInterval?: number;
+		renderFps?: number;
+	}) => request<any>('/timelapse/recording/settings', {
+		method: 'PUT',
+		body: JSON.stringify(settings),
+	}),
+	testTimelapseCapture: () => post<any>('/timelapse/recording/test-capture'),
 
 	// Settings
 	getSettings: () => request<any>('/settings/'),
@@ -170,6 +181,10 @@ export const api = {
 	deleteSpool: (id: number) =>
 		request<any>(`/filament/${id}`, { method: 'DELETE' }),
 	getLowFilamentWarnings: () => request<any>('/filament/warnings'),
+
+	// Bed mesh
+	getBedMesh: () => request<any>('/printer/bed-mesh'),
+	probeBedMesh: () => post<any>('/printer/bed-mesh/probe'),
 
 	// Camera
 	getCameraUrls: () => request<any>('/camera/stream'),

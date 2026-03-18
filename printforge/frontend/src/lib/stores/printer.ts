@@ -26,6 +26,22 @@ export interface PrinterState {
 	fan_speed: number;
 	firmware: string;
 	error: string | null;
+	timelapse: {
+		recording: boolean;
+		frameCount: number;
+		assembling: boolean;
+	};
+	bed_mesh: {
+		grid: number[][];
+		rows: number;
+		cols: number;
+		min: number;
+		max: number;
+		mean: number;
+		range: number;
+		active: boolean;
+		timestamp: number;
+	} | null;
 }
 
 const defaultState: PrinterState = {
@@ -47,7 +63,13 @@ const defaultState: PrinterState = {
 	},
 	fan_speed: 0,
 	firmware: '',
-	error: null
+	error: null,
+	timelapse: {
+		recording: false,
+		frameCount: 0,
+		assembling: false,
+	},
+	bed_mesh: null
 };
 
 export const printerState = writable<PrinterState>({ ...defaultState });

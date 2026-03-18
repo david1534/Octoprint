@@ -48,6 +48,8 @@ class GcodeSender:
         self._lcd_last_layer: int = -1
         # Whether start gcode preamble is currently running
         self._in_start_gcode: bool = False
+        # Layer change callbacks (used by timelapse, etc.)
+        self._layer_callbacks: list = []
 
     @property
     def is_printing(self) -> bool:
@@ -105,14 +107,30 @@ class GcodeSender:
         remaining_lines = self._total_lines - self._current_line
         return remaining_lines / rate if rate > 0 else 0.0
 
+    def add_layer_callback(self, callback) -> None:
+        """Register a callback invoked on each layer change.
+
+        The callback receives the new layer number (int).
+        """
+        self._layer_callbacks.append(callback)
+
+    def remove_layer_callback(self, callback) -> None:
+        if callback in self._layer_callbacks:
+            self._layer_callbacks.remove(callback)
+
+    def _notify_layer_change(self, layer: int) -> None:
+        for cb in self._layer_callbacks:
+            try:
+                cb(layer)
+            except Exception:
+                logger.exception("Error in layer change callback")
+
     def configure_lcd(self, enabled: bool = False, interval: int = 50) -> None:
         """Configure LCD progress display (M117 messages)."""
         self._lcd_enabled = enabled
         self._lcd_interval = max(10, interval)
 
-    async def start_print(
-        self, filepath: Path, start_gcode: str = ""
-    ) -> None:
+    async def start_print(self, filepath: Path, start_gcode: str = "") -> None:
         """Start printing a G-code file.
 
         Args:
@@ -148,9 +166,7 @@ class GcodeSender:
                     self._total_layers += 1
 
         self._start_time = time.time()
-        self._task = asyncio.create_task(
-            self._print_loop(filepath, start_gcode)
-        )
+        self._task = asyncio.create_task(self._print_loop(filepath, start_gcode))
         logger.info(
             "Print started: %s (%d lines, %d layers)",
             filepath.name,
@@ -158,9 +174,7 @@ class GcodeSender:
             self._total_layers,
         )
 
-    async def _print_loop(
-        self, filepath: Path, start_gcode: str = ""
-    ) -> None:
+    async def _print_loop(self, filepath: Path, start_gcode: str = "") -> None:
         """Stream G-code lines to the command queue."""
         try:
             # Run start G-code preamble (homing, leveling, heating, purge)
@@ -191,6 +205,8 @@ class GcodeSender:
                             line,
                             result.error,
                         )
+                    # Track filament used in start gcode (purge lines)
+                    self._track_filament(line)
                 self._in_start_gcode = False
                 logger.info("Start G-code complete, streaming file...")
 
@@ -219,6 +235,7 @@ class GcodeSender:
                             self._current_layer = int(layer_str) + 1
                         except ValueError:
                             self._current_layer += 1
+                        self._notify_layer_change(self._current_layer)
 
                     # Skip empty lines and comments
                     if not stripped or stripped.startswith(";"):
@@ -270,7 +287,11 @@ class GcodeSender:
                     ):
                         self._lcd_last_layer = self._current_layer
                         pct = self.progress
-                        layer_str = f"L{self._current_layer}/{self._total_layers}" if self._total_layers > 0 else ""
+                        layer_str = (
+                            f"L{self._current_layer}/{self._total_layers}"
+                            if self._total_layers > 0
+                            else ""
+                        )
                         msg = f"M117 {layer_str} {pct:.0f}%".strip()
                         await self._queue.enqueue(msg, CommandPriority.PRINT)
 
@@ -378,8 +399,12 @@ class GcodeSender:
             return
 
         # Only track G0/G1 moves with E parameter
-        if not (upper.startswith("G0 ") or upper.startswith("G1 ") or
-                upper.startswith("G0\t") or upper.startswith("G1\t")):
+        if not (
+            upper.startswith("G0 ")
+            or upper.startswith("G1 ")
+            or upper.startswith("G0\t")
+            or upper.startswith("G1\t")
+        ):
             return
 
         match = re.search(r"E([-\d.]+)", upper)
@@ -412,3 +437,4 @@ class GcodeSender:
         self._cancelled = False
         self._in_start_gcode = False
         self._task = None
+        self._layer_callbacks.clear()

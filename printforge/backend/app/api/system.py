@@ -72,6 +72,35 @@ async def health():
     }
 
 
+@router.get("/camera-health")
+async def camera_health():
+    """Camera system health check.
+
+    Reports go2rtc status, ffmpeg availability, camera device detection,
+    and the active capture fallback chain.
+    """
+    from ..printer.controller import PrinterController
+
+    # Get the controller from the printer API module (same singleton)
+    from ..api import printer as printer_api
+
+    ctrl = getattr(printer_api, "_controller", None)
+    if ctrl and ctrl.camera:
+        health = ctrl.camera.health_dict()
+        # Also refresh go2rtc status
+        await ctrl.camera.refresh_go2rtc_status()
+        health["go2rtc"]["available"] = ctrl.camera.go2rtc_available
+        return health
+    return {
+        "go2rtc": {"available": False, "url": ""},
+        "ffmpeg": {"available": False, "path": None},
+        "fswebcam": {"available": False},
+        "device": {"path": None, "exists": False},
+        "captureChain": ["none"],
+        "error": "Camera service not initialized",
+    }
+
+
 @router.get("/serial-ports")
 async def list_serial_ports():
     """List available serial ports."""

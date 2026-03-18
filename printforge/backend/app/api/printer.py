@@ -99,9 +99,7 @@ async def home(axes: str = "XYZ"):
 async def set_temperature(req: TemperatureRequest):
     """Set target temperatures."""
     ctrl = get_controller()
-    await ctrl.set_temperature(
-        hotend=req.hotend, bed=req.bed, wait=req.wait
-    )
+    await ctrl.set_temperature(hotend=req.hotend, bed=req.bed, wait=req.wait)
     return {"ok": True}
 
 
@@ -204,7 +202,11 @@ async def temperature_history():
     history = ctrl.temp_monitor.history
     return {
         "hotend": [
-            {"actual": s.hotend.actual, "target": s.hotend.target, "t": s.hotend.timestamp}
+            {
+                "actual": s.hotend.actual,
+                "target": s.hotend.target,
+                "t": s.hotend.timestamp,
+            }
             for s in history
         ],
         "bed": [
@@ -212,3 +214,35 @@ async def temperature_history():
             for s in history
         ],
     }
+
+
+# ── Bed mesh endpoints ────────────────────────────────────────
+
+
+@router.get("/bed-mesh")
+async def get_bed_mesh():
+    """Get the current bed mesh topography data.
+
+    Returns the most recently parsed mesh from G29 / M420 V output.
+    If no mesh has been captured yet, returns an empty object.
+    """
+    ctrl = get_controller()
+    return ctrl.get_bed_mesh()
+
+
+@router.post("/bed-mesh/probe")
+async def probe_bed_mesh():
+    """Trigger a full bed mesh probe (G28 + G29 + M420 S1).
+
+    This homes all axes, runs the auto bed leveling probe, activates
+    the mesh, and returns the parsed topography grid.  Takes 2-5
+    minutes depending on the probe point count.
+    """
+    ctrl = get_controller()
+    if ctrl.state.status.value not in ("idle",):
+        raise HTTPException(
+            409,
+            "Cannot probe bed mesh while printing. Printer must be idle.",
+        )
+    mesh = await ctrl.probe_bed_mesh()
+    return mesh or {"error": "No mesh data received from printer"}

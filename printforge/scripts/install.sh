@@ -138,8 +138,8 @@ step 2 "Installing system dependencies"
 ###############################################################################
 
 sudo apt-get update -qq
-sudo apt-get install -y -qq python3-pip python3-venv python3-dev curl git > /dev/null 2>&1
-success "Python 3 + build tools"
+sudo apt-get install -y -qq python3-pip python3-venv python3-dev curl git ffmpeg fswebcam > /dev/null 2>&1
+success "Python 3 + build tools + ffmpeg + fswebcam"
 
 # Install Node.js for frontend build
 # NodeSource doesn't support armhf, so install from nodejs.org tarball on armv7l
@@ -210,7 +210,8 @@ step 5 "Creating data directories"
 mkdir -p "$DATA_DIR/gcodes"
 mkdir -p "$DATA_DIR/data"
 mkdir -p "$DATA_DIR/logs"
-success "Created $DATA_DIR/{gcodes,data,logs}"
+mkdir -p "$DATA_DIR/timelapse"
+success "Created $DATA_DIR/{gcodes,data,logs,timelapse}"
 
 # If OctoPrint had G-code files, offer to copy them
 OCTOPRINT_UPLOADS="$HOME/.octoprint/uploads"
@@ -452,6 +453,12 @@ if [ -n "$DETECTED_CAMERA" ]; then
 else
     echo -e "  ${YELLOW}!${NC} Camera: no webcam detected — plug one in and run:"
     echo -e "    sudo systemctl restart go2rtc"
+fi
+if command -v ffmpeg &> /dev/null; then
+    echo -e "  ${GREEN}✓${NC} ffmpeg: installed (timelapse video assembly ready)"
+else
+    echo -e "  ${YELLOW}!${NC} ffmpeg: not found — timelapse will save frames as ZIP"
+    echo -e "    Install with: sudo apt-get install ffmpeg"
 fi
 echo ""
 echo -e "  ${BOLD}Useful commands:${NC}"

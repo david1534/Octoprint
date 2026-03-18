@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import { toast } from '$lib/stores/toast';
 	import { confirmAction } from '$lib/stores/confirm';
@@ -13,13 +13,47 @@
 		hasThumbnail: boolean;
 	}
 
+	interface RecordingStatus {
+		recording: boolean;
+		assembling: boolean;
+		frameCount: number;
+		printFile: string;
+		captureMode: string;
+		captureInterval: number;
+		renderFps: number;
+		enabled: boolean;
+		lastVideo: string | null;
+		elapsed: number;
+	}
+
 	let timelapses = $state<Timelapse[]>([]);
 	let loading = $state(true);
 	let activeVideo = $state<string | null>(null);
 	let deleting = $state('');
+	let showSettings = $state(false);
+	let testingCapture = $state(false);
 
-	onMount(async () => {
-		await loadTimelapses();
+	// Recording status
+	let recStatus = $state<RecordingStatus | null>(null);
+	let statusTimer: ReturnType<typeof setInterval> | null = null;
+
+	// Settings form
+	let settingsForm = $state({
+		enabled: true,
+		captureMode: 'on_layer',
+		captureInterval: 10,
+		renderFps: 30,
+	});
+	let savingSettings = $state(false);
+
+	onMount(() => {
+		Promise.all([loadTimelapses(), loadRecordingStatus()]);
+		// Poll recording status every 3s
+		statusTimer = setInterval(loadRecordingStatus, 3000);
+	});
+
+	onDestroy(() => {
+		if (statusTimer) clearInterval(statusTimer);
 	});
 
 	async function loadTimelapses() {
@@ -31,6 +65,48 @@
 			toast.error('Failed to load timelapses: ' + e.message);
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadRecordingStatus() {
+		try {
+			recStatus = await api.getTimelapseRecordingStatus();
+			if (recStatus && !showSettings) {
+				settingsForm = {
+					enabled: recStatus.enabled,
+					captureMode: recStatus.captureMode,
+					captureInterval: recStatus.captureInterval,
+					renderFps: recStatus.renderFps,
+				};
+			}
+		} catch {
+			// Not critical
+		}
+	}
+
+	async function saveSettings() {
+		savingSettings = true;
+		try {
+			await api.updateTimelapseSettings(settingsForm);
+			toast.success('Timelapse settings saved');
+			await loadRecordingStatus();
+			showSettings = false;
+		} catch (e: any) {
+			toast.error('Failed to save settings: ' + e.message);
+		} finally {
+			savingSettings = false;
+		}
+	}
+
+	async function testCapture() {
+		testingCapture = true;
+		try {
+			const result = await api.testTimelapseCapture();
+			toast.success(`Test frame captured (${formatFileSize(result.size)})`);
+		} catch (e: any) {
+			toast.error('Test capture failed: ' + e.message);
+		} finally {
+			testingCapture = false;
 		}
 	}
 
@@ -56,7 +132,6 @@
 	}
 
 	function prettyName(filename: string): string {
-		// Remove timestamp suffix and extension: "filename_20250301181752.mp4" -> "filename"
 		return filename
 			.replace(/\.mp4$|\.mkv$|\.webm$/i, '')
 			.replace(/_\d{14}(-fail)?$/, '')
@@ -69,6 +144,12 @@
 			hour: '2-digit', minute: '2-digit'
 		});
 	}
+
+	function formatElapsed(seconds: number): string {
+		const m = Math.floor(seconds / 60);
+		const s = Math.floor(seconds % 60);
+		return m > 0 ? `${m}m ${s}s` : `${s}s`;
+	}
 </script>
 
 <svelte:head>
@@ -77,8 +158,164 @@
 
 <div class="flex items-center justify-between mb-6">
 	<h1 class="text-xl font-bold">Timelapses</h1>
-	<span class="text-sm text-surface-500">{timelapses.length} video{timelapses.length !== 1 ? 's' : ''}</span>
+	<div class="flex items-center gap-3">
+		<span class="text-sm text-surface-500">{timelapses.length} video{timelapses.length !== 1 ? 's' : ''}</span>
+		<button
+			class="btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
+			onclick={() => showSettings = !showSettings}
+		>
+			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+			</svg>
+			Settings
+		</button>
+	</div>
 </div>
+
+<!-- Recording status banner -->
+{#if recStatus?.recording}
+	<div class="card bg-gradient-to-r from-red-500/10 to-surface-900 border-red-500/20 mb-4">
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-3">
+				<div class="relative">
+					<div class="w-3 h-3 bg-red-500 rounded-full"></div>
+					<div class="absolute inset-0 w-3 h-3 bg-red-500 rounded-full animate-ping opacity-75"></div>
+				</div>
+				<div>
+					<p class="text-sm font-medium text-surface-200">Recording Timelapse</p>
+					<p class="text-xs text-surface-400">
+						{recStatus.printFile} &middot;
+						{recStatus.frameCount} frames &middot;
+						{formatElapsed(recStatus.elapsed)} &middot;
+						{recStatus.captureMode === 'on_layer' ? 'Layer change' : `Every ${recStatus.captureInterval}s`}
+					</p>
+				</div>
+			</div>
+		</div>
+	</div>
+{:else if recStatus?.assembling}
+	<div class="card bg-gradient-to-r from-amber-500/10 to-surface-900 border-amber-500/20 mb-4">
+		<div class="flex items-center gap-3">
+			<span class="animate-spin rounded-full h-5 w-5 border-2 border-amber-500/30 border-t-amber-500"></span>
+			<div>
+				<p class="text-sm font-medium text-surface-200">Assembling Video</p>
+				<p class="text-xs text-surface-400">Creating timelapse from {recStatus.frameCount} frames...</p>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Settings panel -->
+{#if showSettings}
+	<div class="card mb-6">
+		<h2 class="text-sm font-semibold text-surface-300 mb-4">Timelapse Settings</h2>
+		<div class="space-y-4">
+			<!-- Enable/disable -->
+			<label class="flex items-center justify-between">
+				<span class="text-sm text-surface-300">Enable timelapse recording</span>
+				<button
+					class="w-10 h-5 rounded-full transition-colors {settingsForm.enabled ? 'bg-accent' : 'bg-surface-700'}"
+					onclick={() => settingsForm.enabled = !settingsForm.enabled}
+				>
+					<div class="w-4 h-4 bg-white rounded-full transition-transform ml-0.5 {settingsForm.enabled ? 'translate-x-5' : ''}"></div>
+				</button>
+			</label>
+
+			<!-- Capture mode -->
+			<div>
+				<label class="text-sm text-surface-400 block mb-1.5">Capture Mode</label>
+				<div class="flex gap-2">
+					<button
+						class="flex-1 px-3 py-2 rounded-lg text-sm text-center transition-colors
+							   {settingsForm.captureMode === 'on_layer' ? 'bg-accent/20 text-accent border border-accent/30' : 'bg-surface-800 text-surface-400 border border-surface-700 hover:border-surface-600'}"
+						onclick={() => settingsForm.captureMode = 'on_layer'}
+					>
+						On Layer Change
+					</button>
+					<button
+						class="flex-1 px-3 py-2 rounded-lg text-sm text-center transition-colors
+							   {settingsForm.captureMode === 'timed' ? 'bg-accent/20 text-accent border border-accent/30' : 'bg-surface-800 text-surface-400 border border-surface-700 hover:border-surface-600'}"
+						onclick={() => settingsForm.captureMode = 'timed'}
+					>
+						Timed Interval
+					</button>
+				</div>
+			</div>
+
+			<!-- Interval (only for timed mode) -->
+			{#if settingsForm.captureMode === 'timed'}
+				<div>
+					<label for="interval" class="text-sm text-surface-400 block mb-1.5">
+						Capture Interval: {settingsForm.captureInterval}s
+					</label>
+					<input
+						id="interval"
+						type="range"
+						min="1"
+						max="60"
+						step="1"
+						bind:value={settingsForm.captureInterval}
+						class="w-full accent-accent"
+					/>
+					<div class="flex justify-between text-xs text-surface-600 mt-0.5">
+						<span>1s</span>
+						<span>30s</span>
+						<span>60s</span>
+					</div>
+				</div>
+			{/if}
+
+			<!-- Render FPS -->
+			<div>
+				<label for="fps" class="text-sm text-surface-400 block mb-1.5">
+					Video FPS: {settingsForm.renderFps}
+				</label>
+				<input
+					id="fps"
+					type="range"
+					min="10"
+					max="60"
+					step="5"
+					bind:value={settingsForm.renderFps}
+					class="w-full accent-accent"
+				/>
+				<div class="flex justify-between text-xs text-surface-600 mt-0.5">
+					<span>10</span>
+					<span>30</span>
+					<span>60</span>
+				</div>
+			</div>
+
+			<!-- Actions -->
+			<div class="flex gap-2 pt-2">
+				<button
+					class="btn-primary text-sm px-4 py-2"
+					onclick={saveSettings}
+					disabled={savingSettings}
+				>
+					{savingSettings ? 'Saving...' : 'Save Settings'}
+				</button>
+				<button
+					class="btn-secondary text-sm px-4 py-2 inline-flex items-center gap-1.5"
+					onclick={testCapture}
+					disabled={testingCapture}
+				>
+					{#if testingCapture}
+						<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-surface-400 border-t-white"></span>
+					{/if}
+					Test Capture
+				</button>
+				<button
+					class="btn-secondary text-sm px-4 py-2"
+					onclick={() => showSettings = false}
+				>
+					Close
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <!-- Video player -->
 {#if activeVideo}
@@ -118,8 +355,10 @@
 	</div>
 {:else if timelapses.length === 0}
 	<EmptyState
-		title="No Timelapses"
-		description="Timelapse videos from your prints will appear here"
+		title="No Timelapses Yet"
+		description={recStatus?.enabled
+			? "Timelapse videos will be automatically created during your prints. Start a print to see them here."
+			: "Timelapse recording is disabled. Enable it in settings above to automatically capture timelapses during prints."}
 	>
 		{#snippet icon()}
 			<svg class="w-8 h-8 text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -159,7 +398,7 @@
 							</svg>
 						</div>
 					</div>
-					<!-- Duration badge -->
+					<!-- Size badge -->
 					<span class="absolute bottom-2 right-2 text-xs bg-black/70 text-white px-1.5 py-0.5 rounded">
 						{formatFileSize(t.size)}
 					</span>

@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from app.printer.gcode_parser import parse_gcode_file, parse_time_string
+from app.printer.gcode_parser import (
+    GcodeMetadata,
+    calculate_filament_cost,
+    parse_gcode_file,
+    parse_time_string,
+)
 
 
 class TestParseTimeString:
@@ -38,9 +43,7 @@ G1 X20 Y20 E1.0
 ;LAYER:2
 G1 X30 Y30 E2.0
 """
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".gcode", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".gcode", delete=False) as f:
             f.write(content)
             f.flush()
             filepath = Path(f.name)
@@ -65,9 +68,7 @@ G1 X30 Y30 E2.0
 ;LAYER:0
 G28
 """
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".gcode", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".gcode", delete=False) as f:
             f.write(content)
             f.flush()
             filepath = Path(f.name)
@@ -75,6 +76,188 @@ G28
         try:
             meta = parse_gcode_file(filepath)
             assert meta.estimated_time_seconds == 5015.0
+            assert meta.filament_used_mm is not None
             assert abs(meta.filament_used_mm - 1234.0) < 1.0
+        finally:
+            filepath.unlink()
+
+
+class TestParseTimeStringEdgeCases:
+    """Edge cases for time string parsing."""
+
+    def test_empty_string(self):
+        assert parse_time_string("") == 0.0
+
+    def test_whitespace_only(self):
+        assert parse_time_string("   ") == 0.0
+
+    def test_seconds_with_whitespace(self):
+        assert parse_time_string("  3600  ") == 3600.0
+
+    def test_only_minutes(self):
+        assert parse_time_string("45m") == 2700.0
+
+    def test_only_hours(self):
+        assert parse_time_string("2h") == 7200.0
+
+    def test_days_hours_minutes_seconds(self):
+        result = parse_time_string("1d 1h 1m 1s")
+        expected = 86400 + 3600 + 60 + 1
+        assert result == float(expected)
+
+
+class TestFilamentCostCalculation:
+    """Test filament cost calculation from length."""
+
+    def test_zero_length(self):
+        cost = calculate_filament_cost(0.0)
+        assert cost == 0.0
+
+    def test_default_pla(self):
+        # 1000mm of 1.75mm PLA at $18/kg
+        cost = calculate_filament_cost(1000.0)
+        assert cost > 0.0
+        # Rough check: ~2.98g for 1m of 1.75mm PLA, so ~$0.05
+        assert 0.01 < cost < 1.0
+
+    def test_custom_cost_per_kg(self):
+        cost_cheap = calculate_filament_cost(5000.0, cost_per_kg=10.0)
+        cost_expensive = calculate_filament_cost(5000.0, cost_per_kg=50.0)
+        assert cost_expensive > cost_cheap
+
+    def test_different_diameter(self):
+        cost_175 = calculate_filament_cost(1000.0, diameter_mm=1.75)
+        cost_285 = calculate_filament_cost(1000.0, diameter_mm=2.85)
+        # 2.85mm diameter uses more volume per mm of length
+        assert cost_285 > cost_175
+
+    def test_different_density(self):
+        # Use enough filament so rounding doesn't collapse the difference
+        cost_pla = calculate_filament_cost(10000.0, density_g_per_cm3=1.24)
+        cost_abs = calculate_filament_cost(10000.0, density_g_per_cm3=1.04)
+        assert cost_pla > cost_abs  # PLA is denser
+
+
+class TestGcodeMetadataToDict:
+    """Test metadata serialization."""
+
+    def test_to_dict_keys(self):
+        meta = GcodeMetadata(
+            filename="test.gcode",
+            file_size=12345,
+            total_lines=500,
+            printable_lines=400,
+            estimated_time_seconds=3600.0,
+            layer_count=50,
+            nozzle_temp=210.0,
+            bed_temp=60.0,
+            slicer="PrusaSlicer",
+        )
+        d = meta.to_dict()
+        assert d["filename"] == "test.gcode"
+        assert d["fileSize"] == 12345
+        assert d["totalLines"] == 500
+        assert d["printableLines"] == 400
+        assert d["estimatedTime"] == 3600.0
+        assert d["layerCount"] == 50
+        assert d["nozzleTemp"] == 210.0
+        assert d["bedTemp"] == 60.0
+        assert d["slicer"] == "PrusaSlicer"
+
+    def test_to_dict_none_values(self):
+        meta = GcodeMetadata(
+            filename="empty.gcode",
+            file_size=0,
+            total_lines=0,
+            printable_lines=0,
+        )
+        d = meta.to_dict()
+        assert d["estimatedTime"] is None
+        assert d["filamentUsedMm"] is None
+        assert d["slicer"] is None
+
+
+class TestParseGcodeFileEdgeCases:
+    """Edge cases for G-code file parsing."""
+
+    def test_empty_file(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".gcode", delete=False) as f:
+            f.write("")
+            f.flush()
+            filepath = Path(f.name)
+
+        try:
+            meta = parse_gcode_file(filepath)
+            assert meta.total_lines == 0
+            assert meta.printable_lines == 0
+            assert meta.layer_count == 0
+        finally:
+            filepath.unlink()
+
+    def test_comments_only_file(self):
+        content = "; This is just a comment\n; Another comment\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".gcode", delete=False) as f:
+            f.write(content)
+            f.flush()
+            filepath = Path(f.name)
+
+        try:
+            meta = parse_gcode_file(filepath)
+            assert meta.printable_lines == 0
+            assert meta.total_lines == 2
+        finally:
+            filepath.unlink()
+
+    def test_no_temperature_commands(self):
+        content = "G28\nG1 X10 Y10\nG1 X20 Y20\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".gcode", delete=False) as f:
+            f.write(content)
+            f.flush()
+            filepath = Path(f.name)
+
+        try:
+            meta = parse_gcode_file(filepath)
+            assert meta.nozzle_temp is None
+            assert meta.bed_temp is None
+        finally:
+            filepath.unlink()
+
+    def test_m109_wait_temp_extraction(self):
+        content = "M109 S215\nG1 X10\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".gcode", delete=False) as f:
+            f.write(content)
+            f.flush()
+            filepath = Path(f.name)
+
+        try:
+            meta = parse_gcode_file(filepath)
+            assert meta.nozzle_temp == 215.0
+        finally:
+            filepath.unlink()
+
+    def test_m190_wait_bed_extraction(self):
+        content = "M190 S65\nG1 X10\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".gcode", delete=False) as f:
+            f.write(content)
+            f.flush()
+            filepath = Path(f.name)
+
+        try:
+            meta = parse_gcode_file(filepath)
+            assert meta.bed_temp == 65.0
+        finally:
+            filepath.unlink()
+
+    def test_file_size_recorded(self):
+        content = "G28\nG1 X10\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".gcode", delete=False) as f:
+            f.write(content)
+            f.flush()
+            filepath = Path(f.name)
+
+        try:
+            meta = parse_gcode_file(filepath)
+            assert meta.file_size > 0
+            assert meta.filename == filepath.name
         finally:
             filepath.unlink()

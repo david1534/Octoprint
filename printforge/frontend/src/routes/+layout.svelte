@@ -25,6 +25,7 @@
 		{ path: '/control', label: 'Control', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
 		{ path: '/files', label: 'Files', icon: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z' },
 		{ path: '/timelapse', label: 'Timelapse', icon: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z' },
+		{ path: '/mesh', label: 'Mesh', icon: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z' },
 		{ path: '/history', label: 'History', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
 		{ path: '/terminal', label: 'Terminal', icon: 'M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
 		{ path: '/settings', label: 'Settings', icon: 'M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4' }
@@ -73,20 +74,19 @@
 		</div>
 
 		<!-- Nav items -->
-		<div class="flex-1 py-2">
+		<div class="flex-1 py-2 space-y-0.5">
 			{#each navItems as item}
 				{@const isActive = item.path === '/' ? currentPath === '/' : currentPath.startsWith(item.path)}
 				<a
 					href={item.path}
-					class="flex items-center gap-3 px-3 py-2.5 mx-2 rounded-lg transition-colors relative
+					class="flex items-center gap-3 px-3 py-2.5 mx-2 rounded-lg transition-all duration-200 relative group
 						   {isActive
 							? 'bg-accent/10 text-accent'
 							: 'text-surface-400 hover:bg-surface-800 hover:text-surface-200'}"
 				>
-					{#if isActive}
-						<div class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-accent rounded-r"></div>
-					{/if}
-					<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<div class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 rounded-r bg-accent nav-indicator
+								{isActive ? 'h-5 opacity-100' : 'h-0 opacity-0'}"></div>
+					<svg class="w-5 h-5 shrink-0 transition-transform duration-200 {isActive ? '' : 'group-hover:scale-110'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon} />
 					</svg>
 					<span class="hidden lg:block text-sm">{item.label}</span>
@@ -97,8 +97,8 @@
 		<!-- Connection status -->
 		<div class="p-3 border-t border-surface-700">
 			<div class="flex items-center gap-2">
-				<div class="w-2 h-2 rounded-full transition-colors duration-300 {connected ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'}"></div>
-				<span class="hidden lg:block text-xs text-surface-500">
+				<div class="w-2 h-2 rounded-full transition-all duration-500 {connected ? 'bg-emerald-400 glow-green' : 'bg-red-400 glow-red animate-pulse'}"></div>
+				<span class="hidden lg:block text-xs transition-colors duration-300 {connected ? 'text-surface-500' : 'text-red-400/70'}">
 					{connected ? 'Connected' : 'Reconnecting...'}
 				</span>
 			</div>
@@ -159,17 +159,18 @@
 				{/if}
 			</div>
 
-			<!-- Right side: E-STOP -->
-			<button
-				class="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-1.5 rounded-lg
-					   transition-colors uppercase text-sm tracking-wide shrink-0
-					   ring-2 ring-red-500/30 hover:ring-red-500/50
-					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
-				onclick={emergencyStop}
-				title="Emergency Stop (Ctrl+E)"
-			>
-				E-STOP
-			</button>
+		<!-- Right side: E-STOP -->
+		<button
+			class="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-1.5 rounded-lg
+				   transition-all duration-200 uppercase text-sm tracking-wide shrink-0
+				   ring-2 ring-red-500/30 hover:ring-red-500/50 hover:shadow-lg hover:shadow-red-500/20
+				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400
+				   active:scale-95"
+			onclick={emergencyStop}
+			title="Emergency Stop (Ctrl+E)"
+		>
+			E-STOP
+		</button>
 		</header>
 
 		<!-- WebSocket disconnection banner -->
@@ -184,20 +185,24 @@
 
 		<!-- Page content -->
 		<main class="flex-1 overflow-y-auto p-4 lg:p-6 pb-20 md:pb-6">
-			{@render children()}
+			<div class="page-transition">
+				{@render children()}
+			</div>
 		</main>
 	</div>
 
 	<!-- Bottom nav (mobile) -->
-	<nav class="md:hidden fixed bottom-0 left-0 right-0 bg-surface-900 border-t border-surface-700 flex z-50 safe-bottom">
+	<nav class="md:hidden fixed bottom-0 left-0 right-0 bg-surface-900/95 backdrop-blur-lg border-t border-surface-700/80 flex z-50 safe-bottom">
 		{#each navItems as item}
 			{@const isActive = item.path === '/' ? currentPath === '/' : currentPath.startsWith(item.path)}
 			<a
 				href={item.path}
-				class="flex-1 flex flex-col items-center py-2 text-xs transition-colors
-					   {isActive ? 'text-accent' : 'text-surface-500'}"
+				class="flex-1 flex flex-col items-center py-2 text-xs transition-all duration-200 relative
+					   {isActive ? 'text-accent' : 'text-surface-500 active:text-surface-300'}"
 			>
-				<svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<div class="absolute top-0 left-1/2 -translate-x-1/2 h-0.5 rounded-b bg-accent nav-indicator
+							{isActive ? 'w-5 opacity-100' : 'w-0 opacity-0'}"></div>
+				<svg class="w-5 h-5 mb-0.5 transition-transform duration-200 {isActive ? 'scale-110' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon} />
 				</svg>
 				{item.label}
