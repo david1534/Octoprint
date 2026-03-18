@@ -77,8 +77,8 @@ export const api = {
 	setFan: (speed: number) => post<any>('/printer/fan', { speed }),
 	sendCommand: (command: string) =>
 		post<any>('/printer/command', { command }),
-	startPrint: (filename: string) =>
-		post<any>('/printer/print', { filename }),
+	startPrint: (filename: string, spool_id?: number) =>
+		post<any>('/printer/print', { filename, ...(spool_id != null ? { spool_id } : {}) }),
 	pausePrint: () => post<any>('/printer/pause'),
 	resumePrint: () => post<any>('/printer/resume'),
 	cancelPrint: () => post<any>('/printer/cancel'),
@@ -161,6 +161,7 @@ export const api = {
 		post<any>(`/filament/${id}/deduct`, { grams }),
 	deleteSpool: (id: number) =>
 		request<any>(`/filament/${id}`, { method: 'DELETE' }),
+	getLowFilamentWarnings: () => request<any>('/filament/warnings'),
 
 	// Camera
 	getCameraUrls: () => request<any>('/camera/stream'),

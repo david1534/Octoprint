@@ -59,6 +59,7 @@ class CommandRequest(BaseModel):
 
 class PrintRequest(BaseModel):
     filename: str
+    spool_id: Optional[int] = None
 
 
 @router.get("/state")
@@ -152,7 +153,7 @@ async def start_print(req: PrintRequest):
         raise HTTPException(400, "Invalid path")
     if not filepath.exists():
         raise HTTPException(404, f"File not found: {req.filename}")
-    await ctrl.start_print(filepath)
+    await ctrl.start_print(filepath, spool_id=req.spool_id)
     return {"ok": True, "file": req.filename}
 
 

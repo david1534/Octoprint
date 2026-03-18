@@ -7,6 +7,8 @@ from ..storage.models import (
     deduct_filament,
     delete_spool,
     get_active_spool,
+    get_setting,
+    get_spool,
     get_spools,
     set_active_spool,
     update_spool,
@@ -75,3 +77,19 @@ async def remove_spool(spool_id: int):
     """Delete a filament spool."""
     await delete_spool(spool_id)
     return {"ok": True}
+
+
+@router.get("/warnings")
+async def get_low_filament_warnings():
+    """Get spools that are below the low-filament warning threshold."""
+    threshold_g = float(await get_setting("low_filament_threshold_g", "50"))
+    spools = await get_spools()
+    warnings = []
+    for spool in spools:
+        remaining = max(0, spool["total_weight_g"] - spool["used_weight_g"])
+        if remaining <= threshold_g:
+            warnings.append({
+                **spool,
+                "remaining_g": round(remaining, 1),
+            })
+    return {"warnings": warnings, "threshold_g": threshold_g}

@@ -5,6 +5,7 @@
 	import TempGauge from '$lib/components/TempGauge.svelte';
 	import PrintProgress from '$lib/components/PrintProgress.svelte';
 	import PreheatPresets from '$lib/components/PreheatPresets.svelte';
+	import PrintStartDialog from '$lib/components/PrintStartDialog.svelte';
 	import { printerState, isConnected, isPrinting, isPaused } from '$lib/stores/printer';
 	import { files, refreshFiles } from '$lib/stores/files';
 	import { api } from '$lib/api';
@@ -19,6 +20,11 @@
 	let loading = $state('');
 	let health = $state<any>(null);
 	let activeSpool = $state<any>(null);
+	let filamentWarnings = $state<any[]>([]);
+
+	// Print start dialog
+	let printDialogOpen = $state(false);
+	let printDialogFilename = $state('');
 
 	// Recent files for quick print
 	let recentFiles = $derived(
@@ -31,12 +37,20 @@
 		}
 		loadHealth();
 		loadActiveSpool();
+		loadFilamentWarnings();
 	});
 
 	async function loadActiveSpool() {
 		try {
 			const data = await api.getActiveSpool();
 			activeSpool = data.spool;
+		} catch { /* not critical */ }
+	}
+
+	async function loadFilamentWarnings() {
+		try {
+			const data = await api.getLowFilamentWarnings();
+			filamentWarnings = data.warnings || [];
 		} catch { /* not critical */ }
 	}
 
@@ -89,23 +103,29 @@
 		}
 	}
 
-	async function quickPrint(filename: string) {
-		const ok = await confirmAction({
-			title: 'Start Print',
-			message: `Start printing "${filename}"?`,
-			confirmLabel: 'Start Print',
-			variant: 'primary'
-		});
-		if (!ok) return;
+	function quickPrint(filename: string) {
+		printDialogFilename = filename;
+		printDialogOpen = true;
+	}
+
+	async function onPrintConfirm(spoolId: number | null) {
+		const filename = printDialogFilename;
+		printDialogOpen = false;
+		printDialogFilename = '';
 		loading = 'qprint:' + filename;
 		try {
-			await api.startPrint(filename);
+			await api.startPrint(filename, spoolId ?? undefined);
 			toast.success('Print started: ' + filename);
 		} catch (e: any) {
 			toast.error('Failed to start: ' + e.message);
 		} finally {
 			loading = '';
 		}
+	}
+
+	function onPrintCancel() {
+		printDialogOpen = false;
+		printDialogFilename = '';
 	}
 
 	async function quickHome() {
@@ -153,9 +173,7 @@
 		<!-- Print Status Hero (when printing/paused) -->
 		{#if printing || paused}
 			<div class="card bg-gradient-to-r from-surface-900 to-surface-800/50 border-accent/20">
-				<div class="flex flex-col lg:flex-row items-center gap-6">
-					<PrintProgress />
-				</div>
+				<PrintProgress />
 				<!-- Print controls -->
 				<div class="flex gap-2 mt-4">
 					{#if printing}
@@ -269,6 +287,30 @@
 							></div>
 						</div>
 					{/if}
+				</div>
+			</div>
+		{/if}
+
+		<!-- Low Filament Warnings -->
+		{#if filamentWarnings.length > 0}
+			<div class="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
+				<div class="flex items-start gap-2">
+					<svg class="w-5 h-5 text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+					</svg>
+					<div>
+						<p class="text-sm font-medium text-amber-300 mb-1">Low Filament Warning</p>
+						<div class="space-y-1">
+							{#each filamentWarnings as w}
+								<div class="flex items-center gap-2 text-xs text-amber-300/80">
+									<div class="w-3 h-3 rounded-full shrink-0 border border-amber-500/30" style="background-color: {w.color}"></div>
+									<span class="font-medium">{w.name}</span>
+									<span class="text-amber-400/60">({w.material})</span>
+									<span class="tabular-nums">{w.remaining_g}g remaining</span>
+								</div>
+							{/each}
+						</div>
+					</div>
 				</div>
 			</div>
 		{/if}
@@ -417,3 +459,11 @@
 		{/if}
 	</div>
 {/if}
+
+
+<PrintStartDialog
+	bind:open={printDialogOpen}
+	filename={printDialogFilename}
+	onconfirm={onPrintConfirm}
+	oncancel={onPrintCancel}
+/>

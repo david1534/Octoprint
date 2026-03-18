@@ -9,10 +9,15 @@
 	import { confirmAction } from '$lib/stores/confirm';
 	import { formatFileSize, formatDuration } from '$lib/utils';
 	import EmptyState from '$lib/components/EmptyState.svelte';
+	import PrintStartDialog from '$lib/components/PrintStartDialog.svelte';
 
 	let isConnected = $derived($printerState.status !== 'disconnected');
 	let isPrinting = $derived($printerState.status === 'printing' || $printerState.status === 'paused');
 	let loading = $state('');
+
+	// Print start dialog state
+	let printDialogOpen = $state(false);
+	let printDialogFile = $state<GcodeFile | null>(null);
 	let diskUsage = $state<{ free: number; total: number } | null>(null);
 	let diskPct = $derived(diskUsage ? ((diskUsage.total - diskUsage.free) / diskUsage.total) * 100 : 0);
 
@@ -160,17 +165,19 @@
 		}
 	}
 
-	async function startPrint(file: GcodeFile) {
-		const ok = await confirmAction({
-			title: 'Start Print',
-			message: `Start printing "${file.filename}"?`,
-			confirmLabel: 'Start Print',
-			variant: 'primary'
-		});
-		if (!ok) return;
+	function startPrint(file: GcodeFile) {
+		printDialogFile = file;
+		printDialogOpen = true;
+	}
+
+	async function onPrintConfirm(spoolId: number | null) {
+		if (!printDialogFile) return;
+		const file = printDialogFile;
+		printDialogOpen = false;
+		printDialogFile = null;
 		loading = 'print:' + file.path;
 		try {
-			await api.startPrint(file.path || file.filename);
+			await api.startPrint(file.path || file.filename, spoolId ?? undefined);
 			toast.success('Print started: ' + file.filename);
 			goto('/');
 		} catch (e: any) {
@@ -178,6 +185,11 @@
 		} finally {
 			loading = '';
 		}
+	}
+
+	function onPrintCancel() {
+		printDialogOpen = false;
+		printDialogFile = null;
 	}
 
 	async function deleteFile(file: GcodeFile) {
@@ -1019,3 +1031,11 @@
 		{/if}
 	</div>
 {/if}
+
+
+<PrintStartDialog
+	bind:open={printDialogOpen}
+	filename={printDialogFile?.filename ?? ''}
+	onconfirm={onPrintConfirm}
+	oncancel={onPrintCancel}
+/>

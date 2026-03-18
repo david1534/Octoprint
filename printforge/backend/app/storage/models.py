@@ -138,6 +138,16 @@ async def get_active_spool() -> Optional[dict]:
     return dict(row) if row else None
 
 
+async def get_spool(spool_id: int) -> Optional[dict]:
+    """Get a specific spool by ID."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM filament_spools WHERE id = ?", (spool_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
 async def update_spool(spool_id: int, **kwargs) -> None:
     """Update spool fields."""
     if not kwargs:
