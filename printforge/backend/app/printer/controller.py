@@ -41,6 +41,8 @@ class PrinterController:
         self._time_correction_factor: float = 1.0
         # Current print job ID for history tracking
         self._current_job_id: Optional[int] = None
+        # Spool selected for current print
+        self._current_spool_id: Optional[int] = None
 
     @property
     def temp_monitor(self) -> TemperatureMonitor:
@@ -292,7 +294,69 @@ class PrinterController:
         await self.send_command(f"G1 E{length} F{feedrate}")
         await self.send_command("G90")
 
-    async def start_print(self, filepath: Path) -> None:
+    # Default start G-code for Ender 3 style printers.
+    # Homes all axes, probes bed level, heats up, and prints a purge line.
+    # Template variables: {nozzle_temp}, {bed_temp}
+    DEFAULT_START_GCODE = """\
+M140 S{bed_temp} ; Start heating bed (non-blocking)
+M104 S{nozzle_temp} ; Start heating nozzle (non-blocking)
+G28 ; Home all axes
+G29 ; Auto bed leveling probe (remove if no ABL)
+M190 S{bed_temp} ; Wait for bed to reach temperature
+M109 S{nozzle_temp} ; Wait for nozzle to reach temperature
+G92 E0 ; Reset extruder position
+G1 Z2.0 F3000 ; Lift nozzle
+G1 X0.1 Y20 Z0.3 F5000.0 ; Move to purge line start
+G1 X0.1 Y200.0 Z0.3 F1500.0 E15 ; Draw first purge line
+G1 X0.4 Y200.0 Z0.3 F5000.0 ; Shift over
+G1 X0.4 Y20 Z0.3 F1500.0 E30 ; Draw second purge line
+G92 E0 ; Reset extruder
+G1 Z2.0 F3000 ; Lift nozzle
+M117 Printing..."""
+
+    # Default end G-code: retract, present print, cool down, disable steppers
+    DEFAULT_END_GCODE = """\
+G91 ; Relative positioning
+G1 E-5 F1800 ; Retract filament
+G1 Z10 F600 ; Lift Z 10mm
+G90 ; Absolute positioning
+G1 X0 Y220 F3000 ; Present print (move bed forward)
+M104 S0 ; Turn off nozzle
+M140 S0 ; Turn off bed
+M106 S0 ; Turn off fan
+M84 ; Disable steppers
+M117 Print Complete"""
+
+    async def _run_gcode_sequence(
+        self, gcode_text: str, nozzle_temp: float, bed_temp: float
+    ) -> None:
+        """Send a sequence of G-code lines (start/end gcode) through the queue.
+
+        Supports template variables: {nozzle_temp}, {bed_temp}
+        """
+        if not self._queue:
+            return
+
+        # Substitute template variables
+        gcode_text = gcode_text.replace("{nozzle_temp}", str(int(nozzle_temp)))
+        gcode_text = gcode_text.replace("{bed_temp}", str(int(bed_temp)))
+
+        for line in gcode_text.splitlines():
+            line = line.strip()
+            # Strip inline comments
+            if ";" in line:
+                line = line[: line.index(";")].strip()
+            if not line:
+                continue
+            self._notify_terminal(line, "send")
+            future = await self._queue.enqueue(
+                line, CommandPriority.SYSTEM
+            )
+            result = await future
+            if not result.ok:
+                logger.warning("Start/end gcode command failed: %s -> %s", line, result.error)
+
+    async def start_print(self, filepath: Path, spool_id: Optional[int] = None) -> None:
         """Start printing a G-code file."""
         if not self._sender:
             raise ConnectionError("Not connected")
@@ -315,9 +379,28 @@ class PrinterController:
         except Exception:
             self._slicer_estimated_seconds = 0.0
             self._time_correction_factor = 1.0
+            meta = None
+
+        # Determine temperatures from file metadata or defaults
+        nozzle_temp = (meta.nozzle_temp if meta and meta.nozzle_temp else 200)
+        bed_temp = (meta.bed_temp if meta and meta.bed_temp else 60)
+
+        # Prepare start G-code with temperature substitution
+        start_gcode_raw = await get_setting("start_gcode", self.DEFAULT_START_GCODE)
+        start_gcode = ""
+        if start_gcode_raw.strip():
+            start_gcode = start_gcode_raw.replace(
+                "{nozzle_temp}", str(int(nozzle_temp))
+            ).replace("{bed_temp}", str(int(bed_temp)))
+            self._notify_terminal("[SYSTEM] Running start G-code...", "system")
+
+        # Store selected spool for filament deduction on completion
+        self._current_spool_id = spool_id
 
         self._protocol.reset_line_number()
-        await self._sender.start_print(filepath)
+        # Pass start gcode to sender — it runs asynchronously in the print
+        # task so this method returns immediately without blocking the API.
+        await self._sender.start_print(filepath, start_gcode=start_gcode)
         self.state.status = PrinterStatus.PRINTING
 
         # Record print job in history
@@ -371,6 +454,7 @@ class PrinterController:
                 except Exception:
                     logger.exception("Failed to record print cancellation")
                 self._current_job_id = None
+                self._current_spool_id = None
 
             await self._sender.cancel()
             self._sender.reset()
@@ -415,19 +499,31 @@ class PrinterController:
             deduct_filament,
             get_active_spool,
             get_setting,
+            get_spool,
         )
 
         try:
+            # Run end G-code sequence (retract, present, cool down, disable motors)
+            end_gcode = await get_setting("end_gcode", self.DEFAULT_END_GCODE)
+            if end_gcode.strip():
+                self._notify_terminal("[SYSTEM] Running end G-code...", "system")
+                await self._run_gcode_sequence(end_gcode, 0, 0)
+
             cooldown = await get_setting("post_print_cooldown", "true")
-            if cooldown == "true":
+            if cooldown == "true" and not end_gcode.strip():
+                # Only do simple cooldown if no end G-code (end gcode handles it)
                 logger.info("Post-print cooldown: turning off heaters")
                 if self._queue:
                     await self._queue.enqueue("M104 S0", CommandPriority.SYSTEM)
                     await self._queue.enqueue("M140 S0", CommandPriority.SYSTEM)
 
-            # Deduct filament from active spool
+            # Deduct filament from selected spool (or fall back to active spool)
             if filament_used_mm > 0:
-                spool = await get_active_spool()
+                spool = None
+                if self._current_spool_id:
+                    spool = await get_spool(self._current_spool_id)
+                if not spool:
+                    spool = await get_active_spool()
                 if spool:
                     density = float(await get_setting("filament_density", "1.24"))
                     radius_mm = 1.75 / 2.0
@@ -446,6 +542,7 @@ class PrinterController:
                     filament_used_mm=filament_used_mm,
                 )
                 self._current_job_id = None
+                self._current_spool_id = None
 
             # Notify via terminal so WebSocket picks it up
             self._notify_terminal("[SYSTEM] Print complete", "system")

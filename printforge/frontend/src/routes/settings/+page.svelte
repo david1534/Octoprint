@@ -35,6 +35,37 @@
 	// Post-print settings
 	let postPrintCooldown = $state(true);
 
+	// Start/End G-code
+	const DEFAULT_START_GCODE = `M140 S{bed_temp} ; Start heating bed (non-blocking)
+M104 S{nozzle_temp} ; Start heating nozzle (non-blocking)
+G28 ; Home all axes
+G29 ; Auto bed leveling probe (remove if no ABL)
+M190 S{bed_temp} ; Wait for bed to reach temperature
+M109 S{nozzle_temp} ; Wait for nozzle to reach temperature
+G92 E0 ; Reset extruder position
+G1 Z2.0 F3000 ; Lift nozzle
+G1 X0.1 Y20 Z0.3 F5000.0 ; Move to purge line start
+G1 X0.1 Y200.0 Z0.3 F1500.0 E15 ; Draw first purge line
+G1 X0.4 Y200.0 Z0.3 F5000.0 ; Shift over
+G1 X0.4 Y20 Z0.3 F1500.0 E30 ; Draw second purge line
+G92 E0 ; Reset extruder
+G1 Z2.0 F3000 ; Lift nozzle
+M117 Printing...`;
+
+	const DEFAULT_END_GCODE = `G91 ; Relative positioning
+G1 E-5 F1800 ; Retract filament
+G1 Z10 F600 ; Lift Z 10mm
+G90 ; Absolute positioning
+G1 X0 Y220 F3000 ; Present print (move bed forward)
+M104 S0 ; Turn off nozzle
+M140 S0 ; Turn off bed
+M106 S0 ; Turn off fan
+M84 ; Disable steppers
+M117 Print Complete`;
+
+	let startGcode = $state(DEFAULT_START_GCODE);
+	let endGcode = $state(DEFAULT_END_GCODE);
+
 	// LCD progress settings
 	let lcdProgressEnabled = $state(false);
 	let lcdProgressInterval = $state(50);
@@ -133,6 +164,8 @@
 			autoConnectPort = serverSettings.auto_connect_port || 'auto';
 			autoConnectBaudrate = parseInt(serverSettings.auto_connect_baudrate || '115200');
 			postPrintCooldown = serverSettings.post_print_cooldown !== 'false'; // default true
+			if (serverSettings.start_gcode !== undefined) startGcode = serverSettings.start_gcode;
+			if (serverSettings.end_gcode !== undefined) endGcode = serverSettings.end_gcode;
 			lcdProgressEnabled = serverSettings.lcd_progress_enabled === 'true';
 			lcdProgressInterval = parseInt(serverSettings.lcd_progress_interval || '50');
 			filamentCostPerKg = parseFloat(serverSettings.filament_cost_per_kg || '18');
@@ -649,6 +682,75 @@
 
 		<!-- Printing Tab -->
 		{#if activeTab === 'printing'}
+			<!-- Start G-code -->
+			<div class="card">
+				<h2 class="text-lg font-semibold mb-2">Start G-code</h2>
+				<p class="text-sm text-surface-400 mb-3">
+					Runs before every print. Homes the printer, levels the bed, heats up, and prints a purge line.
+					Use <code class="text-accent text-xs">{'{nozzle_temp}'}</code> and <code class="text-accent text-xs">{'{bed_temp}'}</code> as placeholders — they are replaced with the temperatures from the G-code file.
+				</p>
+				<textarea
+					class="input w-full font-mono text-xs leading-relaxed"
+					rows="16"
+					bind:value={startGcode}
+					spellcheck="false"
+				></textarea>
+				<div class="flex items-center gap-2 mt-3">
+					<button
+						class="btn-primary text-sm"
+						onclick={() => { saveSetting('start_gcode', startGcode); toast.success('Start G-code saved'); }}
+					>
+						Save
+					</button>
+					<button
+						class="btn-secondary text-sm"
+						onclick={() => { startGcode = DEFAULT_START_GCODE; saveSetting('start_gcode', DEFAULT_START_GCODE); toast.info('Reset to default'); }}
+					>
+						Reset to Default
+					</button>
+					<button
+						class="btn-secondary text-sm"
+						onclick={() => { startGcode = ''; saveSetting('start_gcode', ''); toast.info('Start G-code disabled'); }}
+					>
+						Disable
+					</button>
+				</div>
+			</div>
+
+			<!-- End G-code -->
+			<div class="card">
+				<h2 class="text-lg font-semibold mb-2">End G-code</h2>
+				<p class="text-sm text-surface-400 mb-3">
+					Runs after every completed print. Retracts filament, presents the print, and cools down.
+				</p>
+				<textarea
+					class="input w-full font-mono text-xs leading-relaxed"
+					rows="12"
+					bind:value={endGcode}
+					spellcheck="false"
+				></textarea>
+				<div class="flex items-center gap-2 mt-3">
+					<button
+						class="btn-primary text-sm"
+						onclick={() => { saveSetting('end_gcode', endGcode); toast.success('End G-code saved'); }}
+					>
+						Save
+					</button>
+					<button
+						class="btn-secondary text-sm"
+						onclick={() => { endGcode = DEFAULT_END_GCODE; saveSetting('end_gcode', DEFAULT_END_GCODE); toast.info('Reset to default'); }}
+					>
+						Reset to Default
+					</button>
+					<button
+						class="btn-secondary text-sm"
+						onclick={() => { endGcode = ''; saveSetting('end_gcode', ''); toast.info('End G-code disabled'); }}
+					>
+						Disable
+					</button>
+				</div>
+			</div>
+
 			<!-- Post-Print Actions -->
 			<div class="card">
 				<h2 class="text-lg font-semibold mb-4">Post-Print Actions</h2>

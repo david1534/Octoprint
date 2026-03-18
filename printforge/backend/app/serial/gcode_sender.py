@@ -46,6 +46,8 @@ class GcodeSender:
         self._lcd_enabled: bool = False
         self._lcd_interval: int = 50  # lines between updates
         self._lcd_last_layer: int = -1
+        # Whether start gcode preamble is currently running
+        self._in_start_gcode: bool = False
 
     @property
     def is_printing(self) -> bool:
@@ -54,6 +56,10 @@ class GcodeSender:
     @property
     def is_paused(self) -> bool:
         return self._paused
+
+    @property
+    def in_start_gcode(self) -> bool:
+        return self._in_start_gcode
 
     @property
     def progress(self) -> float:
@@ -100,8 +106,16 @@ class GcodeSender:
         self._lcd_enabled = enabled
         self._lcd_interval = max(10, interval)
 
-    async def start_print(self, filepath: Path) -> None:
-        """Start printing a G-code file."""
+    async def start_print(
+        self, filepath: Path, start_gcode: str = ""
+    ) -> None:
+        """Start printing a G-code file.
+
+        Args:
+            filepath: Path to the G-code file.
+            start_gcode: Optional start G-code to run before the file
+                         (homing, bed leveling, heating, purge line).
+        """
         if self.is_printing:
             raise RuntimeError("A print is already in progress")
 
@@ -115,6 +129,7 @@ class GcodeSender:
         self._filament_used_mm = 0.0
         self._last_e_position = 0.0
         self._e_relative = False
+        self._in_start_gcode = bool(start_gcode.strip())
 
         # Count printable lines and layers
         self._total_lines = 0
@@ -129,7 +144,9 @@ class GcodeSender:
                     self._total_layers += 1
 
         self._start_time = time.time()
-        self._task = asyncio.create_task(self._print_loop(filepath))
+        self._task = asyncio.create_task(
+            self._print_loop(filepath, start_gcode)
+        )
         logger.info(
             "Print started: %s (%d lines, %d layers)",
             filepath.name,
@@ -137,9 +154,42 @@ class GcodeSender:
             self._total_layers,
         )
 
-    async def _print_loop(self, filepath: Path) -> None:
+    async def _print_loop(
+        self, filepath: Path, start_gcode: str = ""
+    ) -> None:
         """Stream G-code lines to the command queue."""
         try:
+            # Run start G-code preamble (homing, leveling, heating, purge)
+            if start_gcode.strip():
+                logger.info("Running start G-code preamble...")
+                for raw_line in start_gcode.splitlines():
+                    if self._cancelled:
+                        await self._on_cancel()
+                        return
+                    # Respect pause during start gcode
+                    while self._paused and not self._cancelled:
+                        await asyncio.sleep(0.1)
+                    if self._cancelled:
+                        await self._on_cancel()
+                        return
+                    line = raw_line.strip()
+                    if ";" in line:
+                        line = line[: line.index(";")].strip()
+                    if not line:
+                        continue
+                    future = await self._queue.enqueue(
+                        line, priority=CommandPriority.SYSTEM
+                    )
+                    result: CommandResult = await future
+                    if not result.ok:
+                        logger.warning(
+                            "Start gcode command failed: %s -> %s",
+                            line,
+                            result.error,
+                        )
+                self._in_start_gcode = False
+                logger.info("Start G-code complete, streaming file...")
+
             with open(filepath, "r") as f:
                 for line in f:
                     if self._cancelled:
@@ -340,4 +390,5 @@ class GcodeSender:
         self._start_time = None
         self._paused = False
         self._cancelled = False
+        self._in_start_gcode = False
         self._task = None
