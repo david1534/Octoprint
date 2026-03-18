@@ -207,6 +207,8 @@ class PrinterController:
         self.state.error_message = None
         self._notify_state_change()
 
+        # Reset watchdog so it doesn't fire on stale timestamps
+        self._safety.record_serial_activity()
         # Start safety monitoring loop
         self._safety_task = asyncio.create_task(self._safety_loop())
 
@@ -398,6 +400,7 @@ M117 Print Complete"""
         self._current_spool_id = spool_id
 
         self._protocol.reset_line_number()
+        self._safety.record_serial_activity()
         # Pass start gcode to sender — it runs asynchronously in the print
         # task so this method returns immediately without blocking the API.
         await self._sender.start_print(filepath, start_gcode=start_gcode)
