@@ -254,13 +254,15 @@ CAM_DEV="${DETECTED_CAMERA:-/dev/video0}"
 cat > "$INSTALL_DIR/go2rtc.yaml" << YAML
 streams:
   printer_cam:
-    - exec:ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 15 -i ${CAM_DEV} -c:v copy -f mjpeg -
+    - exec:ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 30 -i ${CAM_DEV} -pix_fmt yuv420p -c:v h264_v4l2m2m -b:v 2M -g 30 -f h264 -
 
 api:
   listen: ":1984"
 
 webrtc:
   listen: ":8555"
+  ice_servers:
+    - urls: [stun:stun.l.google.com:19302]
 YAML
 
 if [ -n "$DETECTED_CAMERA" ]; then

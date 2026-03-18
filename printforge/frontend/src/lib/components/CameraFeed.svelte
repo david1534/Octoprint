@@ -2,9 +2,12 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '../api';
 
+	type StreamMode = 'webrtc' | 'mjpeg-direct' | 'mjpeg-proxy';
+
+	let webrtcUrl = $state('');
 	let mjpegUrl = $state('');
 	let proxyUrl = $state('');
-	let usingProxy = $state(false);
+	let streamMode = $state<StreamMode>('webrtc');
 	let error = $state('');
 	let loading = $state(true);
 	let retryCount = $state(0);
@@ -12,6 +15,8 @@
 	let paused = $state(false);
 	let fullscreen = $state(false);
 	let containerEl: HTMLDivElement;
+	let videoEl: HTMLVideoElement;
+	let pc: RTCPeerConnection | null = null;
 	const MAX_RETRIES = 5;
 
 	onMount(async () => {
@@ -22,16 +27,27 @@
 
 	onDestroy(() => {
 		if (retryTimer) clearTimeout(retryTimer);
+		cleanupWebRTC();
 		document.removeEventListener('visibilitychange', onVisibility);
 		document.removeEventListener('fullscreenchange', onFullscreenChange);
 	});
 
+	function cleanupWebRTC() {
+		if (pc) {
+			pc.close();
+			pc = null;
+		}
+	}
+
 	function onVisibility() {
 		if (document.hidden) {
 			paused = true;
+			cleanupWebRTC();
 		} else {
 			paused = false;
-			if (error) scheduleRetry();
+			if (error || streamMode === 'webrtc') {
+				loadCamera();
+			}
 		}
 	}
 
@@ -42,23 +58,112 @@
 	async function loadCamera() {
 		loading = true;
 		error = '';
-		usingProxy = false;
 		try {
 			const urls = await api.getCameraUrls();
-			mjpegUrl = urls.mjpeg;
-			proxyUrl = urls.proxy;
+			webrtcUrl = urls.webrtc || '';
+			mjpegUrl = urls.mjpeg || '';
+			proxyUrl = urls.proxy || '';
+
+			if (webrtcUrl) {
+				streamMode = 'webrtc';
+				await startWebRTC();
+			} else if (mjpegUrl) {
+				streamMode = 'mjpeg-direct';
+				loading = false;
+			}
 			retryCount = 0;
 		} catch (e) {
 			error = 'Camera not available';
-		} finally {
 			loading = false;
 		}
 	}
 
+	async function startWebRTC() {
+		cleanupWebRTC();
+
+		try {
+			pc = new RTCPeerConnection({
+				iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+			});
+
+			pc.addTransceiver('video', { direction: 'recvonly' });
+
+			pc.ontrack = (event) => {
+				if (videoEl && event.streams[0]) {
+					videoEl.srcObject = event.streams[0];
+					loading = false;
+					error = '';
+				}
+			};
+
+			pc.oniceconnectionstatechange = () => {
+				if (!pc) return;
+				const state = pc.iceConnectionState;
+				if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+					fallbackToMJPEG();
+				}
+			};
+
+			const offer = await pc.createOffer();
+			await pc.setLocalDescription(offer);
+
+			// Wait for ICE gathering to complete (or timeout after 2s)
+			await new Promise<void>((resolve) => {
+				if (!pc) return resolve();
+				if (pc.iceGatheringState === 'complete') return resolve();
+				const timeout = setTimeout(resolve, 2000);
+				pc.onicegatheringstatechange = () => {
+					if (pc?.iceGatheringState === 'complete') {
+						clearTimeout(timeout);
+						resolve();
+					}
+				};
+			});
+
+			const resp = await fetch(webrtcUrl, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/sdp' },
+				body: pc.localDescription!.sdp,
+			});
+
+			if (!resp.ok) {
+				throw new Error(`Signaling failed: ${resp.status}`);
+			}
+
+			const answerSdp = await resp.text();
+			await pc.setRemoteDescription(
+				new RTCSessionDescription({ type: 'answer', sdp: answerSdp })
+			);
+
+			// If no video track arrives within 5 seconds, fall back
+			setTimeout(() => {
+				if (loading && streamMode === 'webrtc') {
+					fallbackToMJPEG();
+				}
+			}, 5000);
+		} catch (e) {
+			fallbackToMJPEG();
+		}
+	}
+
+	function fallbackToMJPEG() {
+		cleanupWebRTC();
+		if (mjpegUrl) {
+			streamMode = 'mjpeg-direct';
+			loading = false;
+		} else if (proxyUrl) {
+			streamMode = 'mjpeg-proxy';
+			loading = false;
+		} else {
+			error = 'Camera stream unavailable';
+			loading = false;
+			scheduleRetry();
+		}
+	}
+
 	function onImgError() {
-		if (!usingProxy && proxyUrl) {
-			usingProxy = true;
-			mjpegUrl = proxyUrl;
+		if (streamMode === 'mjpeg-direct' && proxyUrl) {
+			streamMode = 'mjpeg-proxy';
 			return;
 		}
 		error = 'Camera stream unavailable';
@@ -75,10 +180,7 @@
 		if (retryCount >= MAX_RETRIES || paused) return;
 		const delay = Math.min(3000 * Math.pow(2, retryCount), 30000);
 		retryCount++;
-		retryTimer = setTimeout(() => {
-			usingProxy = false;
-			loadCamera();
-		}, delay);
+		retryTimer = setTimeout(() => loadCamera(), delay);
 	}
 
 	function manualRetry() {
@@ -96,14 +198,24 @@
 			await document.exitFullscreen();
 		}
 	}
+
+	let modeLabel = $derived(
+		streamMode === 'webrtc' ? 'WebRTC' :
+		streamMode === 'mjpeg-direct' ? 'MJPEG' :
+		'proxied'
+	);
+
+	let currentMjpegSrc = $derived(
+		streamMode === 'mjpeg-proxy' ? proxyUrl : mjpegUrl
+	);
 </script>
 
 <div class="card h-full" bind:this={containerEl}>
 	<div class="flex items-center justify-between mb-2">
 		<h3 class="text-sm font-medium text-surface-400">Camera</h3>
 		<div class="flex items-center gap-2">
-			{#if mjpegUrl && !error && !loading}
-				<span class="text-xs text-surface-600">{usingProxy ? 'proxied' : 'direct'}</span>
+			{#if !error && !loading}
+				<span class="text-xs text-surface-600">{modeLabel}</span>
 			{/if}
 			{#if !loading && !error}
 				<button
@@ -145,18 +257,27 @@
 					{/if}
 				</div>
 			</div>
-		{:else if mjpegUrl && !paused}
+		{:else if paused}
+			<div class="absolute inset-0 flex items-center justify-center text-surface-500">
+				<p class="text-sm">Camera paused (tab hidden)</p>
+			</div>
+		{:else if streamMode === 'webrtc'}
+			<!-- svelte-ignore a11y_media_has_caption -->
+			<video
+				bind:this={videoEl}
+				autoplay
+				playsinline
+				muted
+				class="w-full h-full object-cover"
+			></video>
+		{:else}
 			<img
-				src={mjpegUrl}
+				src={currentMjpegSrc}
 				alt="Printer camera"
 				class="w-full h-full object-cover"
 				onerror={onImgError}
 				onload={onImgLoad}
 			/>
-		{:else if paused}
-			<div class="absolute inset-0 flex items-center justify-center text-surface-500">
-				<p class="text-sm">Camera paused (tab hidden)</p>
-			</div>
 		{/if}
 	</div>
 </div>

@@ -3,6 +3,7 @@
 Main FastAPI application entry point.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,7 +11,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import filament, files, history, printer, settings as settings_api, system, timelapse, websocket
@@ -94,35 +95,73 @@ app.include_router(filament.router)
 async def camera_stream_url(request: Request):
     """Return camera stream URLs for the frontend.
 
-    Provides a direct go2rtc URL (lowest latency) and a proxy fallback.
-    The direct URL lets the browser connect straight to go2rtc on port 1984,
-    bypassing the Python proxy for near-real-time MJPEG.
+    Provides WebRTC signaling (lowest latency), direct MJPEG, and proxy fallback.
     """
-    # Extract the hostname/IP the browser used to reach us
     host = request.headers.get("host", "localhost").split(":")[0]
     return {
+        "webrtc": "/api/camera/webrtc",
         "mjpeg": f"http://{host}:1984/api/stream.mjpeg?src=printer_cam",
         "proxy": "/api/camera/mjpeg",
     }
 
 
+@app.post("/api/camera/webrtc")
+async def camera_webrtc_signaling(request: Request):
+    """Proxy WebRTC signaling to go2rtc.
+
+    The browser sends an SDP offer, we forward it to go2rtc and return the answer.
+    This avoids exposing port 1984 directly.
+    """
+    body = await request.body()
+    upstream = f"{settings.camera_url}/api/webrtc?src=printer_cam"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.post(
+                upstream,
+                content=body,
+                headers={"Content-Type": request.headers.get("content-type", "application/sdp")},
+            )
+            return JSONResponse(
+                content=resp.text,
+                status_code=resp.status_code,
+                media_type=resp.headers.get("content-type", "application/sdp"),
+            )
+        except httpx.ConnectError:
+            return JSONResponse(
+                content={"error": "Camera service unavailable"},
+                status_code=503,
+            )
+
+
 @app.get("/api/camera/mjpeg")
 async def camera_mjpeg_proxy():
-    """Proxy the MJPEG stream from go2rtc so the browser can access it."""
-    upstream = f"{settings.camera_url}/api/stream.mjpeg?src=printer_cam"
+    """Proxy camera as MJPEG by polling go2rtc snapshot endpoint.
+
+    go2rtc can decode H264 frames for snapshots but can't stream MJPEG
+    from an H264 source, so we poll frame.jpeg and build the multipart
+    MJPEG stream ourselves.
+    """
+    snapshot_url = f"{settings.camera_url}/api/frame.jpeg?src=printer_cam"
 
     async def stream():
-        timeout = httpx.Timeout(connect=10.0, read=None, write=None, pool=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            try:
-                async with client.stream("GET", upstream) as resp:
-                    async for chunk in resp.aiter_bytes(65536):
-                        yield chunk
-            except (httpx.ReadError, httpx.RemoteProtocolError, httpx.StreamClosed):
-                # Stream ended or was interrupted — let client reconnect
-                return
-            except Exception:
-                return
+        boundary = b"--frame\r\n"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+            while True:
+                try:
+                    resp = await client.get(snapshot_url)
+                    if resp.status_code == 200 and resp.content:
+                        yield boundary
+                        yield b"Content-Type: image/jpeg\r\n"
+                        yield f"Content-Length: {len(resp.content)}\r\n\r\n".encode()
+                        yield resp.content
+                        yield b"\r\n"
+                    # ~10 FPS for the fallback stream
+                    await asyncio.sleep(0.1)
+                except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException):
+                    await asyncio.sleep(1.0)
+                except Exception:
+                    return
 
     return StreamingResponse(
         stream(),
@@ -133,6 +172,24 @@ async def camera_mjpeg_proxy():
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/api/camera/snapshot")
+async def camera_snapshot():
+    """Return a single JPEG snapshot from the camera."""
+    snapshot_url = f"{settings.camera_url}/api/frame.jpeg?src=printer_cam"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+        try:
+            resp = await client.get(snapshot_url)
+            if resp.status_code == 200:
+                return Response(
+                    content=resp.content,
+                    media_type="image/jpeg",
+                    headers={"Cache-Control": "no-cache"},
+                )
+        except Exception:
+            pass
+    return JSONResponse({"error": "Camera unavailable"}, status_code=503)
 
 
 # Serve built frontend (static files) — MUST be last, catches all routes
