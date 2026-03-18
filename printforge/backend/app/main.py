@@ -1,3 +1,4 @@
+from __future__ import annotations
 """PrintForge - 3D Printer Control System
 
 Main FastAPI application entry point.
