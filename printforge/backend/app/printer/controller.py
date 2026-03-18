@@ -108,8 +108,10 @@ class PrinterController:
 
     def _on_terminal_line(self, line: str, direction: str) -> None:
         """Called for every terminal line (sent or received)."""
-        if direction == "recv":
-            self._safety.record_serial_activity()
+        # Record serial activity for both send and recv — sending proves the
+        # connection is alive even during long-running commands where the
+        # printer hasn't responded yet (G28, G29, M109, M190).
+        self._safety.record_serial_activity()
         self._notify_terminal(line, direction)
 
     def _on_position_line(self, line: str) -> None:
@@ -608,12 +610,36 @@ M117 Print Complete"""
 
                     self._notify_state_change()
 
-                # Serial watchdog — check every 5 seconds
+                # Serial watchdog — check every 5 seconds, but skip during
+                # start gcode since G28/G29/M109/M190 can block for minutes
+                # with no intermediate serial output.
                 if tick % 5 == 0:
                     is_printing = self.state.status == PrinterStatus.PRINTING
-                    alert = self._safety.check_serial_watchdog(is_printing)
-                    if alert:
-                        self._handle_safety_alert(alert)
+                    in_start_gcode = (
+                        self._sender
+                        and self._sender.in_start_gcode
+                    )
+                    if is_printing and not in_start_gcode:
+                        alert = self._safety.check_serial_watchdog(
+                            is_printing=True
+                        )
+                        if alert:
+                            self._handle_safety_alert(alert)
+
+                # Fallback temperature polling — if no temp data has been
+                # received (temps stuck at 0), periodically send M105.
+                if tick % 10 == 0 and self._queue:
+                    if (
+                        self._temp_monitor.hotend.actual == 0.0
+                        and self._temp_monitor.bed.actual == 0.0
+                        and self._temp_monitor.hotend.timestamp == 0.0
+                    ):
+                        try:
+                            await self._queue.enqueue(
+                                "M105", CommandPriority.SYSTEM
+                            )
+                        except Exception:
+                            pass
 
         except asyncio.CancelledError:
             pass

@@ -63,7 +63,7 @@ class SerialConnection:
                 self._writer = None
                 return False
 
-    async def _wait_for_startup(self, timeout: float = 5.0) -> list[str]:
+    async def _wait_for_startup(self, timeout: float = 10.0) -> list[str]:
         """Wait for and capture Marlin's startup messages."""
         lines = []
         try:
