@@ -182,17 +182,24 @@ success "Python dependencies installed"
 step 4 "Building frontend"
 ###############################################################################
 
-cd "$PROJECT_DIR/frontend"
+# Copy frontend source to install directory (needed for rebuilds on Pi)
+mkdir -p "$INSTALL_DIR/frontend"
+cp -r "$PROJECT_DIR/frontend/src" "$INSTALL_DIR/frontend/src"
+cp "$PROJECT_DIR/frontend/package.json" "$INSTALL_DIR/frontend/"
+cp "$PROJECT_DIR/frontend/package-lock.json" "$INSTALL_DIR/frontend/" 2>/dev/null || true
+cp "$PROJECT_DIR/frontend/svelte.config.js" "$INSTALL_DIR/frontend/"
+cp "$PROJECT_DIR/frontend/vite.config.ts" "$INSTALL_DIR/frontend/"
+cp "$PROJECT_DIR/frontend/tsconfig.json" "$INSTALL_DIR/frontend/"
+cp "$PROJECT_DIR/frontend/postcss.config.js" "$INSTALL_DIR/frontend/"
+cp "$PROJECT_DIR/frontend/tailwind.config.js" "$INSTALL_DIR/frontend/"
+success "Frontend source files copied"
+
+cd "$INSTALL_DIR/frontend"
 npm install --silent 2>&1 | tail -1
 success "Node dependencies installed"
 
 npm run build 2>&1 | tail -1
-success "SvelteKit frontend built"
-
-# Copy build to install directory
-mkdir -p "$INSTALL_DIR/frontend"
-cp -r build/ "$INSTALL_DIR/frontend/build/"
-success "Frontend deployed to $INSTALL_DIR/frontend/build/"
+success "SvelteKit frontend built to $INSTALL_DIR/frontend/build/"
 
 cd "$PROJECT_DIR"
 
