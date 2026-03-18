@@ -64,11 +64,16 @@
 			mjpegUrl = urls.mjpeg || '';
 			proxyUrl = urls.proxy || '';
 
-			if (webrtcUrl) {
+			// Prefer direct MJPEG (lowest latency, most reliable).
+			// WebRTC is attempted only if no MJPEG URL is available.
+			if (mjpegUrl) {
+				streamMode = 'mjpeg-direct';
+				loading = false;
+			} else if (webrtcUrl) {
 				streamMode = 'webrtc';
 				await startWebRTC();
-			} else if (mjpegUrl) {
-				streamMode = 'mjpeg-direct';
+			} else if (proxyUrl) {
+				streamMode = 'mjpeg-proxy';
 				loading = false;
 			}
 			retryCount = 0;

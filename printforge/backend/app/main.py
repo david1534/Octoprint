@@ -95,11 +95,13 @@ app.include_router(filament.router)
 async def camera_stream_url(request: Request):
     """Return camera stream URLs for the frontend.
 
-    Provides WebRTC signaling (lowest latency), direct MJPEG, and proxy fallback.
+    Direct MJPEG from go2rtc is preferred (lowest latency, no proxy
+    overhead). The proxy fallback polls go2rtc snapshots for browsers
+    that can't reach go2rtc directly.
     """
     host = request.headers.get("host", "localhost").split(":")[0]
     return {
-        "webrtc": "/api/camera/webrtc",
+        "webrtc": "",
         "mjpeg": f"http://{host}:1984/api/stream.mjpeg?src=printer_cam",
         "proxy": "/api/camera/mjpeg",
     }
@@ -138,32 +140,28 @@ async def camera_webrtc_signaling(request: Request):
 
 @app.get("/api/camera/mjpeg")
 async def camera_mjpeg_proxy():
-    """Proxy camera as MJPEG by polling go2rtc snapshot endpoint.
+    """Proxy go2rtc's MJPEG stream to the browser.
 
-    go2rtc can decode H264 frames for snapshots but can't stream MJPEG
-    from an H264 source, so we poll frame.jpeg and build the multipart
-    MJPEG stream ourselves.
+    Streams directly from go2rtc's stream.mjpeg endpoint which is far
+    more efficient than polling individual snapshots — single long-lived
+    HTTP connection with frames pushed as they arrive from the camera.
     """
-    snapshot_url = f"{settings.camera_url}/api/frame.jpeg?src=printer_cam"
+    stream_url = f"{settings.camera_url}/api/stream.mjpeg?src=printer_cam"
 
     async def stream():
-        boundary = b"--frame\r\n"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-            while True:
-                try:
-                    resp = await client.get(snapshot_url)
-                    if resp.status_code == 200 and resp.content:
-                        yield boundary
-                        yield b"Content-Type: image/jpeg\r\n"
-                        yield f"Content-Length: {len(resp.content)}\r\n\r\n".encode()
-                        yield resp.content
-                        yield b"\r\n"
-                    # ~15 FPS for the fallback MJPEG stream
-                    await asyncio.sleep(0.066)
-                except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException):
-                    await asyncio.sleep(1.0)
-                except Exception:
-                    return
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=None, write=5.0, pool=5.0)
+        ) as client:
+            try:
+                async with client.stream("GET", stream_url) as resp:
+                    if resp.status_code != 200:
+                        return
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        yield chunk
+            except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException):
+                return
+            except Exception:
+                return
 
     return StreamingResponse(
         stream(),

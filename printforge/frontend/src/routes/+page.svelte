@@ -32,6 +32,9 @@
 		$files.slice(0, 3)
 	);
 
+	// Track status changes to refresh spool data after print ends
+	let lastStatus = $state('');
+
 	onMount(() => {
 		if ($isConnected) {
 			refreshFiles();
@@ -39,6 +42,20 @@
 		loadHealth();
 		loadActiveSpool();
 		loadFilamentWarnings();
+	});
+
+	// Refresh spool data when print finishes (filament deducted)
+	$effect(() => {
+		const currentStatus = state.status;
+		if (lastStatus && lastStatus !== currentStatus) {
+			const wasPrinting = lastStatus === 'printing' || lastStatus === 'finishing' || lastStatus === 'paused';
+			const nowDone = currentStatus === 'idle' || currentStatus === 'error';
+			if (wasPrinting && nowDone) {
+				loadActiveSpool();
+				loadFilamentWarnings();
+			}
+		}
+		lastStatus = currentStatus;
 	});
 
 	async function loadActiveSpool() {

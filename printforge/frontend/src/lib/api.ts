@@ -41,12 +41,20 @@ async function request<T>(path: string, options?: RequestInit & { timeout?: numb
 		});
 		if (!res.ok) {
 			const error = await res.json().catch(() => ({ detail: res.statusText }));
-			throw new Error(error.detail || `API error: ${res.status}`);
+			const detail = error.detail || `API error: ${res.status}`;
+			// Provide user-friendly messages for common HTTP errors
+			if (res.status === 404) throw new Error('Resource not found');
+			if (res.status === 503) throw new Error('Service unavailable. The server may be restarting.');
+			if (res.status === 500) throw new Error(`Internal Server Error: ${detail}`);
+			throw new Error(detail);
 		}
 		return res.json();
 	} catch (e: any) {
 		if (e.name === 'AbortError') {
 			throw new Error('Request timed out. Check your connection and try again.');
+		}
+		if (e.name === 'TypeError' && e.message?.includes('fetch')) {
+			throw new Error('Connection failed. Check your network and try again.');
 		}
 		throw e;
 	} finally {
