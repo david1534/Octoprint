@@ -2,7 +2,9 @@
 
 from pathlib import Path
 
-GCODE_DIR = Path("/home/pi/printforge/gcodes")
+from ..config import settings
+
+GCODE_DIR = Path(settings.gcode_dir)
 
 
 def ensure_gcode_dir() -> None:

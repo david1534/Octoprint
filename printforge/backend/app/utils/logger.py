@@ -5,7 +5,10 @@ from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
 
-def setup_file_logging(log_dir: str = "/home/pi/printforge/logs") -> None:
+def setup_file_logging(log_dir: str = "") -> None:
+    if not log_dir:
+        import os
+        log_dir = os.path.expanduser("~/printforge/logs")
     """Set up rotating file logs in addition to stdout."""
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)

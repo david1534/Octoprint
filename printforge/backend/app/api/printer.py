@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..config import settings
 from ..printer.controller import PrinterController
 
 router = APIRouter(prefix="/api/printer", tags=["printer"])
@@ -144,8 +145,11 @@ async def send_command(req: CommandRequest):
 async def start_print(req: PrintRequest):
     """Start printing a file."""
     ctrl = get_controller()
-    gcode_dir = Path("/home/pi/printforge/gcodes")
-    filepath = gcode_dir / req.filename
+    gcode_dir = Path(settings.gcode_dir)
+    filepath = (gcode_dir / req.filename).resolve()
+    # Prevent path traversal
+    if not str(filepath).startswith(str(gcode_dir.resolve())):
+        raise HTTPException(400, "Invalid path")
     if not filepath.exists():
         raise HTTPException(404, f"File not found: {req.filename}")
     await ctrl.start_print(filepath)
