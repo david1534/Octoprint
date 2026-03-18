@@ -91,7 +91,11 @@ class GcodeSender:
     def elapsed_seconds(self) -> float:
         if self._start_time is None:
             return 0.0
-        return time.time() - self._start_time - self._total_pause_duration
+        elapsed = time.time() - self._start_time - self._total_pause_duration
+        # Subtract ongoing pause duration if currently paused
+        if self._paused and self._pause_time:
+            elapsed -= time.time() - self._pause_time
+        return max(0.0, elapsed)
 
     @property
     def estimated_remaining(self) -> float:

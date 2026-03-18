@@ -108,6 +108,8 @@ class PrinterController:
 
     def _on_terminal_line(self, line: str, direction: str) -> None:
         """Called for every terminal line (sent or received)."""
+        if direction == "recv":
+            self._safety.record_serial_activity()
         self._notify_terminal(line, direction)
 
     def _on_position_line(self, line: str) -> None:
@@ -553,11 +555,13 @@ M117 Print Complete"""
             logger.exception("Error in post-print actions")
 
     async def _safety_loop(self) -> None:
-        """Periodic safety checks."""
+        """Periodic safety checks and print state updates."""
         try:
+            tick = 0
             while True:
-                await asyncio.sleep(5.0)
-                # Update print state
+                await asyncio.sleep(1.0)
+                tick += 1
+                # Update print state every second
                 if self._sender and self._sender.is_printing:
                     self.state.current_file = self._sender.current_file
                     self.state.print_progress = self._sender.progress
@@ -604,11 +608,12 @@ M117 Print Complete"""
 
                     self._notify_state_change()
 
-                # Serial watchdog
-                is_printing = self.state.status == PrinterStatus.PRINTING
-                alert = self._safety.check_serial_watchdog(is_printing)
-                if alert:
-                    self._handle_safety_alert(alert)
+                # Serial watchdog — check every 5 seconds
+                if tick % 5 == 0:
+                    is_printing = self.state.status == PrinterStatus.PRINTING
+                    alert = self._safety.check_serial_watchdog(is_printing)
+                    if alert:
+                        self._handle_safety_alert(alert)
 
         except asyncio.CancelledError:
             pass
