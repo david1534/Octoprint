@@ -563,7 +563,8 @@ M117 Print Complete"""
             while True:
                 await asyncio.sleep(1.0)
                 tick += 1
-                # Update print state every second
+
+                # --- Print state updates ---
                 if self._sender and self._sender.is_printing:
                     self.state.current_file = self._sender.current_file
                     self.state.print_progress = self._sender.progress
@@ -590,29 +591,84 @@ M117 Print Complete"""
                     self.state.total_layers = self._sender.total_layers
                     self.state.current_line = self._sender.current_line
                     self.state.total_lines = self._sender.total_lines
+                    self._notify_state_change()
 
-                    # Check if print completed
-                    if (
-                        self._sender._task
-                        and self._sender._task.done()
-                        and not self._sender._cancelled
-                    ):
-                        self.state.status = PrinterStatus.IDLE
-                        # Capture values before reset clears them
+                # --- Print completion / abort detection ---
+                # NOTE: This MUST be outside the is_printing guard above!
+                # is_printing returns False once the async task finishes, so
+                # checking for task.done() inside that block would never fire.
+                if (
+                    self._sender
+                    and self._sender._task
+                    and self._sender._task.done()
+                    and self.state.status
+                    in (PrinterStatus.PRINTING, PrinterStatus.PAUSED)
+                ):
+                    was_cancelled = self._sender._cancelled
+
+                    if not was_cancelled:
+                        # Normal completion — run end gcode and cleanup
+                        logger.info(
+                            "Print task completed, running post-print actions"
+                        )
+                        self.state.status = PrinterStatus.FINISHING
+                        self._notify_state_change()
                         _elapsed = self._sender.elapsed_seconds
                         _lines = self._sender.current_line
                         _filament = self._sender._filament_used_mm
                         self._sender.reset()
-                        # Post-print actions with captured data
-                        asyncio.create_task(
-                            self._on_print_complete(_elapsed, _lines, _filament)
+                        try:
+                            await self._on_print_complete(
+                                _elapsed, _lines, _filament
+                            )
+                        except Exception:
+                            logger.exception("Error in post-print actions")
+                        self.state.status = PrinterStatus.IDLE
+                    else:
+                        # Aborted due to consecutive failures or cancel
+                        logger.warning(
+                            "Print task aborted (cancelled=%s)", was_cancelled
+                        )
+                        # Record cancellation in history
+                        if self._current_job_id:
+                            from ..storage.models import complete_print_job
+
+                            try:
+                                await complete_print_job(
+                                    job_id=self._current_job_id,
+                                    status="failed",
+                                    duration_seconds=int(
+                                        self._sender.elapsed_seconds
+                                    ),
+                                    lines_printed=self._sender.current_line,
+                                    filament_used_mm=self._sender._filament_used_mm,
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Failed to record print abort"
+                                )
+                            self._current_job_id = None
+                            self._current_spool_id = None
+                        self._sender.reset()
+                        self.state.status = PrinterStatus.ERROR
+                        self.state.error_message = (
+                            "Print aborted: communication lost with printer"
                         )
 
+                    # Clear print state in both cases
+                    self.state.current_file = None
+                    self.state.print_progress = 0.0
+                    self.state.elapsed_seconds = 0.0
+                    self.state.estimated_remaining = 0.0
+                    self.state.current_layer = 0
+                    self.state.total_layers = 0
+                    self.state.current_line = 0
+                    self.state.total_lines = 0
                     self._notify_state_change()
 
-                # Serial watchdog — check every 5 seconds, but skip during
-                # start gcode since G28/G29/M109/M190 can block for minutes
-                # with no intermediate serial output.
+                # --- Serial watchdog — check every 5 seconds ---
+                # Skip during start gcode since G28/G29/M109/M190 can block
+                # for minutes with no intermediate serial output.
                 if tick % 5 == 0:
                     is_printing = self.state.status == PrinterStatus.PRINTING
                     in_start_gcode = (
@@ -626,14 +682,19 @@ M117 Print Complete"""
                         if alert:
                             self._handle_safety_alert(alert)
 
-                # Fallback temperature polling — if no temp data has been
-                # received (temps stuck at 0), periodically send M105.
+                # --- Fallback temperature polling ---
+                # If M155 auto-report isn't producing data, poll M105
+                # every 10 seconds. Checks if the last temp reading is
+                # stale (>15s old) or never received.
                 if tick % 10 == 0 and self._queue:
-                    if (
-                        self._temp_monitor.hotend.actual == 0.0
-                        and self._temp_monitor.bed.actual == 0.0
-                        and self._temp_monitor.hotend.timestamp == 0.0
-                    ):
+                    import time as _time
+
+                    last_temp_age = (
+                        _time.time() - self._temp_monitor.hotend.timestamp
+                        if self._temp_monitor.hotend.timestamp > 0
+                        else float("inf")
+                    )
+                    if last_temp_age > 15.0:
                         try:
                             await self._queue.enqueue(
                                 "M105", CommandPriority.SYSTEM

@@ -57,6 +57,7 @@ export const wsConnected = writable<boolean>(false);
 export const isConnected = derived(printerState, ($s) => $s.status !== 'disconnected');
 export const isPrinting = derived(printerState, ($s) => $s.status === 'printing');
 export const isPaused = derived(printerState, ($s) => $s.status === 'paused');
+export const isFinishing = derived(printerState, ($s) => $s.status === 'finishing');
 export const hasError = derived(printerState, ($s) => $s.status === 'error');
 export const statusBadge = derived(printerState, ($s) => {
 	const map: Record<string, string> = {

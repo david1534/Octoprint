@@ -192,10 +192,24 @@ async def camera_snapshot():
     return JSONResponse({"error": "Camera unavailable"}, status_code=503)
 
 
-# Serve built frontend (static files) — MUST be last, catches all routes
+# Serve built frontend — MUST be last, catches all routes.
+# Uses a custom SPAStaticFiles class that returns index.html for unknown
+# paths instead of 404, enabling SvelteKit client-side routing to work
+# when the user refreshes on /control, /files, etc.
 frontend_dir = Path(__file__).parent.parent / "frontend" / "build"
 if frontend_dir.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+
+    class SPAStaticFiles(StaticFiles):
+        """StaticFiles with SPA fallback — serves index.html for unknown paths."""
+
+        async def get_response(self, path: str, scope) -> Response:
+            try:
+                return await super().get_response(path, scope)
+            except Exception:
+                # Path not found as a static file — serve SPA entry point
+                return await super().get_response("index.html", scope)
+
+    app.mount("/", SPAStaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 else:
     logger.warning(
         "Frontend build not found at %s. Run 'npm run build' in frontend/",

@@ -6,7 +6,7 @@
 	import PrintProgress from '$lib/components/PrintProgress.svelte';
 	import PreheatPresets from '$lib/components/PreheatPresets.svelte';
 	import PrintStartDialog from '$lib/components/PrintStartDialog.svelte';
-	import { printerState, isConnected, isPrinting, isPaused } from '$lib/stores/printer';
+	import { printerState, isConnected, isPrinting, isPaused, isFinishing } from '$lib/stores/printer';
 	import { files, refreshFiles } from '$lib/stores/files';
 	import { api } from '$lib/api';
 	import { toast } from '$lib/stores/toast';
@@ -17,6 +17,7 @@
 	let connected = $derived($isConnected);
 	let printing = $derived($isPrinting);
 	let paused = $derived($isPaused);
+	let finishing = $derived($isFinishing);
 	let loading = $state('');
 	let health = $state<any>(null);
 	let activeSpool = $state<any>(null);
@@ -170,6 +171,19 @@
 	</div>
 {:else}
 	<div class="space-y-4 fade-in">
+		<!-- Finishing state banner -->
+		{#if finishing}
+			<div class="card bg-gradient-to-r from-surface-900 to-surface-800/50 border-accent/20">
+				<div class="flex items-center gap-3 py-2">
+					<span class="animate-spin rounded-full h-5 w-5 border-2 border-accent/30 border-t-accent"></span>
+					<div>
+						<h3 class="text-sm font-semibold text-surface-200">Finishing Print</h3>
+						<p class="text-xs text-surface-400">Running end G-code, cooling down...</p>
+					</div>
+				</div>
+			</div>
+		{/if}
+
 		<!-- Print Status Hero (when printing/paused) -->
 		{#if printing || paused}
 			<div class="card bg-gradient-to-r from-surface-900 to-surface-800/50 border-accent/20">
@@ -316,7 +330,7 @@
 		{/if}
 
 		<!-- Quick Actions Row (when idle) -->
-		{#if !printing && !paused}
+		{#if !printing && !paused && !finishing}
 			<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
 				<!-- Quick Print -->
 				<div class="card">

@@ -194,6 +194,9 @@ class GcodeSender:
                 self._in_start_gcode = False
                 logger.info("Start G-code complete, streaming file...")
 
+            consecutive_failures = 0
+            max_consecutive_failures = 10
+
             with open(filepath, "r") as f:
                 for line in f:
                     if self._cancelled:
@@ -236,12 +239,25 @@ class GcodeSender:
                     # Wait for command to complete before sending next
                     result: CommandResult = await future
                     if not result.ok:
+                        consecutive_failures += 1
                         logger.error(
-                            "Print command failed at line %d: %s -> %s",
+                            "Print command failed at line %d (%d consecutive): %s -> %s",
                             self._current_line,
+                            consecutive_failures,
                             stripped,
                             result.error,
                         )
+                        if consecutive_failures >= max_consecutive_failures:
+                            logger.critical(
+                                "Aborting print: %d consecutive command failures — "
+                                "printer may be disconnected",
+                                consecutive_failures,
+                            )
+                            self._cancelled = True
+                            await self._on_cancel()
+                            return
+                    else:
+                        consecutive_failures = 0
                     self._current_line += 1
 
                     # Track filament usage from E values
