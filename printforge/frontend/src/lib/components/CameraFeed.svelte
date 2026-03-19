@@ -24,8 +24,8 @@
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
 	let fps = $state(0);
 	let frameTimestamps: number[] = [];
-	const POLL_INTERVAL = 100; // ms between snapshot fetches (~10fps baseline)
-	const FAST_POLL_INTERVAL = 67; // ms for higher quality mode (~15fps)
+	const POLL_INTERVAL = 0; // no artificial delay — next fetch starts as soon as current completes
+	const FAST_POLL_INTERVAL = 0;
 	let currentInterval = POLL_INTERVAL;
 	let fetchInFlight = false; // prevents overlapping fetches
 
@@ -81,6 +81,10 @@
 
 	function switchMode(mode: StreamMode) {
 		stopPolling();
+		// Clear retry timer to prevent stale retries from interfering
+		if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+		// Clear MJPEG img src to force browser to close the stream connection
+		if (imgEl) imgEl.src = '';
 		streamMode = mode;
 		error = '';
 		loading = true;
@@ -132,8 +136,12 @@
 
 		// Use fetch + createImageBitmap for off-thread decode (faster than new Image())
 		const url = `${snapshotUrl}?t=${Date.now()}`;
+		// Include auth header so snapshots work when API key is configured
+		const headers: Record<string, string> = {};
+		const apiKey = typeof localStorage !== 'undefined' ? localStorage.getItem('printforge:apiKey') : null;
+		if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-		fetch(url)
+		fetch(url, { headers })
 			.then(r => {
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				return r.blob();

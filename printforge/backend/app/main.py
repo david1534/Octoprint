@@ -14,6 +14,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .api import (
     filament,
@@ -108,6 +110,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# GZip compression for JSON API responses (reduces bandwidth on Pi WiFi).
+# Skips camera paths to avoid compressing JPEG/MJPEG binary data which
+# wastes CPU (significant on Pi) for negligible size reduction.
+
+
+class SelectiveGZipMiddleware:
+    """GZip middleware that skips binary camera endpoints."""
+
+    def __init__(self, app: ASGIApp, minimum_size: int = 500):
+        self._gzip = GZipMiddleware(app, minimum_size=minimum_size)
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] == "http":
+            path = scope.get("path", "")
+            # Skip GZip for camera endpoints (binary JPEG/MJPEG)
+            if path.startswith("/api/camera/"):
+                await self._app(scope, receive, send)
+                return
+        await self._gzip(scope, receive, send)
+
+
+app.add_middleware(SelectiveGZipMiddleware, minimum_size=500)
+
 # API key auth middleware (enforces auth when a key is configured)
 app.add_middleware(APIKeyMiddleware)
 
@@ -157,11 +183,7 @@ async def camera_webrtc_signaling(request: Request):
             resp = await client.post(
                 upstream,
                 content=body,
-                headers={
-                    "Content-Type": request.headers.get(
-                        "content-type", "application/sdp"
-                    )
-                },
+                headers={"Content-Type": request.headers.get("content-type", "application/sdp")},
             )
             # Return raw SDP text — NOT JSONResponse which would
             # JSON-encode the string (adding quotes), breaking WebRTC.
@@ -181,33 +203,47 @@ async def camera_webrtc_signaling(request: Request):
 async def camera_mjpeg_proxy():
     """Proxy go2rtc's MJPEG stream to the browser.
 
-    Reads frame boundaries from the MJPEG stream and yields complete
-    frames to avoid partial-frame stalls in the browser.
+    Connects to go2rtc first to read the real Content-Type header
+    (which contains the correct multipart boundary), then streams
+    raw bytes through to the browser.
     """
     stream_url = f"{settings.camera_url}/api/stream.mjpeg?src=printer_cam"
 
+    # Use a dedicated client per MJPEG stream (the stream is long-lived
+    # and must be closed independently of other requests)
+    client = httpx.AsyncClient(timeout=httpx.Timeout(connect=3.0, read=None, write=5.0, pool=5.0))
+
+    try:
+        resp = await client.send(
+            client.build_request("GET", stream_url),
+            stream=True,
+        )
+    except (httpx.ConnectError, httpx.TimeoutException):
+        await client.aclose()
+        return JSONResponse(content={"error": "Camera unavailable"}, status_code=503)
+
+    if resp.status_code != 200:
+        await resp.aclose()
+        await client.aclose()
+        return JSONResponse(content={"error": "Camera unavailable"}, status_code=503)
+
+    # Pass through the exact Content-Type from go2rtc so the browser
+    # sees the correct multipart boundary string.
+    content_type = resp.headers.get("content-type", "multipart/x-mixed-replace; boundary=frame")
+
     async def stream():
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=3.0, read=None, write=5.0, pool=5.0)
-        ) as client:
-            try:
-                async with client.stream("GET", stream_url) as resp:
-                    if resp.status_code != 200:
-                        return
-                    # Stream raw bytes — the upstream already sends proper
-                    # multipart MJPEG with boundaries. We use small chunks
-                    # (8KB) to reduce buffering latency while still being
-                    # efficient.
-                    async for chunk in resp.aiter_bytes(chunk_size=8192):
-                        yield chunk
-            except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException):
-                return
-            except Exception:
-                return
+        try:
+            async for chunk in resp.aiter_bytes(chunk_size=8192):
+                yield chunk
+        except (httpx.ReadError, httpx.TimeoutException, asyncio.CancelledError):
+            pass
+        finally:
+            await resp.aclose()
+            await client.aclose()
 
     return StreamingResponse(
         stream(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
+        media_type=content_type,
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
@@ -268,9 +304,7 @@ if frontend_dir.exists():
                 # Path not found as a static file — serve SPA entry point
                 return await super().get_response("index.html", scope)
 
-    app.mount(
-        "/", SPAStaticFiles(directory=str(frontend_dir), html=True), name="frontend"
-    )
+    app.mount("/", SPAStaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 else:
     logger.warning(
         "Frontend build not found at %s. Run 'npm run build' in frontend/",

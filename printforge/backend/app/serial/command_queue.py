@@ -43,6 +43,8 @@ class CommandQueue:
         self._protocol = protocol
         self._queue: asyncio.PriorityQueue[QueuedCommand] = asyncio.PriorityQueue()
         self._paused = False
+        self._pause_event = asyncio.Event()
+        self._pause_event.set()  # Start unpaused
         self._processing = False
         self._task: Optional[asyncio.Task] = None
 
@@ -63,10 +65,12 @@ class CommandQueue:
 
     def pause(self) -> None:
         self._paused = True
+        self._pause_event.clear()
         logger.info("Command queue paused")
 
     def resume(self) -> None:
         self._paused = False
+        self._pause_event.set()
         logger.info("Command queue resumed")
 
     async def clear(self) -> None:
@@ -81,10 +85,21 @@ class CommandQueue:
                 break
         logger.info("Cleared %d commands from queue", cleared)
 
-    async def enqueue(self, command: str, priority: CommandPriority = CommandPriority.USER, with_checksum: bool = False) -> asyncio.Future:
-        loop = asyncio.get_event_loop()
+    async def enqueue(
+        self,
+        command: str,
+        priority: CommandPriority = CommandPriority.USER,
+        with_checksum: bool = False,
+    ) -> asyncio.Future:
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
-        queued = QueuedCommand(priority=priority, timestamp=time.monotonic(), command=command, with_checksum=with_checksum, future=future)
+        queued = QueuedCommand(
+            priority=priority,
+            timestamp=time.monotonic(),
+            command=command,
+            with_checksum=with_checksum,
+            future=future,
+        )
         await self._queue.put(queued)
         return future
 
@@ -98,11 +113,15 @@ class CommandQueue:
             except asyncio.CancelledError:
                 break
             if self._paused and queued.priority == CommandPriority.PRINT:
+                # Put the print command back and wait for resume instead
+                # of busy-looping (saves CPU during long pauses)
                 await self._queue.put(queued)
-                await asyncio.sleep(0.1)
+                await self._pause_event.wait()
                 continue
             try:
-                result = await self._protocol.send_command(queued.command, with_checksum=queued.with_checksum)
+                result = await self._protocol.send_command(
+                    queued.command, with_checksum=queued.with_checksum
+                )
                 if queued.future and not queued.future.done():
                     queued.future.set_result(result)
             except asyncio.CancelledError:
@@ -112,5 +131,7 @@ class CommandQueue:
             except Exception as e:
                 logger.exception("Error processing command: %s", queued.command)
                 if queued.future and not queued.future.done():
-                    queued.future.set_result(CommandResult(command=queued.command, ok=False, error=str(e)))
+                    queued.future.set_result(
+                        CommandResult(command=queued.command, ok=False, error=str(e))
+                    )
         logger.info("Command processing loop stopped")

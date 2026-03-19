@@ -8,6 +8,8 @@ the API layer.
 import asyncio
 import glob
 import logging
+import re
+import time as _time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -23,6 +25,9 @@ from ..services.timelapse import TimelapseRecorder
 from .state import PrinterState, PrinterStatus
 
 logger = logging.getLogger(__name__)
+
+# Pre-compiled regex for position parsing (called on every M114 response)
+_POSITION_RE = re.compile(r"X:([\d.-]+)\s*Y:([\d.-]+)\s*Z:([\d.-]+)")
 
 
 class PrinterController:
@@ -150,9 +155,7 @@ class PrinterController:
 
     def _on_position_line(self, line: str) -> None:
         """Called when position report is received."""
-        import re
-
-        match = re.search(r"X:([\d.-]+)\s*Y:([\d.-]+)\s*Z:([\d.-]+)", line)
+        match = _POSITION_RE.search(line)
         if match:
             self.state.x = float(match.group(1))
             self.state.y = float(match.group(2))
@@ -844,8 +847,6 @@ M117 Print Complete"""
                 # every 10 seconds. Checks if the last temp reading is
                 # stale (>15s old) or never received.
                 if tick % 10 == 0 and self._queue:
-                    import time as _time
-
                     last_temp_age = (
                         _time.time() - self._temp_monitor.hotend.timestamp
                         if self._temp_monitor.hotend.timestamp > 0

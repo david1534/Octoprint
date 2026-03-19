@@ -2,7 +2,7 @@
  * Printer state store - receives real-time updates via WebSocket.
  */
 
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { wsManager } from '../websocket';
 import { toast } from './toast';
 
@@ -97,9 +97,13 @@ export const statusBadge = derived(printerState, ($s) => {
 // Print completion detection
 let previousStatus = 'disconnected';
 
+// Reuse a single AudioContext to avoid hitting browser instance limits
+let _audioCtx: AudioContext | null = null;
+
 function playCompletionBeep() {
 	try {
-		const ctx = new AudioContext();
+		if (!_audioCtx) _audioCtx = new AudioContext();
+		const ctx = _audioCtx;
 		const osc = ctx.createOscillator();
 		const gain = ctx.createGain();
 		osc.connect(gain);
@@ -134,9 +138,8 @@ export function initPrinterStore(): void {
 		const wasPrinting = previousStatus === 'printing' || previousStatus === 'finishing';
 		const nowIdle = data.status === 'idle';
 		if (wasPrinting && nowIdle) {
-			// Get the filename from previous state before updating
-			let filename: string | null = null;
-			printerState.subscribe((s) => { filename = s.print.file; })();
+			// Read current filename before overwriting with new state
+			const filename = get(printerState).print.file;
 			notifyPrintComplete(filename);
 		}
 		previousStatus = data.status;
@@ -146,7 +149,10 @@ export function initPrinterStore(): void {
 	wsManager.on('_connection', (data: { connected: boolean }) => {
 		wsConnected.set(data.connected);
 		if (!data.connected) {
-			printerState.update((s) => ({ ...s, status: 'disconnected' }));
+			// Reset to default state on disconnect to avoid showing stale
+			// temperatures/progress that could mislead the user into thinking
+			// the printer is in a safe state when it may not be
+			printerState.set({ ...defaultState });
 		}
 	});
 }

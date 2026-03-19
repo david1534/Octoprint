@@ -87,8 +87,7 @@ class CameraService:
             },
             "device": {
                 "path": self._camera_device,
-                "exists": self._camera_device is not None
-                and Path(self._camera_device).exists(),
+                "exists": self._camera_device is not None and Path(self._camera_device).exists(),
             },
             "captureChain": self._describe_chain(),
         }
@@ -169,6 +168,7 @@ class CameraService:
             "5",
             "-",
         ]
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -179,8 +179,16 @@ class CameraService:
             if proc.returncode == 0 and len(stdout) > 100:
                 return stdout
         except asyncio.TimeoutError:
+            # Kill the subprocess to avoid orphaned ffmpeg processes that
+            # could hold the V4L2 device lock on the Pi
+            if proc:
+                proc.kill()
+                await proc.wait()
             logger.debug("ffmpeg snapshot timed out")
         except Exception:
+            if proc and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
             logger.debug("ffmpeg snapshot error", exc_info=True)
         return None
 
@@ -197,6 +205,7 @@ class CameraService:
             "85",
             "-",  # output to stdout
         ]
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -207,8 +216,14 @@ class CameraService:
             if proc.returncode == 0 and len(stdout) > 100:
                 return stdout
         except asyncio.TimeoutError:
+            if proc:
+                proc.kill()
+                await proc.wait()
             logger.debug("fswebcam snapshot timed out")
         except Exception:
+            if proc and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
             logger.debug("fswebcam snapshot error", exc_info=True)
         return None
 

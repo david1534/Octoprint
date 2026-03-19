@@ -3,6 +3,7 @@
 Serves completed timelapse videos and provides recording control.
 """
 
+import mimetypes
 import os
 from pathlib import Path
 from typing import Optional
@@ -38,10 +39,8 @@ async def list_timelapses():
     """List all timelapse videos with thumbnails."""
     _ensure_dir()
     videos = []
-    for f in sorted(
-        TIMELAPSE_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True
-    ):
-        if f.suffix.lower() in (".mp4", ".mkv", ".webm") and not f.name.endswith(
+    for f in sorted(TIMELAPSE_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        if f.suffix.lower() in (".mp4", ".mkv", ".webm", ".zip") and not f.name.endswith(
             ".thumb.jpg"
         ):
             stat = f.stat()
@@ -61,21 +60,21 @@ async def list_timelapses():
 async def get_video(filename: str):
     """Stream a timelapse video file."""
     filepath = (TIMELAPSE_DIR / filename).resolve()
-    if not str(filepath).startswith(str(TIMELAPSE_DIR.resolve())):
+    if not filepath.is_relative_to(TIMELAPSE_DIR.resolve()):
         raise HTTPException(400, "Invalid filename")
     if not filepath.exists():
         raise HTTPException(404, "Video not found")
-    return FileResponse(filepath, media_type="video/mp4")
+    # Derive correct media type from extension (not always mp4)
+    media_type = mimetypes.guess_type(str(filepath))[0] or "video/mp4"
+    return FileResponse(filepath, media_type=media_type)
 
 
 @router.get("/thumbnail/{filename}")
 async def get_thumbnail(filename: str):
     """Get a timelapse thumbnail image."""
-    thumb_name = (
-        filename + ".thumb.jpg" if not filename.endswith(".thumb.jpg") else filename
-    )
+    thumb_name = filename + ".thumb.jpg" if not filename.endswith(".thumb.jpg") else filename
     filepath = (TIMELAPSE_DIR / thumb_name).resolve()
-    if not str(filepath).startswith(str(TIMELAPSE_DIR.resolve())):
+    if not filepath.is_relative_to(TIMELAPSE_DIR.resolve()):
         raise HTTPException(400, "Invalid filename")
     if not filepath.exists():
         raise HTTPException(404, "Thumbnail not found")
@@ -86,7 +85,7 @@ async def get_thumbnail(filename: str):
 async def delete_timelapse(filename: str):
     """Delete a timelapse video and its thumbnail."""
     filepath = (TIMELAPSE_DIR / filename).resolve()
-    if not str(filepath).startswith(str(TIMELAPSE_DIR.resolve())):
+    if not filepath.is_relative_to(TIMELAPSE_DIR.resolve()):
         raise HTTPException(400, "Invalid filename")
     if not filepath.exists():
         raise HTTPException(404, "Video not found")

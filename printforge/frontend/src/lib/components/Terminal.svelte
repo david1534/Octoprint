@@ -24,8 +24,8 @@
 		{ label: 'Temps', cmd: 'M105', desc: 'Report temperatures' },
 	];
 
-	// Filter lines based on search
-	let displayLines = $derived(() => {
+	// Filter lines based on search (use $derived.by for computed arrays)
+	let displayLines = $derived.by(() => {
 		if (!searchQuery.trim()) return $terminalLines;
 		const q = searchQuery.toLowerCase();
 		return $terminalLines.filter(l => l.text.toLowerCase().includes(q));
@@ -105,10 +105,21 @@
 		}
 	}
 
+	function escapeHtml(text: string): string {
+		return text
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;');
+	}
+
 	function highlightMatch(text: string): string {
-		if (!searchQuery.trim()) return text;
+		// Sanitize terminal output first to prevent XSS from malicious
+		// printer responses (e.g. firmware sending HTML in error messages)
+		const safe = escapeHtml(text);
+		if (!searchQuery.trim()) return safe;
 		const q = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		return text.replace(new RegExp(`(${q})`, 'gi'), '<mark class="bg-amber-500/30 text-amber-200 rounded px-0.5">$1</mark>');
+		return safe.replace(new RegExp(`(${q})`, 'gi'), '<mark class="bg-amber-500/30 text-amber-200 rounded px-0.5">$1</mark>');
 	}
 </script>
 
@@ -175,7 +186,7 @@
 			/>
 			{#if searchQuery}
 				<span class="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-surface-500">
-					{displayLines().length} matches
+					{displayLines.length} matches
 				</span>
 			{/if}
 		</div>
@@ -203,7 +214,7 @@
 		bind:this={container}
 		class="flex-1 bg-surface-950 rounded-lg p-3 font-mono text-xs overflow-y-auto min-h-[200px] max-h-[600px]"
 	>
-		{#each displayLines() as line}
+		{#each displayLines as line}
 			<div class={lineColor(line.direction)}>
 				<span class="opacity-50 select-none">{linePrefix(line.direction)}</span>{@html highlightMatch(line.text)}
 			</div>

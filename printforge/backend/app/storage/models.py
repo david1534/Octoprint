@@ -1,9 +1,18 @@
 """Database models and queries for print history and settings."""
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 
 from .database import get_db
+
+# ── In-memory settings cache ──────────────────────────────────────
+# Settings rarely change but are read frequently (every print start,
+# safety loop, etc.). This cache eliminates redundant SQLite queries.
+# Invalidated on every set_setting() call.
+_settings_cache: dict[str, str] = {}
+_settings_cache_loaded = False
+_settings_lock = asyncio.Lock()
 
 
 async def create_print_job(
@@ -67,32 +76,49 @@ async def get_print_history(limit: int = 50) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+async def _ensure_settings_cache() -> None:
+    """Load all settings into the in-memory cache if not already loaded.
+
+    Uses an asyncio.Lock to prevent concurrent first-load races where
+    a set_setting() could be silently reverted by a stale load.
+    """
+    global _settings_cache, _settings_cache_loaded
+    if _settings_cache_loaded:
+        return
+    async with _settings_lock:
+        # Double-check after acquiring lock
+        if _settings_cache_loaded:
+            return
+        db = await get_db()
+        cursor = await db.execute("SELECT key, value FROM settings")
+        rows = await cursor.fetchall()
+        _settings_cache = {row["key"]: row["value"] for row in rows}
+        _settings_cache_loaded = True
+
+
 async def get_setting(key: str, default: str = "") -> str:
-    """Get a setting value."""
-    db = await get_db()
-    cursor = await db.execute(
-        "SELECT value FROM settings WHERE key = ?", (key,)
-    )
-    row = await cursor.fetchone()
-    return row["value"] if row else default
+    """Get a setting value (cached — avoids DB hit on repeated reads)."""
+    await _ensure_settings_cache()
+    return _settings_cache.get(key, default)
 
 
 async def set_setting(key: str, value: str) -> None:
-    """Set a setting value."""
+    """Set a setting value (writes through to DB and updates cache)."""
+    global _settings_cache
     db = await get_db()
     await db.execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
         (key, value),
     )
     await db.commit()
+    # Update cache immediately
+    _settings_cache[key] = value
 
 
 async def get_all_settings() -> dict:
-    """Get all settings as a dict."""
-    db = await get_db()
-    cursor = await db.execute("SELECT key, value FROM settings")
-    rows = await cursor.fetchall()
-    return {row["key"]: row["value"] for row in rows}
+    """Get all settings as a dict (cached)."""
+    await _ensure_settings_cache()
+    return dict(_settings_cache)
 
 
 # ── Filament spool management ──────────────────────────────────
@@ -121,9 +147,7 @@ async def create_spool(
 async def get_spools() -> list[dict]:
     """Get all filament spools."""
     db = await get_db()
-    cursor = await db.execute(
-        "SELECT * FROM filament_spools ORDER BY active DESC, name ASC"
-    )
+    cursor = await db.execute("SELECT * FROM filament_spools ORDER BY active DESC, name ASC")
     rows = await cursor.fetchall()
     return [dict(row) for row in rows]
 
@@ -131,9 +155,7 @@ async def get_spools() -> list[dict]:
 async def get_active_spool() -> Optional[dict]:
     """Get the currently active spool."""
     db = await get_db()
-    cursor = await db.execute(
-        "SELECT * FROM filament_spools WHERE active = 1 LIMIT 1"
-    )
+    cursor = await db.execute("SELECT * FROM filament_spools WHERE active = 1 LIMIT 1")
     row = await cursor.fetchone()
     return dict(row) if row else None
 
@@ -141,9 +163,7 @@ async def get_active_spool() -> Optional[dict]:
 async def get_spool(spool_id: int) -> Optional[dict]:
     """Get a specific spool by ID."""
     db = await get_db()
-    cursor = await db.execute(
-        "SELECT * FROM filament_spools WHERE id = ?", (spool_id,)
-    )
+    cursor = await db.execute("SELECT * FROM filament_spools WHERE id = ?", (spool_id,))
     row = await cursor.fetchone()
     return dict(row) if row else None
 
@@ -155,9 +175,7 @@ async def update_spool(spool_id: int, **kwargs) -> None:
     db = await get_db()
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     values = list(kwargs.values()) + [spool_id]
-    await db.execute(
-        f"UPDATE filament_spools SET {sets} WHERE id = ?", values
-    )
+    await db.execute(f"UPDATE filament_spools SET {sets} WHERE id = ?", values)
     await db.commit()
 
 
@@ -165,9 +183,7 @@ async def set_active_spool(spool_id: int) -> None:
     """Set a spool as active (deactivates all others)."""
     db = await get_db()
     await db.execute("UPDATE filament_spools SET active = 0")
-    await db.execute(
-        "UPDATE filament_spools SET active = 1 WHERE id = ?", (spool_id,)
-    )
+    await db.execute("UPDATE filament_spools SET active = 1 WHERE id = ?", (spool_id,))
     await db.commit()
 
 

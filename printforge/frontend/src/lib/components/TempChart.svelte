@@ -1,7 +1,29 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { tempHistory, type TempPoint } from '../stores/temperature';
-	import Chart from 'chart.js/auto';
+	// Tree-shaken Chart.js imports (~30KB gzipped savings vs chart.js/auto)
+	import {
+		Chart,
+		LineController,
+		LineElement,
+		PointElement,
+		LinearScale,
+		CategoryScale,
+		Legend,
+		Filler,
+		Tooltip
+	} from 'chart.js';
+
+	Chart.register(
+		LineController,
+		LineElement,
+		PointElement,
+		LinearScale,
+		CategoryScale,
+		Legend,
+		Filler,
+		Tooltip
+	);
 
 	let canvas: HTMLCanvasElement;
 	let chart: Chart | null = null;
@@ -84,17 +106,53 @@
 		});
 	}
 
+	let lastHistoryLen = 0;
+
 	function updateChart(history: TempPoint[]) {
 		if (!chart) return;
-		const labels = history.map((p) => {
-			const d = new Date(p.time * 1000);
-			return `${d.getMinutes()}:${d.getSeconds().toString().padStart(2, '0')}`;
-		});
-		chart.data.labels = labels;
-		chart.data.datasets[0].data = history.map((p) => p.hotendActual);
-		chart.data.datasets[1].data = history.map((p) => p.hotendTarget);
-		chart.data.datasets[2].data = history.map((p) => p.bedActual);
-		chart.data.datasets[3].data = history.map((p) => p.bedTarget);
+		const len = history.length;
+
+		if (len === 0) {
+			// Reset chart on clear
+			chart.data.labels = [];
+			for (const ds of chart.data.datasets) ds.data = [];
+			lastHistoryLen = 0;
+			chart.update('none');
+			return;
+		}
+
+		// Incremental update: only process new points instead of
+		// rebuilding all 4 arrays (O(1) amortized vs O(n) per tick)
+		if (len > lastHistoryLen && lastHistoryLen > 0) {
+			const newPoints = history.slice(lastHistoryLen);
+			const labels = chart.data.labels as string[];
+			for (const p of newPoints) {
+				const d = new Date(p.time * 1000);
+				labels.push(`${d.getMinutes()}:${d.getSeconds().toString().padStart(2, '0')}`);
+				(chart.data.datasets[0].data as number[]).push(p.hotendActual);
+				(chart.data.datasets[1].data as number[]).push(p.hotendTarget);
+				(chart.data.datasets[2].data as number[]).push(p.bedActual);
+				(chart.data.datasets[3].data as number[]).push(p.bedTarget);
+			}
+			// Trim to match history length (handles the rolling window)
+			const excess = labels.length - len;
+			if (excess > 0) {
+				labels.splice(0, excess);
+				for (const ds of chart.data.datasets) (ds.data as number[]).splice(0, excess);
+			}
+		} else {
+			// Full rebuild on first load or history reset
+			chart.data.labels = history.map((p) => {
+				const d = new Date(p.time * 1000);
+				return `${d.getMinutes()}:${d.getSeconds().toString().padStart(2, '0')}`;
+			});
+			chart.data.datasets[0].data = history.map((p) => p.hotendActual);
+			chart.data.datasets[1].data = history.map((p) => p.hotendTarget);
+			chart.data.datasets[2].data = history.map((p) => p.bedActual);
+			chart.data.datasets[3].data = history.map((p) => p.bedTarget);
+		}
+
+		lastHistoryLen = len;
 		chart.update('none');
 	}
 

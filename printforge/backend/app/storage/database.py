@@ -1,4 +1,5 @@
 """SQLite database management for print history and settings."""
+
 from __future__ import annotations
 
 import logging
@@ -10,7 +11,9 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-_data_dir = os.environ.get("PRINTFORGE_DATA_DIR", os.path.expanduser("~/printforge/data"))
+_data_dir = os.environ.get(
+    "PRINTFORGE_DATA_DIR", os.path.expanduser("~/printforge/data")
+)
 DB_PATH = Path(_data_dir) / "printforge.db"
 
 _db: aiosqlite.Connection | None = None
@@ -22,6 +25,11 @@ async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     _db = await aiosqlite.connect(str(DB_PATH))
     _db.row_factory = aiosqlite.Row
+
+    # Enable WAL mode for concurrent reads during writes (significant
+    # performance improvement on Raspberry Pi with slow SD cards).
+    await _db.execute("PRAGMA journal_mode=WAL")
+    await _db.execute("PRAGMA busy_timeout=5000")
 
     await _db.executescript("""
         CREATE TABLE IF NOT EXISTS print_jobs (

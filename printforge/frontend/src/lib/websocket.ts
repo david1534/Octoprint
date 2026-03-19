@@ -14,6 +14,11 @@ class WebSocketManager {
 	private maxReconnectDelay = 30000;
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private _connected = false;
+	// Client-side heartbeat: detect dead connections faster than TCP timeout
+	private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+	private lastMessageAt = 0;
+	private readonly heartbeatInterval = 5000; // check every 5s
+	private readonly heartbeatTimeout = 15000; // force reconnect if no message in 15s
 
 	get connected(): boolean {
 		return this._connected;
@@ -42,11 +47,14 @@ class WebSocketManager {
 			this.ws.onopen = () => {
 				this._connected = true;
 				this.reconnectAttempt = 0;
+				this.lastMessageAt = Date.now();
+				this.startHeartbeat();
 				this.dispatch('_connection', { connected: true });
 			};
 
 			this.ws.onclose = () => {
 				this._connected = false;
+				this.stopHeartbeat();
 				this.dispatch('_connection', { connected: false });
 				this.scheduleReconnect();
 			};
@@ -56,6 +64,7 @@ class WebSocketManager {
 			};
 
 			this.ws.onmessage = (event) => {
+				this.lastMessageAt = Date.now();
 				try {
 					const msg = JSON.parse(event.data);
 					if (msg.type) {
@@ -79,6 +88,7 @@ class WebSocketManager {
 	}
 
 	private cleanup(): void {
+		this.stopHeartbeat();
 		if (this.ws) {
 			this.ws.onopen = null;
 			this.ws.onclose = null;
@@ -127,6 +137,31 @@ class WebSocketManager {
 					console.error(`WebSocket handler error for '${type}':`, e);
 				}
 			}
+		}
+	}
+
+	private startHeartbeat(): void {
+		this.stopHeartbeat();
+		this.heartbeatTimer = setInterval(() => {
+			if (!this._connected) return;
+			const elapsed = Date.now() - this.lastMessageAt;
+			if (elapsed > this.heartbeatTimeout) {
+				// No message received in heartbeatTimeout — connection is
+				// likely dead but TCP hasn't noticed yet. Force reconnect.
+				console.warn(`WebSocket heartbeat timeout (${elapsed}ms), forcing reconnect`);
+				this.cleanup();
+				this.scheduleReconnect();
+			} else if (elapsed > this.heartbeatInterval) {
+				// Send a ping to keep the connection alive and elicit a pong
+				this.send({ type: 'ping' });
+			}
+		}, this.heartbeatInterval);
+	}
+
+	private stopHeartbeat(): void {
+		if (this.heartbeatTimer) {
+			clearInterval(this.heartbeatTimer);
+			this.heartbeatTimer = null;
 		}
 	}
 

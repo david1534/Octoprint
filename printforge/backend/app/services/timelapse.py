@@ -83,9 +83,7 @@ class TimelapseRecorder:
         self._enabled = await get_setting("timelapse_enabled", "true") == "true"
         self._capture_mode = await get_setting("timelapse_capture_mode", "on_layer")
         try:
-            self._capture_interval = float(
-                await get_setting("timelapse_interval", "10")
-            )
+            self._capture_interval = float(await get_setting("timelapse_interval", "10"))
         except ValueError:
             self._capture_interval = 10.0
         try:
@@ -173,7 +171,9 @@ class TimelapseRecorder:
 
         frame_path = self._frames_dir / f"frame_{self._frame_count:06d}.jpg"
         try:
-            frame_path.write_bytes(snapshot)
+            # Write in a thread to avoid blocking the event loop on slow
+            # SD cards (Raspberry Pi)
+            await asyncio.to_thread(frame_path.write_bytes, snapshot)
             self._frame_count += 1
             if self._frame_count % 10 == 0:
                 logger.debug("Timelapse frame %d captured", self._frame_count)
@@ -205,10 +205,8 @@ class TimelapseRecorder:
             self._timer_task = None
 
         if self._frame_count < 2:
-            logger.warning(
-                "Timelapse has %d frame(s), skipping assembly", self._frame_count
-            )
-            self._cleanup_frames()
+            logger.warning("Timelapse has %d frame(s), skipping assembly", self._frame_count)
+            await asyncio.to_thread(self._cleanup_frames)
             return None
 
         # Assemble video (or ZIP fallback if ffmpeg is missing)
@@ -227,7 +225,7 @@ class TimelapseRecorder:
                 return video_filename
             else:
                 # ffmpeg not installed — save frames as ZIP instead
-                zip_filename = self._save_frames_as_zip(success)
+                zip_filename = await asyncio.to_thread(self._save_frames_as_zip, success)
                 if zip_filename:
                     self._last_video = zip_filename
                     logger.info(
@@ -242,7 +240,7 @@ class TimelapseRecorder:
             return None
         finally:
             self._assembling = False
-            self._cleanup_frames()
+            await asyncio.to_thread(self._cleanup_frames)
 
     async def _fetch_snapshot(self) -> Optional[bytes]:
         """Capture a JPEG frame via the camera service fallback chain."""
@@ -324,9 +322,7 @@ class TimelapseRecorder:
             logger.error("ffmpeg timed out after 300s")
             return None
         except FileNotFoundError:
-            logger.error(
-                "ffmpeg not found. Install ffmpeg to enable timelapse assembly."
-            )
+            logger.error("ffmpeg not found. Install ffmpeg to enable timelapse assembly.")
             return None
 
     async def _generate_thumbnail(self, video_filename: str) -> None:
