@@ -2,9 +2,8 @@
 	import { onMount } from 'svelte';
 	import CameraFeed from '$lib/components/CameraFeed.svelte';
 	import TempChart from '$lib/components/TempChart.svelte';
-	import TempGauge from '$lib/components/TempGauge.svelte';
+	import TemperatureControls from '$lib/components/TemperatureControls.svelte';
 	import PrintProgress from '$lib/components/PrintProgress.svelte';
-	import PreheatPresets from '$lib/components/PreheatPresets.svelte';
 	import PrintStartDialog from '$lib/components/PrintStartDialog.svelte';
 	import { printerState, isConnected, isPrinting, isPaused, isFinishing } from '$lib/stores/printer';
 	import { files, refreshFiles } from '$lib/stores/files';
@@ -22,6 +21,18 @@
 	let health = $state<any>(null);
 	let activeSpool = $state<any>(null);
 	let filamentWarnings = $state<any[]>([]);
+
+	// Fan control state
+	let fanSpeed = $state(0);
+	let fanSynced = $state(false);
+
+	// Sync fan slider with live state once on load
+	$effect(() => {
+		if (!fanSynced && state.fan_speed !== undefined) {
+			fanSpeed = Math.round(state.fan_speed / 2.55);
+			fanSynced = true;
+		}
+	});
 
 	// Print start dialog
 	let printDialogOpen = $state(false);
@@ -168,6 +179,18 @@
 			loading = '';
 		}
 	}
+
+	async function setFan() {
+		loading = 'fan';
+		try {
+			await api.setFan(Math.round(fanSpeed * 2.55));
+			toast.info(`Fan: ${fanSpeed}%`);
+		} catch (e: any) {
+			toast.error('Failed to set fan: ' + e.message);
+		} finally {
+			loading = '';
+		}
+	}
 </script>
 
 <svelte:head>
@@ -262,33 +285,53 @@
 			<TempChart />
 		</div>
 
-		<!-- Temperature Gauges -->
-		<div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-			<TempGauge label="Hotend" actual={state.hotend.actual} target={state.hotend.target} color="#f97316" />
-			<TempGauge label="Bed" actual={state.bed.actual} target={state.bed.target} maxTemp={120} color="#3b82f6" />
-			<div class="card flex items-center gap-3">
-				<div class="w-8 h-8 bg-surface-800 rounded-lg flex items-center justify-center shrink-0">
-					<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-					</svg>
+		<!-- Temperature & Fan Controls -->
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+			<TemperatureControls />
+			<div class="space-y-4">
+				<!-- Fan Control -->
+				<div class="card">
+					<h3 class="text-sm font-medium text-surface-400 mb-3">Fan</h3>
+					<div class="flex justify-between text-xs mb-1.5">
+						<span class="text-surface-500">Speed</span>
+						<span class="text-surface-300 tabular-nums">{fanSpeed}%</span>
+					</div>
+					<input
+						type="range"
+						class="w-full accent-accent"
+						min="0" max="100"
+						bind:value={fanSpeed}
+						onchange={setFan}
+						disabled={!!loading}
+					/>
+					<div class="flex gap-1.5 mt-3">
+						{#each [0, 25, 50, 75, 100] as pct}
+							<button
+								class="flex-1 py-2 rounded-lg text-xs font-medium transition-colors
+									   {fanSpeed === pct ? 'bg-accent text-white' : 'bg-surface-800 text-surface-400 hover:bg-surface-700'}
+									   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+								onclick={() => { fanSpeed = pct; setFan(); }}
+								disabled={!!loading}
+							>
+								{pct === 0 ? 'Off' : `${pct}%`}
+							</button>
+						{/each}
+					</div>
 				</div>
-				<div>
-					<span class="text-xs text-surface-500">Fan</span>
-					<p class="text-sm font-medium tabular-nums text-surface-200">{Math.round(state.fan_speed / 2.55)}%</p>
-				</div>
-			</div>
-			<div class="card flex items-center gap-3">
-				<div class="w-8 h-8 bg-surface-800 rounded-lg flex items-center justify-center shrink-0">
-					<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-					</svg>
-				</div>
-				<div>
-					<span class="text-xs text-surface-500">Position</span>
-					<p class="text-xs font-medium tabular-nums text-surface-200">
-						X:{state.position.x.toFixed(1)} Y:{state.position.y.toFixed(1)} Z:{state.position.z.toFixed(1)}
-					</p>
+				<!-- Position -->
+				<div class="card flex items-center gap-3">
+					<div class="w-8 h-8 bg-surface-800 rounded-lg flex items-center justify-center shrink-0">
+						<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+						</svg>
+					</div>
+					<div>
+						<span class="text-xs text-surface-500">Position</span>
+						<p class="text-sm font-medium tabular-nums text-surface-200">
+							X:{state.position.x.toFixed(1)} &nbsp; Y:{state.position.y.toFixed(1)} &nbsp; Z:{state.position.z.toFixed(1)}
+						</p>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -348,7 +391,7 @@
 
 		<!-- Quick Actions Row (when idle) -->
 		{#if !printing && !paused && !finishing}
-			<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<!-- Quick Print -->
 				<div class="card">
 					<h3 class="text-sm font-semibold text-surface-300 mb-3 flex items-center gap-2">
@@ -384,9 +427,6 @@
 						<a href="/files" class="text-xs text-accent hover:text-accent-hover mt-1 inline-block">Upload files</a>
 					{/if}
 				</div>
-
-				<!-- Preheat Presets -->
-				<PreheatPresets />
 
 				<!-- Quick Move -->
 				<div class="card">

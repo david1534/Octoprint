@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """PrintForge - 3D Printer Control System
 
 Main FastAPI application entry point.
@@ -165,6 +166,7 @@ async def camera_stream_url(request: Request):
         "mjpeg": f"http://{host}:1984/api/stream.mjpeg?src=printer_cam",
         "proxy": "/api/camera/mjpeg",
         "snapshot": "/api/camera/snapshot",
+        "snapshot_direct": f"http://{host}:1984/api/frame.jpeg?src=printer_cam",
     }
 
 
@@ -233,7 +235,7 @@ async def camera_mjpeg_proxy():
 
     async def stream():
         try:
-            async for chunk in resp.aiter_bytes(chunk_size=8192):
+            async for chunk in resp.aiter_bytes(chunk_size=32768):
                 yield chunk
         except (httpx.ReadError, httpx.TimeoutException, asyncio.CancelledError):
             pass

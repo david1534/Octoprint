@@ -7,7 +7,8 @@
 	let mjpegUrl = $state('');
 	let proxyUrl = $state('');
 	let snapshotUrl = $state('');
-	let streamMode = $state<StreamMode>('snapshot');
+	let snapshotDirectUrl = $state('');
+	let streamMode = $state<StreamMode>('mjpeg-direct');
 	let error = $state('');
 	let loading = $state(true);
 	let retryCount = $state(0);
@@ -19,15 +20,23 @@
 	let imgEl: HTMLImageElement;
 	const MAX_RETRIES = 5;
 
+	// MJPEG load timeout — if direct doesn't produce a frame in this time, fall back
+	let mjpegLoadTimer: ReturnType<typeof setTimeout> | null = null;
+	const MJPEG_LOAD_TIMEOUT = 5000;
+
 	// Snapshot polling state
 	let pollActive = false;
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
 	let fps = $state(0);
 	let frameTimestamps: number[] = [];
-	const POLL_INTERVAL = 0; // no artificial delay — next fetch starts as soon as current completes
-	const FAST_POLL_INTERVAL = 0;
-	let currentInterval = POLL_INTERVAL;
-	let fetchInFlight = false; // prevents overlapping fetches
+	// Pipelined fetching: allow up to 2 in-flight requests so the next fetch
+	// overlaps with decode/render of the current frame, roughly doubling FPS.
+	let inFlightCount = 0;
+	const MAX_IN_FLIGHT = 2;
+	// Track whether direct go2rtc snapshot works (avoids retrying on CORS failure)
+	let directSnapshotFailed = false;
+	// Cache canvas context to avoid getContext() per frame
+	let canvasCtx: CanvasRenderingContext2D | null = null;
 
 	onMount(async () => {
 		await loadCamera();
@@ -37,6 +46,7 @@
 
 	onDestroy(() => {
 		stopPolling();
+		clearMjpegLoadTimer();
 		if (retryTimer) clearTimeout(retryTimer);
 		document.removeEventListener('visibilitychange', onVisibility);
 		document.removeEventListener('fullscreenchange', onFullscreenChange);
@@ -46,6 +56,7 @@
 		if (document.hidden) {
 			paused = true;
 			stopPolling();
+			clearMjpegLoadTimer();
 		} else {
 			paused = false;
 			if (streamMode === 'snapshot') {
@@ -60,6 +71,13 @@
 		fullscreen = !!document.fullscreenElement;
 	}
 
+	function clearMjpegLoadTimer() {
+		if (mjpegLoadTimer) {
+			clearTimeout(mjpegLoadTimer);
+			mjpegLoadTimer = null;
+		}
+	}
+
 	async function loadCamera() {
 		loading = true;
 		error = '';
@@ -68,10 +86,23 @@
 			mjpegUrl = urls.mjpeg || '';
 			proxyUrl = urls.proxy || '';
 			snapshotUrl = urls.snapshot || '/api/camera/snapshot';
+			snapshotDirectUrl = urls.snapshot_direct || '';
 
-			// Default to snapshot polling (most reliable, lowest latency)
-			streamMode = 'snapshot';
-			startPolling();
+			// Default to MJPEG direct for best performance (native browser decoding,
+			// no per-frame proxy overhead). Falls back automatically on failure.
+			if (mjpegUrl) {
+				streamMode = 'mjpeg-direct';
+				loading = false;
+				// Start a timeout — if no frame arrives, fall back to proxy
+				startMjpegLoadTimer();
+			} else if (proxyUrl) {
+				streamMode = 'mjpeg-proxy';
+				loading = false;
+				startMjpegLoadTimer();
+			} else {
+				streamMode = 'snapshot';
+				startPolling();
+			}
 			retryCount = 0;
 		} catch (e) {
 			error = 'Camera not available';
@@ -79,11 +110,20 @@
 		}
 	}
 
+	function startMjpegLoadTimer() {
+		clearMjpegLoadTimer();
+		mjpegLoadTimer = setTimeout(() => {
+			// No frame loaded in time — trigger fallback
+			if (loading || (!error && streamMode.startsWith('mjpeg'))) {
+				onImgError();
+			}
+		}, MJPEG_LOAD_TIMEOUT);
+	}
+
 	function switchMode(mode: StreamMode) {
 		stopPolling();
-		// Clear retry timer to prevent stale retries from interfering
+		clearMjpegLoadTimer();
 		if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-		// Clear MJPEG img src to force browser to close the stream connection
 		if (imgEl) imgEl.src = '';
 		streamMode = mode;
 		error = '';
@@ -92,8 +132,8 @@
 		if (mode === 'snapshot') {
 			startPolling();
 		} else {
-			// MJPEG modes use an <img> tag
 			loading = false;
+			startMjpegLoadTimer();
 		}
 	}
 
@@ -102,25 +142,27 @@
 	function startPolling() {
 		if (pollActive) return;
 		pollActive = true;
+		inFlightCount = 0;
+		canvasCtx = null;
 		frameTimestamps = [];
+		// Kick off 2 fetches immediately to fill the pipeline
+		pollNext();
 		pollNext();
 	}
 
 	function stopPolling() {
 		pollActive = false;
+		inFlightCount = 0;
 		if (pollTimer) {
 			clearTimeout(pollTimer);
 			pollTimer = null;
 		}
 	}
 
-	// Detect createImageBitmap support once (older Safari/iOS may lack it)
 	const hasImageBitmap = typeof createImageBitmap === 'function';
 
-	/** Convert blob to a drawable image source (off-thread if possible). */
 	function blobToDrawable(blob: Blob): Promise<ImageBitmap | HTMLImageElement> {
 		if (hasImageBitmap) return createImageBitmap(blob);
-		// Fallback: create an <img> from an object URL
 		return new Promise((resolve, reject) => {
 			const img = new Image();
 			const objUrl = URL.createObjectURL(blob);
@@ -130,41 +172,61 @@
 		});
 	}
 
-	function pollNext() {
-		if (!pollActive || paused || fetchInFlight) return;
-		fetchInFlight = true;
+	function getSnapshotUrl(): string {
+		// Try direct go2rtc URL first (bypasses Python proxy, much faster).
+		// Falls back to proxy URL on CORS or network failure.
+		if (snapshotDirectUrl && !directSnapshotFailed) {
+			return `${snapshotDirectUrl}&t=${Date.now()}`;
+		}
+		return `${snapshotUrl}?t=${Date.now()}`;
+	}
 
-		// Use fetch + createImageBitmap for off-thread decode (faster than new Image())
-		const url = `${snapshotUrl}?t=${Date.now()}`;
-		// Include auth header so snapshots work when API key is configured
+	function pollNext() {
+		if (!pollActive || paused || inFlightCount >= MAX_IN_FLIGHT) return;
+		inFlightCount++;
+
+		const url = getSnapshotUrl();
+		const usingDirect = url.includes(':1984');
+
 		const headers: Record<string, string> = {};
-		const apiKey = typeof localStorage !== 'undefined' ? localStorage.getItem('printforge:apiKey') : null;
-		if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+		if (!usingDirect) {
+			const apiKey = typeof localStorage !== 'undefined' ? localStorage.getItem('printforge:apiKey') : null;
+			if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+		}
 
 		fetch(url, { headers })
 			.then(r => {
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				return r.blob();
 			})
-			.then(blob => blobToDrawable(blob))
+			.then(blob => {
+				// Pipeline: blob received = network done. Start next fetch NOW
+				// so it overlaps with decode/render of this frame.
+				inFlightCount--;
+				if (pollActive && !paused) {
+					pollTimer = setTimeout(pollNext, 0);
+				}
+				return blobToDrawable(blob);
+			})
 			.then(drawable => {
 				if (!pollActive) {
 					if ('close' in drawable) drawable.close();
 					return;
 				}
-				fetchInFlight = false;
 
-				// Draw to canvas for smooth rendering
+				// Cache and reuse the 2d context
 				if (canvasEl) {
-					const ctx = canvasEl.getContext('2d');
-					if (ctx) {
+					if (!canvasCtx) canvasCtx = canvasEl.getContext('2d');
+					if (canvasCtx) {
 						const w = drawable instanceof HTMLImageElement ? drawable.naturalWidth : drawable.width;
 						const h = drawable instanceof HTMLImageElement ? drawable.naturalHeight : drawable.height;
 						if (canvasEl.width !== w || canvasEl.height !== h) {
 							canvasEl.width = w;
 							canvasEl.height = h;
+							// Canvas resize clears context, must re-acquire
+							canvasCtx = canvasEl.getContext('2d');
 						}
-						ctx.drawImage(drawable, 0, 0);
+						canvasCtx!.drawImage(drawable, 0, 0);
 					}
 				}
 				if ('close' in drawable) drawable.close();
@@ -173,30 +235,31 @@
 				error = '';
 				retryCount = 0;
 
-				// Track FPS
+				// Track FPS (lightweight: just push/shift instead of filter)
 				const now = performance.now();
 				frameTimestamps.push(now);
-				const cutoff = now - 2000;
-				frameTimestamps = frameTimestamps.filter(t => t > cutoff);
-				fps = Math.round(frameTimestamps.length / 2);
-
-				// Immediately start next fetch (overlap with render) — minimal gap
-				if (pollActive) {
-					pollTimer = setTimeout(pollNext, currentInterval);
+				while (frameTimestamps.length > 0 && frameTimestamps[0] <= now - 2000) {
+					frameTimestamps.shift();
 				}
+				fps = Math.round(frameTimestamps.length / 2);
 			})
 			.catch(() => {
-				fetchInFlight = false;
+				inFlightCount--;
 				if (!pollActive) return;
-				retryCount++;
 
+				// If direct URL failed, switch to proxied snapshots
+				if (usingDirect && !directSnapshotFailed) {
+					directSnapshotFailed = true;
+					pollTimer = setTimeout(pollNext, 0);
+					return;
+				}
+
+				retryCount++;
 				if (retryCount >= MAX_RETRIES) {
 					error = 'Camera stream unavailable';
 					stopPolling();
 					return;
 				}
-
-				// Back off on errors
 				const delay = Math.min(1000 * retryCount, 5000);
 				pollTimer = setTimeout(pollNext, delay);
 			});
@@ -205,12 +268,15 @@
 	// ── MJPEG error handling ───────────────────────────────────
 
 	function onImgError() {
+		clearMjpegLoadTimer();
 		if (streamMode === 'mjpeg-direct' && proxyUrl) {
+			// Direct failed — try proxied MJPEG
 			streamMode = 'mjpeg-proxy';
+			startMjpegLoadTimer();
 			return;
 		}
 		if (streamMode === 'mjpeg-proxy') {
-			// Fall back to snapshot polling
+			// Proxy MJPEG also failed — fall back to snapshot polling
 			switchMode('snapshot');
 			return;
 		}
@@ -219,6 +285,7 @@
 	}
 
 	function onImgLoad() {
+		clearMjpegLoadTimer();
 		loading = false;
 		error = '';
 		retryCount = 0;
@@ -235,6 +302,7 @@
 	function manualRetry() {
 		retryCount = 0;
 		error = '';
+		directSnapshotFailed = false;
 		loadCamera();
 	}
 
@@ -250,9 +318,9 @@
 	}
 
 	let modeLabel = $derived(
-		streamMode === 'snapshot' ? `Snapshot ${fps}fps` :
-		streamMode === 'mjpeg-direct' ? 'MJPEG' :
-		'Proxied'
+		streamMode === 'snapshot' ? `SNAP ${fps}fps` :
+		streamMode === 'mjpeg-direct' ? 'MJPEG Direct' :
+		'MJPEG Proxy'
 	);
 
 	let currentMjpegSrc = $derived(

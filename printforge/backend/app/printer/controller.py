@@ -77,9 +77,7 @@ class PrinterController:
     def camera(self) -> Optional[CameraService]:
         return self._camera
 
-    async def init_camera_and_timelapse(
-        self, go2rtc_url: str, timelapse_dir: Path
-    ) -> None:
+    async def init_camera_and_timelapse(self, go2rtc_url: str, timelapse_dir: Path) -> None:
         """Initialize camera service and timelapse recorder."""
         self._camera = CameraService(go2rtc_url)
         await self._camera.init()
@@ -305,9 +303,26 @@ class PrinterController:
             cmd = f"M190 S{bed}" if wait else f"M140 S{bed}"
             await self.send_command(cmd)
 
-    async def jog(
-        self, x: float = 0, y: float = 0, z: float = 0, feedrate: int = 3000
-    ) -> None:
+        # Override targets AFTER all commands are sent.  During send_command,
+        # stale M155 auto-reports (generated before the printer processed
+        # the M104/M140) can arrive and _on_temp_line would overwrite an
+        # earlier optimistic update.  Setting after all commands ensures our
+        # values win the race.
+        if hotend is not None:
+            self.state.hotend_target = hotend
+        if bed is not None:
+            self.state.bed_target = bed
+        self._notify_state_change()
+
+        # Queue M105 to force a serial read of actual temperatures, which
+        # also flushes any buffered M155 lines sitting unread in idle state.
+        if self._queue:
+            try:
+                await self._queue.enqueue("M105", CommandPriority.SYSTEM)
+            except Exception:
+                pass
+
+    async def jog(self, x: float = 0, y: float = 0, z: float = 0, feedrate: int = 3000) -> None:
         """Relative move."""
         await self.send_command("G91")  # Relative mode
         parts = ["G1"]
@@ -431,9 +446,7 @@ M117 Print Complete"""
             future = await self._queue.enqueue(line, CommandPriority.SYSTEM)
             result = await future
             if not result.ok:
-                logger.warning(
-                    "Start/end gcode command failed: %s -> %s", line, result.error
-                )
+                logger.warning("Start/end gcode command failed: %s -> %s", line, result.error)
 
     async def start_print(self, filepath: Path, spool_id: Optional[int] = None) -> None:
         """Start printing a G-code file."""
@@ -468,9 +481,9 @@ M117 Print Complete"""
         start_gcode_raw = await get_setting("start_gcode", self.DEFAULT_START_GCODE)
         start_gcode = ""
         if start_gcode_raw.strip():
-            start_gcode = start_gcode_raw.replace(
-                "{nozzle_temp}", str(int(nozzle_temp))
-            ).replace("{bed_temp}", str(int(bed_temp)))
+            start_gcode = start_gcode_raw.replace("{nozzle_temp}", str(int(nozzle_temp))).replace(
+                "{bed_temp}", str(int(bed_temp))
+            )
             self._notify_terminal("[SYSTEM] Running start G-code...", "system")
 
         # Store selected spool for filament deduction on completion
@@ -582,9 +595,7 @@ M117 Print Complete"""
         if self._queue:
             await self._queue.clear()
         self.state.status = PrinterStatus.ERROR
-        self.state.error_message = (
-            "Emergency stop activated. Power cycle the printer to continue."
-        )
+        self.state.error_message = "Emergency stop activated. Power cycle the printer to continue."
         self._notify_state_change()
 
     async def disable_motors(self) -> None:
@@ -623,8 +634,7 @@ M117 Print Complete"""
                 spool = await get_active_spool()
             if not spool:
                 logger.warning(
-                    "No spool found for filament deduction "
-                    "(spool_id=%s, no active spool)",
+                    "No spool found for filament deduction (spool_id=%s, no active spool)",
                     self._current_spool_id,
                 )
                 return
@@ -744,17 +754,14 @@ M117 Print Complete"""
                     # Use corrected slicer estimate if available, else linear
                     if self._slicer_estimated_seconds > 0 and self._sender.progress > 0:
                         corrected_total = (
-                            self._slicer_estimated_seconds
-                            * self._time_correction_factor
+                            self._slicer_estimated_seconds * self._time_correction_factor
                         )
                         self.state.estimated_remaining = max(
                             0,
                             corrected_total - self._sender.elapsed_seconds,
                         )
                     else:
-                        self.state.estimated_remaining = (
-                            self._sender.estimated_remaining
-                        )
+                        self.state.estimated_remaining = self._sender.estimated_remaining
                     self.state.current_layer = self._sender.current_layer
                     self.state.total_layers = self._sender.total_layers
                     self.state.current_line = self._sender.current_line
@@ -769,8 +776,7 @@ M117 Print Complete"""
                     self._sender
                     and self._sender._task
                     and self._sender._task.done()
-                    and self.state.status
-                    in (PrinterStatus.PRINTING, PrinterStatus.PAUSED)
+                    and self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED)
                 ):
                     was_cancelled = self._sender._cancelled
 
@@ -790,9 +796,7 @@ M117 Print Complete"""
                         self.state.status = PrinterStatus.IDLE
                     else:
                         # Aborted due to consecutive failures
-                        logger.warning(
-                            "Print task aborted (cancelled=%s)", was_cancelled
-                        )
+                        logger.warning("Print task aborted (cancelled=%s)", was_cancelled)
                         # Stop timelapse on abort
                         await self._stop_timelapse(success=False)
                         _filament = self._sender._filament_used_mm
@@ -816,9 +820,7 @@ M117 Print Complete"""
                         self._current_spool_id = None
                         self._sender.reset()
                         self.state.status = PrinterStatus.ERROR
-                        self.state.error_message = (
-                            "Print aborted: communication lost with printer"
-                        )
+                        self.state.error_message = "Print aborted: communication lost with printer"
 
                     # Clear print state in both cases
                     self.state.current_file = None
