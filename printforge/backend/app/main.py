@@ -48,12 +48,19 @@ controller = PrinterController(state)
 # Persistent HTTP client for camera proxying (reused across requests)
 _camera_client: httpx.AsyncClient | None = None
 
+# Frame cache: avoid re-fetching from go2rtc for rapid snapshot polling
+_frame_cache: bytes | None = None
+_frame_cache_time: float = 0
+_frame_cache_lock: asyncio.Lock | None = None
+_FRAME_CACHE_TTL = 0.06  # 60ms — limits go2rtc hits to ~16fps max
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown."""
-    global _camera_client
+    global _camera_client, _frame_cache_lock
     logger.info("PrintForge starting up...")
+    _frame_cache_lock = asyncio.Lock()
 
     # Init database
     await init_db()
@@ -257,10 +264,55 @@ async def camera_mjpeg_proxy():
 async def camera_snapshot():
     """Return a single JPEG snapshot from the camera.
 
-    Uses the persistent HTTP client for minimal latency. Designed to be
-    polled rapidly by the frontend for smooth canvas-based rendering.
+    Uses a frame cache to avoid hammering go2rtc on rapid polling.
+    Multiple frontend requests within the TTL window get the same frame,
+    keeping go2rtc load low while the frontend renders smoothly.
     """
-    # Try go2rtc first via persistent client (fast path)
+    global _frame_cache, _frame_cache_time
+    import time
+
+    now = time.monotonic()
+
+    # Serve cached frame if fresh enough
+    if _frame_cache and (now - _frame_cache_time) < _FRAME_CACHE_TTL:
+        return Response(
+            content=_frame_cache,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-cache, no-store",
+                "Pragma": "no-cache",
+            },
+        )
+
+    # Fetch a new frame (serialized to avoid thundering herd)
+    jpg: bytes | None = None
+    if _frame_cache_lock:
+        async with _frame_cache_lock:
+            # Double-check: another coroutine may have refreshed while we waited
+            if _frame_cache and (time.monotonic() - _frame_cache_time) < _FRAME_CACHE_TTL:
+                jpg = _frame_cache
+            else:
+                jpg = await _fetch_snapshot()
+                if jpg:
+                    _frame_cache = jpg
+                    _frame_cache_time = time.monotonic()
+    else:
+        jpg = await _fetch_snapshot()
+
+    if jpg:
+        return Response(
+            content=jpg,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-cache, no-store",
+                "Pragma": "no-cache",
+            },
+        )
+    return JSONResponse({"error": "Camera unavailable"}, status_code=503)
+
+
+async def _fetch_snapshot() -> bytes | None:
+    """Fetch a fresh JPEG frame from go2rtc or fallback sources."""
     snapshot_url = f"{settings.camera_url}/api/frame.jpeg?src=printer_cam"
     jpg: bytes | None = None
     try:
@@ -275,16 +327,7 @@ async def camera_snapshot():
     if not jpg and controller.camera:
         jpg = await controller.camera.snapshot()
 
-    if jpg:
-        return Response(
-            content=jpg,
-            media_type="image/jpeg",
-            headers={
-                "Cache-Control": "no-cache, no-store",
-                "Pragma": "no-cache",
-            },
-        )
-    return JSONResponse({"error": "Camera unavailable"}, status_code=503)
+    return jpg
 
 
 # Serve built frontend — MUST be last, catches all routes.

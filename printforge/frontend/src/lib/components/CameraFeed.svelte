@@ -21,13 +21,12 @@
 
 	// Snapshot polling state
 	let pollActive = false;
-	let pollTimer: ReturnType<typeof setTimeout> | null = null;
+	let rafId: number | null = null;
 	let fps = $state(0);
 	let frameTimestamps: number[] = [];
-	const POLL_INTERVAL = 0; // no artificial delay — next fetch starts as soon as current completes
-	const FAST_POLL_INTERVAL = 0;
-	let currentInterval = POLL_INTERVAL;
 	let fetchInFlight = false; // prevents overlapping fetches
+	// Pipeline: fetch next frame while current one renders
+	let pendingBlob: Blob | null = null;
 
 	onMount(async () => {
 		await loadCamera();
@@ -103,14 +102,17 @@
 		if (pollActive) return;
 		pollActive = true;
 		frameTimestamps = [];
-		pollNext();
+		fetchInFlight = false;
+		// Kick off the first fetch, then use rAF loop to draw + pipeline
+		fetchFrame();
+		scheduleFrame();
 	}
 
 	function stopPolling() {
 		pollActive = false;
-		if (pollTimer) {
-			clearTimeout(pollTimer);
-			pollTimer = null;
+		if (rafId) {
+			cancelAnimationFrame(rafId);
+			rafId = null;
 		}
 	}
 
@@ -120,7 +122,6 @@
 	/** Convert blob to a drawable image source (off-thread if possible). */
 	function blobToDrawable(blob: Blob): Promise<ImageBitmap | HTMLImageElement> {
 		if (hasImageBitmap) return createImageBitmap(blob);
-		// Fallback: create an <img> from an object URL
 		return new Promise((resolve, reject) => {
 			const img = new Image();
 			const objUrl = URL.createObjectURL(blob);
@@ -130,18 +131,24 @@
 		});
 	}
 
-	function pollNext() {
-		if (!pollActive || paused || fetchInFlight) return;
-		fetchInFlight = true;
-
-		// Use fetch + createImageBitmap for off-thread decode (faster than new Image())
-		const url = `${snapshotUrl}?t=${Date.now()}`;
-		// Include auth header so snapshots work when API key is configured
+	// Auth headers cached once
+	function getAuthHeaders(): Record<string, string> {
 		const headers: Record<string, string> = {};
 		const apiKey = typeof localStorage !== 'undefined' ? localStorage.getItem('printforge:apiKey') : null;
 		if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+		return headers;
+	}
+	const authHeaders = getAuthHeaders();
 
-		fetch(url, { headers })
+	// Pending drawable ready to be painted on next rAF
+	let pendingDrawable: (ImageBitmap | HTMLImageElement) | null = null;
+
+	/** Fetch a snapshot and decode it off-thread. Sets pendingDrawable when ready. */
+	function fetchFrame() {
+		if (!pollActive || paused || fetchInFlight) return;
+		fetchInFlight = true;
+
+		fetch(`${snapshotUrl}?t=${Date.now()}`, { headers: authHeaders })
 			.then(r => {
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				return r.blob();
@@ -152,26 +159,52 @@
 					if ('close' in drawable) drawable.close();
 					return;
 				}
+				// Dispose previous un-drawn frame if one was pending
+				if (pendingDrawable && 'close' in pendingDrawable) pendingDrawable.close();
+				pendingDrawable = drawable;
 				fetchInFlight = false;
+				retryCount = 0;
 
-				// Draw to canvas for smooth rendering
-				if (canvasEl) {
-					const ctx = canvasEl.getContext('2d');
-					if (ctx) {
-						const w = drawable instanceof HTMLImageElement ? drawable.naturalWidth : drawable.width;
-						const h = drawable instanceof HTMLImageElement ? drawable.naturalHeight : drawable.height;
-						if (canvasEl.width !== w || canvasEl.height !== h) {
-							canvasEl.width = w;
-							canvasEl.height = h;
-						}
-						ctx.drawImage(drawable, 0, 0);
-					}
+				// Immediately start fetching the NEXT frame (pipeline)
+				fetchFrame();
+			})
+			.catch(() => {
+				fetchInFlight = false;
+				if (!pollActive) return;
+				retryCount++;
+				if (retryCount >= MAX_RETRIES) {
+					error = 'Camera stream unavailable';
+					stopPolling();
+					return;
 				}
-				if ('close' in drawable) drawable.close();
+				// Back off on errors, then retry
+				setTimeout(fetchFrame, Math.min(1000 * retryCount, 5000));
+			});
+	}
+
+	/** rAF loop — draws the latest decoded frame to canvas. */
+	function scheduleFrame() {
+		if (!pollActive) return;
+		rafId = requestAnimationFrame(() => {
+			if (!pollActive) return;
+
+			if (pendingDrawable && canvasEl) {
+				const ctx = canvasEl.getContext('2d');
+				if (ctx) {
+					const d = pendingDrawable;
+					const w = d instanceof HTMLImageElement ? d.naturalWidth : d.width;
+					const h = d instanceof HTMLImageElement ? d.naturalHeight : d.height;
+					if (canvasEl.width !== w || canvasEl.height !== h) {
+						canvasEl.width = w;
+						canvasEl.height = h;
+					}
+					ctx.drawImage(d, 0, 0);
+				}
+				if ('close' in pendingDrawable) pendingDrawable.close();
+				pendingDrawable = null;
 
 				loading = false;
 				error = '';
-				retryCount = 0;
 
 				// Track FPS
 				const now = performance.now();
@@ -179,27 +212,10 @@
 				const cutoff = now - 2000;
 				frameTimestamps = frameTimestamps.filter(t => t > cutoff);
 				fps = Math.round(frameTimestamps.length / 2);
+			}
 
-				// Immediately start next fetch (overlap with render) — minimal gap
-				if (pollActive) {
-					pollTimer = setTimeout(pollNext, currentInterval);
-				}
-			})
-			.catch(() => {
-				fetchInFlight = false;
-				if (!pollActive) return;
-				retryCount++;
-
-				if (retryCount >= MAX_RETRIES) {
-					error = 'Camera stream unavailable';
-					stopPolling();
-					return;
-				}
-
-				// Back off on errors
-				const delay = Math.min(1000 * retryCount, 5000);
-				pollTimer = setTimeout(pollNext, delay);
-			});
+			scheduleFrame();
+		});
 	}
 
 	// ── MJPEG error handling ───────────────────────────────────
