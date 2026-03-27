@@ -25,8 +25,8 @@
 	let fps = $state(0);
 	let frameTimestamps: number[] = [];
 	let fetchInFlight = false; // prevents overlapping fetches
-	// Pipeline: fetch next frame while current one renders
-	let pendingBlob: Blob | null = null;
+	let abortController: AbortController | null = null;
+	const FETCH_TIMEOUT = 5000; // abort hung fetches after 5s
 
 	onMount(async () => {
 		await loadCamera();
@@ -114,6 +114,11 @@
 			cancelAnimationFrame(rafId);
 			rafId = null;
 		}
+		// Abort any in-flight fetch so it doesn't hang forever
+		if (abortController) {
+			abortController.abort();
+			abortController = null;
+		}
 	}
 
 	// Detect createImageBitmap support once (older Safari/iOS may lack it)
@@ -148,8 +153,14 @@
 		if (!pollActive || paused || fetchInFlight) return;
 		fetchInFlight = true;
 
-		fetch(`${snapshotUrl}?t=${Date.now()}`, { headers: authHeaders })
+		// Abort any previous controller and create a fresh one with timeout
+		if (abortController) abortController.abort();
+		abortController = new AbortController();
+		const timeoutId = setTimeout(() => abortController?.abort(), FETCH_TIMEOUT);
+
+		fetch(`${snapshotUrl}?t=${Date.now()}`, { headers: authHeaders, signal: abortController.signal })
 			.then(r => {
+				clearTimeout(timeoutId);
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				return r.blob();
 			})
@@ -169,11 +180,13 @@
 				fetchFrame();
 			})
 			.catch(() => {
+				clearTimeout(timeoutId);
 				fetchInFlight = false;
 				if (!pollActive) return;
 				retryCount++;
 				if (retryCount >= MAX_RETRIES) {
 					error = 'Camera stream unavailable';
+					loading = false;
 					stopPolling();
 					return;
 				}
