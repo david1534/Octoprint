@@ -201,30 +201,40 @@
 		rafId = requestAnimationFrame(() => {
 			if (!pollActive) return;
 
-			if (pendingDrawable && canvasEl) {
-				const ctx = canvasEl.getContext('2d');
-				if (ctx) {
-					const d = pendingDrawable;
-					const w = d instanceof HTMLImageElement ? d.naturalWidth : d.width;
-					const h = d instanceof HTMLImageElement ? d.naturalHeight : d.height;
-					if (canvasEl.width !== w || canvasEl.height !== h) {
-						canvasEl.width = w;
-						canvasEl.height = h;
-					}
-					ctx.drawImage(d, 0, 0);
+			if (pendingDrawable) {
+				// Clear loading/error FIRST so Svelte renders the <canvas> into the DOM.
+				// On the very first frame canvasEl won't exist yet because loading=true
+				// hides the canvas — setting loading=false here lets Svelte mount it,
+				// and the next rAF tick will draw.
+				if (loading || error) {
+					loading = false;
+					error = '';
 				}
-				if ('close' in pendingDrawable) pendingDrawable.close();
-				pendingDrawable = null;
 
-				loading = false;
-				error = '';
+				if (canvasEl) {
+					const ctx = canvasEl.getContext('2d');
+					if (ctx) {
+						const d = pendingDrawable;
+						const w = d instanceof HTMLImageElement ? d.naturalWidth : d.width;
+						const h = d instanceof HTMLImageElement ? d.naturalHeight : d.height;
+						if (canvasEl.width !== w || canvasEl.height !== h) {
+							canvasEl.width = w;
+							canvasEl.height = h;
+						}
+						ctx.drawImage(d, 0, 0);
+					}
+					if ('close' in pendingDrawable) pendingDrawable.close();
+					pendingDrawable = null;
 
-				// Track FPS
-				const now = performance.now();
-				frameTimestamps.push(now);
-				const cutoff = now - 2000;
-				frameTimestamps = frameTimestamps.filter(t => t > cutoff);
-				fps = Math.round(frameTimestamps.length / 2);
+					// Track FPS
+					const now = performance.now();
+					frameTimestamps.push(now);
+					const cutoff = now - 2000;
+					frameTimestamps = frameTimestamps.filter(t => t > cutoff);
+					fps = Math.round(frameTimestamps.length / 2);
+				}
+				// If canvasEl isn't available yet (Svelte hasn't re-rendered),
+				// keep pendingDrawable — it'll be drawn on the next rAF tick.
 			}
 
 			scheduleFrame();
