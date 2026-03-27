@@ -52,7 +52,7 @@ _camera_client: httpx.AsyncClient | None = None
 _frame_cache: bytes | None = None
 _frame_cache_time: float = 0
 _frame_cache_lock: asyncio.Lock | None = None
-_FRAME_CACHE_TTL = 0.06  # 60ms — limits go2rtc hits to ~16fps max
+_FRAME_CACHE_TTL = 0.03  # 30ms — limits go2rtc hits to ~33fps max
 
 
 @asynccontextmanager
@@ -162,15 +162,12 @@ app.include_router(filament.router)
 async def camera_stream_url(request: Request):
     """Return camera stream URLs for the frontend.
 
-    Direct MJPEG from go2rtc is preferred (lowest latency, no proxy
-    overhead). The proxy fallback polls go2rtc snapshots for browsers
-    that can't reach go2rtc directly.
+    MJPEG is proxied through the backend (browser can't reach go2rtc
+    on port 1984 via Tailscale). Snapshot polling is the fallback.
     """
-    host = request.headers.get("host", "localhost").split(":")[0]
     return {
         "webrtc": "",
-        "mjpeg": f"http://{host}:1984/api/stream.mjpeg?src=printer_cam",
-        "proxy": "/api/camera/mjpeg",
+        "mjpeg": "/api/camera/mjpeg",
         "snapshot": "/api/camera/snapshot",
     }
 
@@ -240,7 +237,7 @@ async def camera_mjpeg_proxy():
 
     async def stream():
         try:
-            async for chunk in resp.aiter_bytes(chunk_size=8192):
+            async for chunk in resp.aiter_bytes(chunk_size=32768):
                 yield chunk
         except (httpx.ReadError, httpx.TimeoutException, asyncio.CancelledError):
             pass

@@ -2,12 +2,11 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '../api';
 
-	type StreamMode = 'snapshot' | 'mjpeg-direct' | 'mjpeg-proxy';
+	type StreamMode = 'snapshot' | 'mjpeg';
 
 	let mjpegUrl = $state('');
-	let proxyUrl = $state('');
 	let snapshotUrl = $state('');
-	let streamMode = $state<StreamMode>('snapshot');
+	let streamMode = $state<StreamMode>('mjpeg');
 	let error = $state('');
 	let loading = $state(true);
 	let retryCount = $state(0);
@@ -24,9 +23,9 @@
 	let rafId: number | null = null;
 	let fps = $state(0);
 	let frameTimestamps: number[] = [];
-	let fetchInFlight = false; // prevents overlapping fetches
+	let fetchInFlight = false;
 	let abortController: AbortController | null = null;
-	const FETCH_TIMEOUT = 5000; // abort hung fetches after 5s
+	const FETCH_TIMEOUT = 5000;
 
 	onMount(async () => {
 		await loadCamera();
@@ -44,13 +43,20 @@
 	function onVisibility() {
 		if (document.hidden) {
 			paused = true;
-			stopPolling();
+			if (streamMode === 'snapshot') {
+				stopPolling();
+			} else if (imgEl) {
+				// Close the MJPEG stream connection while tab is hidden
+				imgEl.src = '';
+			}
 		} else {
 			paused = false;
 			if (streamMode === 'snapshot') {
 				startPolling();
-			} else if (error) {
-				loadCamera();
+			} else if (streamMode === 'mjpeg' && mjpegUrl) {
+				// Reconnect MJPEG stream (it stalls when tab is hidden)
+				loading = true;
+				if (imgEl) imgEl.src = mjpegUrl + '?t=' + Date.now();
 			}
 		}
 	}
@@ -64,13 +70,12 @@
 		error = '';
 		try {
 			const urls = await api.getCameraUrls();
-			mjpegUrl = urls.mjpeg || '';
-			proxyUrl = urls.proxy || '';
+			mjpegUrl = urls.mjpeg || '/api/camera/mjpeg';
 			snapshotUrl = urls.snapshot || '/api/camera/snapshot';
 
-			// Default to snapshot polling (most reliable, lowest latency)
-			streamMode = 'snapshot';
-			startPolling();
+			// Default to MJPEG (single persistent connection, highest FPS)
+			streamMode = 'mjpeg';
+			// The <img> tag renders with mjpegUrl, onload/onerror handle state
 			retryCount = 0;
 		} catch (e) {
 			error = 'Camera not available';
@@ -80,9 +85,7 @@
 
 	function switchMode(mode: StreamMode) {
 		stopPolling();
-		// Clear retry timer to prevent stale retries from interfering
 		if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-		// Clear MJPEG img src to force browser to close the stream connection
 		if (imgEl) imgEl.src = '';
 		streamMode = mode;
 		error = '';
@@ -90,10 +93,8 @@
 
 		if (mode === 'snapshot') {
 			startPolling();
-		} else {
-			// MJPEG modes use an <img> tag
-			loading = false;
 		}
+		// MJPEG: the <img> tag will render with mjpegUrl, loading clears on onload
 	}
 
 	// ── Snapshot polling with canvas rendering ──────────────────
@@ -103,7 +104,6 @@
 		pollActive = true;
 		frameTimestamps = [];
 		fetchInFlight = false;
-		// Kick off the first fetch, then use rAF loop to draw + pipeline
 		fetchFrame();
 		scheduleFrame();
 	}
@@ -114,17 +114,14 @@
 			cancelAnimationFrame(rafId);
 			rafId = null;
 		}
-		// Abort any in-flight fetch so it doesn't hang forever
 		if (abortController) {
 			abortController.abort();
 			abortController = null;
 		}
 	}
 
-	// Detect createImageBitmap support once (older Safari/iOS may lack it)
 	const hasImageBitmap = typeof createImageBitmap === 'function';
 
-	/** Convert blob to a drawable image source (off-thread if possible). */
 	function blobToDrawable(blob: Blob): Promise<ImageBitmap | HTMLImageElement> {
 		if (hasImageBitmap) return createImageBitmap(blob);
 		return new Promise((resolve, reject) => {
@@ -136,7 +133,6 @@
 		});
 	}
 
-	// Auth headers cached once
 	function getAuthHeaders(): Record<string, string> {
 		const headers: Record<string, string> = {};
 		const apiKey = typeof localStorage !== 'undefined' ? localStorage.getItem('printforge:apiKey') : null;
@@ -145,15 +141,12 @@
 	}
 	const authHeaders = getAuthHeaders();
 
-	// Pending drawable ready to be painted on next rAF
 	let pendingDrawable: (ImageBitmap | HTMLImageElement) | null = null;
 
-	/** Fetch a snapshot and decode it off-thread. Sets pendingDrawable when ready. */
 	function fetchFrame() {
 		if (!pollActive || paused || fetchInFlight) return;
 		fetchInFlight = true;
 
-		// Abort any previous controller and create a fresh one with timeout
 		if (abortController) abortController.abort();
 		abortController = new AbortController();
 		const timeoutId = setTimeout(() => abortController?.abort(), FETCH_TIMEOUT);
@@ -170,13 +163,10 @@
 					if ('close' in drawable) drawable.close();
 					return;
 				}
-				// Dispose previous un-drawn frame if one was pending
 				if (pendingDrawable && 'close' in pendingDrawable) pendingDrawable.close();
 				pendingDrawable = drawable;
 				fetchInFlight = false;
 				retryCount = 0;
-
-				// Immediately start fetching the NEXT frame (pipeline)
 				fetchFrame();
 			})
 			.catch(() => {
@@ -190,22 +180,16 @@
 					stopPolling();
 					return;
 				}
-				// Back off on errors, then retry
 				setTimeout(fetchFrame, Math.min(1000 * retryCount, 5000));
 			});
 	}
 
-	/** rAF loop — draws the latest decoded frame to canvas. */
 	function scheduleFrame() {
 		if (!pollActive) return;
 		rafId = requestAnimationFrame(() => {
 			if (!pollActive) return;
 
 			if (pendingDrawable) {
-				// Clear loading/error FIRST so Svelte renders the <canvas> into the DOM.
-				// On the very first frame canvasEl won't exist yet because loading=true
-				// hides the canvas — setting loading=false here lets Svelte mount it,
-				// and the next rAF tick will draw.
 				if (loading || error) {
 					loading = false;
 					error = '';
@@ -226,49 +210,29 @@
 					if ('close' in pendingDrawable) pendingDrawable.close();
 					pendingDrawable = null;
 
-					// Track FPS
 					const now = performance.now();
 					frameTimestamps.push(now);
 					const cutoff = now - 2000;
 					frameTimestamps = frameTimestamps.filter(t => t > cutoff);
 					fps = Math.round(frameTimestamps.length / 2);
 				}
-				// If canvasEl isn't available yet (Svelte hasn't re-rendered),
-				// keep pendingDrawable — it'll be drawn on the next rAF tick.
 			}
 
 			scheduleFrame();
 		});
 	}
 
-	// ── MJPEG error handling ───────────────────────────────────
+	// ── MJPEG event handling ──────────────────────────────────
 
 	function onImgError() {
-		if (streamMode === 'mjpeg-direct' && proxyUrl) {
-			streamMode = 'mjpeg-proxy';
-			return;
-		}
-		if (streamMode === 'mjpeg-proxy') {
-			// Fall back to snapshot polling
-			switchMode('snapshot');
-			return;
-		}
-		error = 'Camera stream unavailable';
-		scheduleRetry();
+		// MJPEG failed — fall back to snapshot polling
+		switchMode('snapshot');
 	}
 
 	function onImgLoad() {
 		loading = false;
 		error = '';
 		retryCount = 0;
-	}
-
-	function scheduleRetry() {
-		if (retryTimer) clearTimeout(retryTimer);
-		if (retryCount >= MAX_RETRIES || paused) return;
-		const delay = Math.min(3000 * Math.pow(2, retryCount), 30000);
-		retryCount++;
-		retryTimer = setTimeout(() => loadCamera(), delay);
 	}
 
 	function manualRetry() {
@@ -289,13 +253,7 @@
 	}
 
 	let modeLabel = $derived(
-		streamMode === 'snapshot' ? `Snapshot ${fps}fps` :
-		streamMode === 'mjpeg-direct' ? 'MJPEG' :
-		'Proxied'
-	);
-
-	let currentMjpegSrc = $derived(
-		streamMode === 'mjpeg-proxy' ? proxyUrl : mjpegUrl
+		streamMode === 'snapshot' ? `Snap ${fps}fps` : 'MJPEG'
 	);
 </script>
 
@@ -309,16 +267,16 @@
 				<div class="flex gap-0.5 bg-surface-800 rounded-md p-0.5">
 					<button
 						class="px-1.5 py-0.5 text-[10px] rounded transition-colors
-							   {streamMode === 'snapshot' ? 'bg-surface-700 text-surface-200' : 'text-surface-500 hover:text-surface-300'}"
-						onclick={() => switchMode('snapshot')}
-						title="Snapshot polling (most reliable)"
-					>SNAP</button>
+							   {streamMode === 'mjpeg' ? 'bg-surface-700 text-surface-200' : 'text-surface-500 hover:text-surface-300'}"
+						onclick={() => switchMode('mjpeg')}
+						title="MJPEG stream (highest FPS)"
+					>MJPEG</button>
 					<button
 						class="px-1.5 py-0.5 text-[10px] rounded transition-colors
-							   {streamMode.startsWith('mjpeg') ? 'bg-surface-700 text-surface-200' : 'text-surface-500 hover:text-surface-300'}"
-						onclick={() => switchMode(mjpegUrl ? 'mjpeg-direct' : 'mjpeg-proxy')}
-						title="MJPEG stream (higher FPS when available)"
-					>MJPEG</button>
+							   {streamMode === 'snapshot' ? 'bg-surface-700 text-surface-200' : 'text-surface-500 hover:text-surface-300'}"
+						onclick={() => switchMode('snapshot')}
+						title="Snapshot polling (fallback)"
+					>SNAP</button>
 				</div>
 			{/if}
 			{#if !loading && !error}
@@ -373,7 +331,7 @@
 		{:else}
 			<img
 				bind:this={imgEl}
-				src={currentMjpegSrc}
+				src={mjpegUrl}
 				alt="Printer camera"
 				class="w-full h-full object-cover"
 				decoding="async"
