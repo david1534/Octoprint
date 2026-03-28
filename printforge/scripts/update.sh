@@ -10,7 +10,13 @@
 #   ssh david1534@100.108.194.105 "bash ~/Octoprint/printforge/scripts/update.sh"
 ###############################################################################
 
-# Exit on error
+# Auto-fix Windows line endings (CRLF -> LF) so the script works
+# even if Git on Windows converted the line endings.
+if grep -qP '\r' "$0" 2>/dev/null; then
+    sed -i 's/\r$//' "$0"
+    exec bash "$0" "$@"
+fi
+
 set -e
 
 REPO_DIR="$HOME/Octoprint"
