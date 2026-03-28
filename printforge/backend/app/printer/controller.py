@@ -464,14 +464,16 @@ M117 Print Complete"""
         nozzle_temp = meta.nozzle_temp if meta and meta.nozzle_temp else 200
         bed_temp = meta.bed_temp if meta and meta.bed_temp else 60
 
-        # Prepare start G-code with temperature substitution
+        # Prepare start G-code with temperature substitution.
+        # Fall back to the built-in default when the stored value is blank
+        # (empty-string in the DB should NOT suppress the startup sequence).
         start_gcode_raw = await get_setting("start_gcode", self.DEFAULT_START_GCODE)
-        start_gcode = ""
-        if start_gcode_raw.strip():
-            start_gcode = start_gcode_raw.replace(
-                "{nozzle_temp}", str(int(nozzle_temp))
-            ).replace("{bed_temp}", str(int(bed_temp)))
-            self._notify_terminal("[SYSTEM] Running start G-code...", "system")
+        if not start_gcode_raw.strip():
+            start_gcode_raw = self.DEFAULT_START_GCODE
+        start_gcode = start_gcode_raw.replace(
+            "{nozzle_temp}", str(int(nozzle_temp))
+        ).replace("{bed_temp}", str(int(bed_temp)))
+        self._notify_terminal("[SYSTEM] Running start G-code...", "system")
 
         # Store selected spool for filament deduction on completion
         self._current_spool_id = spool_id
@@ -683,9 +685,10 @@ M117 Print Complete"""
         # 2. Run end G-code (retract, present, cool down, disable motors)
         try:
             end_gcode = await get_setting("end_gcode", self.DEFAULT_END_GCODE)
-            if end_gcode.strip():
-                self._notify_terminal("[SYSTEM] Running end G-code...", "system")
-                await self._run_gcode_sequence(end_gcode, 0, 0)
+            if not end_gcode.strip():
+                end_gcode = self.DEFAULT_END_GCODE
+            self._notify_terminal("[SYSTEM] Running end G-code...", "system")
+            await self._run_gcode_sequence(end_gcode, 0, 0)
 
             cooldown = await get_setting("post_print_cooldown", "true")
             if cooldown == "true" and not end_gcode.strip():

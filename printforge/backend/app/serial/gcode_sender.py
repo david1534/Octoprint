@@ -210,16 +210,6 @@ class GcodeSender:
                 self._in_start_gcode = False
                 logger.info("Start G-code complete, streaming file...")
 
-            # Reset the printer's line-number counter so the first
-            # checksummed file command (N1) is accepted.  Without this,
-            # a second print in the same session sends N1 while the
-            # printer still expects the next number after the previous
-            # print, causing every line to be silently rejected.
-            reset_future = await self._queue.enqueue(
-                "M110 N0", priority=CommandPriority.SYSTEM
-            )
-            await reset_future
-
             consecutive_failures = 0
             max_consecutive_failures = 10
 
@@ -257,11 +247,13 @@ class GcodeSender:
                     if not stripped:
                         continue
 
-                    # Send through command queue with checksum for reliability
+                    # Send through command queue (plain G-code, no
+                    # checksums — USB serial has its own CRC layer and
+                    # the line-number system caused more failures than
+                    # it prevented).
                     future = await self._queue.enqueue(
                         stripped,
                         priority=CommandPriority.PRINT,
-                        with_checksum=True,
                     )
                     # Wait for command to complete before sending next
                     result: CommandResult = await future
@@ -309,11 +301,18 @@ class GcodeSender:
             if self._lcd_enabled:
                 await self._queue.enqueue("M117 Print Complete", CommandPriority.PRINT)
 
-            logger.info("Print completed: %s", filepath.name)
+            elapsed = time.time() - self._start_time if self._start_time else 0
+            logger.info(
+                "Print completed: %s (%d/%d lines in %.1fs)",
+                filepath.name,
+                self._current_line,
+                self._total_lines,
+                elapsed,
+            )
         except asyncio.CancelledError:
-            logger.info("Print task cancelled")
+            logger.info("Print task cancelled (CancelledError)")
         except Exception:
-            logger.exception("Error during print")
+            logger.exception("Error during print (unhandled exception)")
 
     async def pause(self) -> None:
         """Pause the print with safe nozzle parking."""
