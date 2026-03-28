@@ -94,9 +94,9 @@ The installer will walk you through **9 steps** with clear progress output:
 | **3** | Sets up the PrintForge backend — copies files to `/opt/printforge`, creates a Python virtual environment, installs all pip packages. |
 | **4** | Builds the SvelteKit frontend on the Pi — runs `npm install` and `npm run build`, deploys the compiled static files. |
 | **5** | Creates data directories at `~/printforge/` (gcodes, data, logs). If you had G-code files in OctoPrint, it offers to copy them over. |
-| **6** | Downloads go2rtc (lightweight camera streamer) and auto-detects your USB webcam. |
+| **6** | Builds ustreamer (lightweight MJPEG camera streamer) from source and auto-detects your USB webcam. |
 | **7** | Auto-detects your printer's serial port, installs udev rules for a stable `/dev/printforge` symlink, and adds your user to the `dialout` and `video` groups. |
-| **8** | Creates and installs systemd services so PrintForge and go2rtc start automatically on boot. |
+| **8** | Creates and installs systemd services so PrintForge and ustreamer start automatically on boot. |
 | **9** | Generates a restore script at `~/printforge/restore-octoprint.sh` so you can switch back to OctoPrint at any time. |
 
 ### What to Expect
@@ -130,7 +130,7 @@ ssh pi@<your-pi-ip>
 
 ```bash
 sudo systemctl status printforge
-sudo systemctl status go2rtc
+sudo systemctl status ustreamer
 ```
 
 Both should show **active (running)** in green.
@@ -184,25 +184,25 @@ If all of this works, your serial communication is solid.
 If you have a USB webcam plugged in:
 
 1. The camera feed should appear on the **Dashboard** page
-2. If it doesn't, check the go2rtc logs:
+2. If it doesn't, check the ustreamer logs:
 
 ```bash
-sudo journalctl -u go2rtc -f
+sudo journalctl -u ustreamer -f
 ```
 
 3. If the camera isn't detected, try a different USB port (avoid USB hubs) and restart:
 
 ```bash
-sudo systemctl restart go2rtc
+sudo systemctl restart ustreamer
 ```
 
 4. If you need to change the camera device or resolution:
 
 ```bash
-sudo nano /opt/printforge/go2rtc.yaml
+sudo systemctl edit ustreamer --full
 ```
 
-Change `/dev/video0` to your camera's device path (check with `ls /dev/video*`), then restart go2rtc.
+Change `--device`, `--resolution`, or `--desired-fps` as needed, then restart ustreamer.
 
 ---
 
@@ -227,38 +227,13 @@ Change `/dev/video0` to your camera's device path (check with `ls /dev/video*`),
 
 Choose one of these options to access PrintForge from outside your local network:
 
-### Option A — Tailscale (Simplest, 100% Free)
+### Tailscale (Simplest, 100% Free)
 
-Best if you just want it to work with no fuss. Requires installing the Tailscale app on each device you want to access the printer from.
+Install Tailscale on your Pi (`curl -fsSL https://tailscale.com/install.sh | sh`) and on your phone/computer from [tailscale.com/download](https://tailscale.com/download). Access the printer at `http://<tailscale-ip>:8000`.
 
-```bash
-bash ~/printforge-src/printforge/scripts/tailscale-setup.sh
-```
+### Cloudflare Tunnel (requires a domain)
 
-This will:
-1. Install Tailscale on your Pi
-2. Give you a URL to authenticate in your browser
-3. Show you the Tailscale IP to access PrintForge
-
-Then install Tailscale on your phone/computer from [tailscale.com/download](https://tailscale.com/download) and access your printer at `http://<tailscale-ip>:8000`.
-
-### Option B — Cloudflare Tunnel (More Polished)
-
-Best if you want a clean URL like `printer.yourdomain.com`. Requires a Cloudflare account (free) and a domain name (~$10/year for a cheap `.xyz` domain).
-
-```bash
-bash ~/printforge-src/printforge/scripts/cloudflare-setup.sh
-```
-
-This will walk you through:
-1. Installing cloudflared
-2. Authenticating with your Cloudflare account
-3. Creating a tunnel and DNS route
-4. Installing as a systemd service
-
-After setup, access your printer at `https://printer.yourdomain.com`.
-
-> **Recommended**: Set up Cloudflare Access (Zero Trust) for email-based authentication so only you can access it. Go to the Cloudflare dashboard → Zero Trust → Access → Applications.
+Install cloudflared on the Pi, create a tunnel, and point a DNS record at it. Gives you a public HTTPS URL like `https://printer.yourdomain.com`.
 
 ---
 
@@ -269,15 +244,15 @@ After setup, access your printer at `https://printer.yourdomain.com`.
 ```bash
 # View live logs
 sudo journalctl -u printforge -f
-sudo journalctl -u go2rtc -f
+sudo journalctl -u ustreamer -f
 
 # Restart services
 sudo systemctl restart printforge
-sudo systemctl restart go2rtc
+sudo systemctl restart ustreamer
 
 # Stop services
 sudo systemctl stop printforge
-sudo systemctl stop go2rtc
+sudo systemctl stop ustreamer
 
 # Disable auto-start on boot
 sudo systemctl disable printforge
@@ -297,7 +272,7 @@ To switch back to PrintForge later:
 
 ```bash
 sudo systemctl stop octoprint
-sudo systemctl start printforge go2rtc
+sudo systemctl start printforge ustreamer
 ```
 
 ### Configuration
@@ -342,10 +317,9 @@ sudo systemctl restart printforge
 | Check | How |
 |-------|-----|
 | Webcam detected | `ls /dev/video*` — should list at least one device |
-| go2rtc running | `sudo systemctl status go2rtc` |
-| go2rtc logs | `sudo journalctl -u go2rtc -f` |
+| ustreamer running | `sudo systemctl status ustreamer` |
+| ustreamer logs | `sudo journalctl -u ustreamer -f` |
 | Try different port | Move camera to a different USB port (avoid hubs) |
-| Config mismatch | Check `/opt/printforge/go2rtc.yaml` — device path should match `ls /dev/video*` |
 
 ### Serial Communication Errors During Printing
 
@@ -357,9 +331,9 @@ sudo systemctl restart printforge
 ### Out of Memory
 
 - Check usage: `free -h`
-- PrintForge uses ~115MB total (backend ~60MB + go2rtc ~25MB + overhead ~30MB)
+- PrintForge uses ~115MB total (backend ~60MB + ustreamer ~10MB + overhead ~30MB)
 - Your Pi 4 with 2GB+ has plenty of headroom
-- If tight for some reason, reduce go2rtc resolution in the YAML config
+- If tight for some reason, reduce ustreamer resolution in the service config
 
 ### Web UI Not Loading
 
@@ -381,8 +355,7 @@ sudo systemctl restart printforge
 | Database + settings | `~/printforge/data/` |
 | Logs | `~/printforge/logs/` |
 | Systemd service | `/etc/systemd/system/printforge.service` |
-| go2rtc service | `/etc/systemd/system/go2rtc.service` |
-| go2rtc config | `/opt/printforge/go2rtc.yaml` |
-| Camera streaming | `/opt/printforge/go2rtc` (binary) |
+| ustreamer service | `/etc/systemd/system/ustreamer.service` |
+| ustreamer binary | `/usr/local/bin/ustreamer` |
 | udev rules | `/etc/udev/rules.d/99-printforge.rules` |
 | Restore script | `~/printforge/restore-octoprint.sh` |

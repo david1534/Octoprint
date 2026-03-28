@@ -4,7 +4,7 @@
 
 **PrintForge** — A self-hosted 3D printer control system (modern OctoPrint replacement). Runs on a Raspberry Pi, connects via USB serial to Marlin-based printers (Ender 3 S1 Pro primary target).
 
-**Stack:** SvelteKit (Svelte 5) + FastAPI (Python) + SQLite + pyserial-asyncio + go2rtc (camera)
+**Stack:** SvelteKit (Svelte 5) + FastAPI (Python) + SQLite + pyserial-asyncio + ustreamer (camera)
 
 ## Architecture
 
@@ -25,14 +25,9 @@ Octoprint/
 │   │   └── USB_POWER_WARNING.md      # Critical USB 5V pin safety guide
 │   ├── scripts/
 │   │   ├── install.sh                # One-command Pi installer
-│   │   ├── deploy.sh                 # Deployment script
 │   │   ├── printforge.service        # systemd service template
-│   │   ├── go2rtc.service            # Camera streaming service
-│   │   ├── go2rtc.yaml               # go2rtc camera config
-│   │   ├── tailscale-setup.sh        # Remote access via Tailscale
-│   │   ├── cloudflare-setup.sh       # Remote access via Cloudflare Tunnel
+│   │   ├── ustreamer.service         # Camera MJPEG streaming service
 │   │   └── udev/99-printforge.rules  # USB device symlink rules
-│   ├── tools/                         # Desktop auto-slicer (Windows, CuraEngine)
 │   ├── frontend/
 │   │   ├── package.json               # Svelte 5, SvelteKit 2, Tailwind 3, Chart.js 4
 │   │   ├── svelte.config.js           # adapter-static, SPA fallback
@@ -262,7 +257,7 @@ UI button click → api.home() → POST /api/printer/home
 - **Tailscale IP:** `100.108.194.105`
 - **Install path:** `/opt/printforge/`
 - **Service:** `printforge.service` (systemd)
-- **Camera:** go2rtc at `localhost:1984`
+- **Camera:** ustreamer at `localhost:8080`
 
 ### Printer
 - **Model:** Ender 3 S1 Pro (Marlin firmware)

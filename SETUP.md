@@ -33,30 +33,12 @@ This handles everything automatically:
 - Installs Python 3, Node.js, ffmpeg
 - Sets up a Python venv with all backend dependencies
 - Builds the SvelteKit frontend
+- Builds and installs ustreamer for camera streaming
 - Auto-detects your printer serial port and camera
 - Installs systemd services (`printforge`, `ustreamer`)
 - Creates a restore script to switch back to OctoPrint
 
-### 3. Install ustreamer (camera)
-
-ustreamer needs to be built from source on the Pi:
-
-```bash
-sudo apt-get install -y libevent-dev libjpeg-dev libbsd-dev
-git clone --depth 1 https://github.com/pikvm/ustreamer.git /tmp/ustreamer
-cd /tmp/ustreamer && make -j$(nproc)
-sudo install -m 755 ustreamer /usr/local/bin/ustreamer
-```
-
-Copy the service file and enable it:
-
-```bash
-sudo cp ~/Octoprint/printforge/scripts/ustreamer.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now ustreamer
-```
-
-### 4. Open PrintForge
+### 3. Open PrintForge
 
 ```
 http://100.108.194.105:8000
@@ -68,73 +50,28 @@ Go to **Settings > Connect** to connect to your printer.
 
 ## Deploying Updates (after code changes)
 
-### Option A: Run the update script on the Pi (recommended)
+### SCP deploy (standard workflow)
 
-SSH into the Pi and run the update script. It pulls the latest code from
-GitHub, detects what changed, and only rebuilds/restarts what's needed.
-
-```bash
-ssh david1534@100.108.194.105
-bash ~/Octoprint/printforge/scripts/update.sh
-```
-
-Or as a one-liner from your laptop:
-
-```bash
-ssh david1534@100.108.194.105 "bash ~/Octoprint/printforge/scripts/update.sh"
-```
-
-> **Windows users:** If you get syntax errors, Git may have converted line
-> endings to CRLF. Fix with: `git config --global core.autocrlf input`
-> then re-clone, or run `sed -i 's/\r$//' ~/Octoprint/printforge/scripts/update.sh`
-> on the Pi before running the script. The script also auto-fixes this on its own.
-
-### Option B: Full deploy from your dev machine
-
-Pushes files from your local machine to the Pi via SCP (doesn't need the
-repo cloned on the Pi):
-
-```bash
-cd ~/Desktop/Octoprint/printforge
-SKIP_CHECKS=true bash scripts/deploy.sh
-```
-
-### Option C: Manual quick deploy
-
-If you just want to copy specific files:
+Copy files from your local machine to the Pi via SCP and restart:
 
 ```bash
 # Backend only
 scp -r printforge/backend/app/ david1534@100.108.194.105:/opt/printforge/app/
 ssh david1534@100.108.194.105 "sudo systemctl restart printforge"
 
+# Frontend (copy source, build on Pi, restart)
+scp -r printforge/frontend/src/ printforge/frontend/package.json \
+    printforge/frontend/svelte.config.js printforge/frontend/vite.config.ts \
+    printforge/frontend/tsconfig.json printforge/frontend/tailwind.config.js \
+    printforge/frontend/postcss.config.js \
+    david1534@100.108.194.105:/opt/printforge/frontend/
+ssh david1534@100.108.194.105 "cd /opt/printforge/frontend && npm install && npm run build && sudo systemctl restart printforge"
+
 # Single file
 scp printforge/backend/app/serial/protocol.py \
     david1534@100.108.194.105:/opt/printforge/app/serial/
 ssh david1534@100.108.194.105 "sudo systemctl restart printforge"
 ```
-
----
-
-## Remote Access (optional)
-
-### Tailscale (easiest — no domain needed)
-
-```bash
-ssh david1534@100.108.194.105
-bash ~/Octoprint/printforge/scripts/tailscale-setup.sh
-```
-
-Install Tailscale on your phone/laptop too. Access the printer via the Tailscale IP.
-
-### Cloudflare Tunnel (requires a domain)
-
-```bash
-ssh david1534@100.108.194.105
-bash ~/Octoprint/printforge/scripts/cloudflare-setup.sh
-```
-
-Gives you a public HTTPS URL like `https://printer.yourdomain.com`.
 
 ---
 
@@ -174,7 +111,7 @@ printforge/
 │   ├── lib/components/    # UI components (18 total)
 │   ├── lib/stores/        # Svelte stores (printer state, temp history)
 │   └── routes/            # File-based routing (pages)
-└── scripts/               # Install, deploy, service files
+└── scripts/               # Install script, service files
 ```
 
 ---
@@ -210,10 +147,6 @@ sudo journalctl -u printforge -n 50 --no-pager
 - Check ustreamer: `sudo systemctl status ustreamer`
 - Verify device exists: `ls /dev/video*`
 - Test directly: `curl http://localhost:8080/snapshot -o test.jpg`
-
-### Temperature readings stuck at 0
-Fixed in commit `353312a`. Deploy the latest backend code — the fix drains
-unsolicited serial data (M155 auto-reports) during idle periods.
 
 ### Switch back to OctoPrint
 ```bash

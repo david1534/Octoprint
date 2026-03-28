@@ -2,7 +2,7 @@
 
 .PHONY: dev dev-backend dev-frontend build install clean \
         test test-backend test-cov lint lint-backend lint-frontend \
-        format format-backend format-frontend check typecheck deploy
+        format format-backend format-frontend check typecheck
 
 # ── Development ──────────────────────────────────────────────────
 
@@ -60,12 +60,8 @@ typecheck:
 check: lint typecheck test
 	@echo "All checks passed!"
 
-# ── Deployment ───────────────────────────────────────────────────
+# ── Install (Raspberry Pi) ────────────────────────────────────────
 
-deploy:
-	bash scripts/deploy.sh
-
-# Install on Raspberry Pi
 install:
 	bash scripts/install.sh
 

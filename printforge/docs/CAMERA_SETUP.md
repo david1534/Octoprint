@@ -1,15 +1,14 @@
 # Camera & Timelapse Setup
 
-PrintForge auto-detects your camera and sets everything up during install. This doc covers what to check if something isn't working.
+PrintForge uses **ustreamer** for MJPEG camera streaming. The install script builds it from source and sets up a systemd service automatically.
 
 ## What happens automatically
 
-- `install.sh` installs **ffmpeg**, **fswebcam**, and **go2rtc**
-- go2rtc is configured to stream from the first detected USB camera
-- The timelapse system captures frames through a 3-level fallback chain:
-  1. **go2rtc** HTTP snapshot (fastest, ~10ms)
-  2. **ffmpeg** direct V4L2 capture (if go2rtc is down, ~300ms)
-  3. **fswebcam** (last resort, ~500ms)
+- `install.sh` builds **ustreamer** from source and installs **ffmpeg**
+- ustreamer streams MJPEG from the first detected USB camera on port 8080
+- The browser connects directly to ustreamer for live video (`http://<pi-ip>:8080/stream`)
+- The timelapse system captures snapshots from ustreamer's `/snapshot` endpoint (<50ms)
+- A backend proxy at `/api/camera/mjpeg` is available as a fallback
 - If ffmpeg is missing, timelapse frames are saved as a ZIP instead of video
 
 ## Verify camera works
@@ -21,15 +20,14 @@ http://<pi-ip>:8000/api/system/camera-health
 ```
 
 This shows:
-- Whether go2rtc is reachable
+- Whether ustreamer is reachable
 - Whether ffmpeg is installed
 - Whether a camera device was detected at `/dev/video*`
-- The active capture fallback chain
 
 You can also test a snapshot directly:
 
 ```
-http://<pi-ip>:8000/api/camera/snapshot
+http://<pi-ip>:8080/snapshot
 ```
 
 ## Troubleshooting
@@ -42,29 +40,29 @@ http://<pi-ip>:8000/api/camera/snapshot
    ```
    You should see `/dev/video0` (or similar).
 
-2. **Check go2rtc is running:**
+2. **Check ustreamer is running:**
    ```bash
-   sudo systemctl status go2rtc
+   sudo systemctl status ustreamer
    ```
    If it's failed, check the logs:
    ```bash
-   sudo journalctl -u go2rtc -n 30
+   sudo journalctl -u ustreamer -n 30
    ```
 
-3. **Restart go2rtc after plugging in a camera:**
+3. **Restart ustreamer after plugging in a camera:**
    ```bash
-   sudo systemctl restart go2rtc
+   sudo systemctl restart ustreamer
    ```
 
-4. **Test direct capture (bypasses go2rtc):**
+4. **Test direct capture (bypasses ustreamer):**
    ```bash
    ffmpeg -f v4l2 -i /dev/video0 -frames:v 1 test.jpg
    ```
-   If this works but go2rtc doesn't, the issue is go2rtc config.
+   If this works but ustreamer doesn't, check the service configuration.
 
 ### Timelapse records 0 frames
 
-The camera must be reachable during the print. Check `/api/system/camera-health` and look at the `captureChain` — if it says `["none"]`, no capture method is available.
+The camera must be reachable during the print. Check `/api/system/camera-health` — if no capture method is available, ustreamer may not be running.
 
 ### Timelapse saves ZIP instead of video
 
@@ -78,30 +76,26 @@ sudo systemctl restart printforge
 
 - Switch to **SNAP** mode in the camera widget (top-right toggle). This polls individual frames and is more reliable than MJPEG streaming.
 - If on Wi-Fi, try wired Ethernet — each snapshot is ~50-200KB.
-- The go2rtc config at `/opt/printforge/go2rtc.yaml` defaults to 640x480@15fps. You can increase this if your Pi handles it.
+- The default config is 640x480@30fps. Edit the service to adjust if needed.
 
 ## Camera types
 
 | Camera | Status |
 |--------|--------|
 | USB webcam (UVC) | Fully supported, auto-detected |
-| Raspberry Pi Camera Module | Supported — uncomment the `libcamera-vid` line in `go2rtc.yaml` |
-| IP camera (RTSP) | Add the RTSP URL to `go2rtc.yaml` streams |
+| Raspberry Pi Camera Module | Supported — use `--device /dev/video0` (libcamera exposes as V4L2) |
+| IP camera (RTSP) | Not directly supported by ustreamer — use ffmpeg to re-stream |
 
-### Using Raspberry Pi Camera Module
+### Changing camera device or resolution
 
-Edit `/opt/printforge/go2rtc.yaml` and swap the stream source:
+Edit the ustreamer service file:
 
-```yaml
-streams:
-  printer_cam:
-    # Comment out the USB webcam line:
-    # - exec:ffmpeg -f v4l2 ...
-    # Uncomment the Pi camera line:
-    - exec:libcamera-vid -t 0 --inline -o - --width 640 --height 480 --framerate 15
+```bash
+sudo systemctl edit ustreamer --full
 ```
 
-Then restart:
+Change `--device`, `--resolution`, or `--desired-fps` as needed, then restart:
+
 ```bash
-sudo systemctl restart go2rtc
+sudo systemctl restart ustreamer
 ```
