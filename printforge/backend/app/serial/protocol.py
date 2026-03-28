@@ -45,8 +45,17 @@ class MarlinProtocol:
     def line_number(self) -> int:
         return self._line_number
 
-    def reset_line_number(self) -> None:
+    async def reset_line_number(self) -> None:
+        """Reset line numbering on both sides.
+
+        Sends M110 N0 to Marlin so its counter matches ours. Without this,
+        any print after the first would fail with 'Line Number is not Last
+        Line Number+1' on every checksummed command.
+        """
         self._line_number = 0
+        result = await self.send_command("M110 N0")
+        if not result.ok:
+            logger.warning("M110 N0 failed: %s (continuing anyway)", result.error)
 
     def add_temp_callback(self, callback) -> None:
         self._temp_callbacks.append(callback)

@@ -39,11 +39,30 @@ class TestChecksum:
         result2 = proto._add_line_number("G1 X10")
         assert result2.startswith("N2 ")
 
-    def test_reset_line_number(self):
+    @pytest.mark.asyncio
+    async def test_reset_line_number(self):
         proto = MarlinProtocol.__new__(MarlinProtocol)
         proto._line_number = 50
-        proto.reset_line_number()
+        proto._conn = None
+        proto._last_numbered_line = ""
+        proto._temp_callbacks = []
+        proto._terminal_callbacks = []
+        proto._position_callbacks = []
+        proto.default_timeout = 10.0
+        proto.long_timeout = 300.0
+        proto._long_commands = {"G28", "G29", "M109", "M190", "M303"}
+
+        # Mock the connection to simulate M110 N0 success
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_conn = MagicMock()
+        mock_conn.send = AsyncMock()
+        mock_conn.read_line = AsyncMock(return_value="ok")
+        proto._conn = mock_conn
+
+        await proto.reset_line_number()
         assert proto._line_number == 0
+        mock_conn.send.assert_called_once_with("M110 N0")
 
 
 class TestTimeoutSelection:

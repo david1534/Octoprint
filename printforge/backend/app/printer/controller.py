@@ -78,10 +78,10 @@ class PrinterController:
         return self._camera
 
     async def init_camera_and_timelapse(
-        self, go2rtc_url: str, timelapse_dir: Path
+        self, ustreamer_url: str, timelapse_dir: Path
     ) -> None:
         """Initialize camera service and timelapse recorder."""
-        self._camera = CameraService(go2rtc_url)
+        self._camera = CameraService(ustreamer_url)
         await self._camera.init()
         self._timelapse = TimelapseRecorder(self._camera, timelapse_dir)
         logger.info(
@@ -476,7 +476,7 @@ M117 Print Complete"""
         # Store selected spool for filament deduction on completion
         self._current_spool_id = spool_id
 
-        self._protocol.reset_line_number()
+        await self._protocol.reset_line_number()
         self._safety.record_serial_activity()
 
         # Start timelapse recording
