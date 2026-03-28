@@ -9,7 +9,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-TEMP_REGEX = re.compile(r"T:(?P<hotend_actual>[\d.]+)\s*/\s*(?P<hotend_target>[\d.]+)")
+TEMP_REGEX = re.compile(r"T\d*:(?P<hotend_actual>[\d.]+)\s*/\s*(?P<hotend_target>[\d.]+)")
 BED_REGEX = re.compile(r"B:(?P<bed_actual>[\d.]+)\s*/\s*(?P<bed_target>[\d.]+)")
 
 

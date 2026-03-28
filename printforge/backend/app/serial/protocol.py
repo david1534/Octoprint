@@ -164,7 +164,7 @@ class MarlinProtocol:
             response_lines.append(line)
 
     def _is_temp_report(self, line: str) -> bool:
-        return " T:" in line or line.startswith("T:") or " T0:" in line
+        return " T:" in line or line.startswith("T:") or " T0:" in line or line.startswith("T0:")
 
     def _emit_temp(self, line: str) -> None:
         for cb in self._temp_callbacks:
