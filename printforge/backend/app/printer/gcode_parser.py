@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+# Cache parsed metadata keyed by (path, mtime, size) to avoid re-reading
+# files on every listing. Files don't change after upload so this is safe.
+_metadata_cache: dict[tuple[str, float, int], "GcodeMetadata"] = {}
+_CACHE_MAX = 100
+
 
 @dataclass
 class GcodeMetadata:
@@ -122,11 +127,20 @@ def parse_time_string(time_str: str) -> float:
 def parse_gcode_file(filepath: Path) -> GcodeMetadata:
     """Parse a G-code file and extract metadata.
 
+    Results are cached by file path, modification time, and size so that
+    repeated calls (e.g. file listings) don't re-read the entire file.
     Only reads comments and counts lines - does not execute anything.
     """
+    stat = filepath.stat()
+    cache_key = (str(filepath), stat.st_mtime, stat.st_size)
+
+    cached = _metadata_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     metadata = GcodeMetadata(
         filename=filepath.name,
-        file_size=filepath.stat().st_size,
+        file_size=stat.st_size,
         total_lines=0,
         printable_lines=0,
     )
@@ -165,6 +179,11 @@ def parse_gcode_file(filepath: Path) -> GcodeMetadata:
                     temp = float(s_match.group(1))
                     if temp > 0:
                         metadata.bed_temp = temp
+
+    # Cache result (evict oldest if full)
+    if len(_metadata_cache) >= _CACHE_MAX:
+        _metadata_cache.pop(next(iter(_metadata_cache)))
+    _metadata_cache[cache_key] = metadata
 
     return metadata
 

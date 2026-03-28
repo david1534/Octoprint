@@ -101,10 +101,10 @@ ssh "${PI_USER}@${PI_HOST}" bash -s << 'REMOTE'
 REMOTE
 echo -e "${GREEN}✓${NC} Frontend built and deployed"
 
-# 4. Restart service
-echo -e "${YELLOW}[4/5]${NC} Restarting PrintForge service..."
-ssh "${PI_USER}@${PI_HOST}" "sudo systemctl restart printforge"
-echo -e "${GREEN}✓${NC} Service restarted"
+# 4. Restart services
+echo -e "${YELLOW}[4/5]${NC} Restarting PrintForge + ustreamer services..."
+ssh "${PI_USER}@${PI_HOST}" "sudo systemctl restart ustreamer printforge"
+echo -e "${GREEN}✓${NC} Services restarted"
 
 # 5. Health check
 echo -e "${YELLOW}[5/5]${NC} Verifying service health..."

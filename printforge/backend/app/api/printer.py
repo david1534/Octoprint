@@ -199,21 +199,12 @@ async def disable_motors():
 async def temperature_history():
     """Get temperature history for charting."""
     ctrl = get_controller()
-    history = ctrl.temp_monitor.history
-    return {
-        "hotend": [
-            {
-                "actual": s.hotend.actual,
-                "target": s.hotend.target,
-                "t": s.hotend.timestamp,
-            }
-            for s in history
-        ],
-        "bed": [
-            {"actual": s.bed.actual, "target": s.bed.target, "t": s.bed.timestamp}
-            for s in history
-        ],
-    }
+    hotend = []
+    bed = []
+    for s in ctrl.temp_monitor.history:
+        hotend.append({"actual": s.hotend.actual, "target": s.hotend.target, "t": s.hotend.timestamp})
+        bed.append({"actual": s.bed.actual, "target": s.bed.target, "t": s.bed.timestamp})
+    return {"hotend": hotend, "bed": bed}
 
 
 # ── Bed mesh endpoints ────────────────────────────────────────

@@ -103,7 +103,7 @@ Check the real-time communication:
 - Read `printforge/frontend/src/lib/components/CameraFeed.svelte`:
   - Three modes: snapshot polling, MJPEG direct, MJPEG proxied
   - Auto-retry with fallback between modes
-- Check go2rtc configuration in `printforge/scripts/go2rtc.yaml`
+- Check ustreamer service: `systemctl status ustreamer`
 
 3. **Report findings** as a structured diagnostic:
 
@@ -152,7 +152,7 @@ Check the real-time communication:
 | Print stops randomly | USB power issue | Tape over USB pin 1 (see USB_POWER_WARNING.md) |
 | WebSocket drops | Auth key mismatch | Check API key in localStorage vs backend |
 | "Thermal runaway" | Fast heating + tight threshold | Adjust safety thresholds in config |
-| Camera black | go2rtc not running | `systemctl status go2rtc` |
+| Camera black | ustreamer not running | `systemctl status ustreamer` |
 
 ## Critical Rules
 

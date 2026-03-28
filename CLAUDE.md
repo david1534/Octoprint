@@ -54,10 +54,11 @@ The frontend uses **bun** for install/dev but `npm run build` in the Makefile/de
 4. Check: `curl http://100.108.194.105:8000`
 
 ### Camera System
-- go2rtc runs as a separate service at `localhost:1984`
-- Camera feed has 3 fallback modes: snapshot polling → MJPEG direct → MJPEG proxied
+- ustreamer runs as a separate service at `localhost:8080`
+- Browser connects directly to ustreamer for MJPEG (`http://host:8080/stream`) — no proxy
+- Fallback chain: direct MJPEG → proxied MJPEG (`/api/camera/mjpeg`) → snapshot polling
 - Snapshot mode uses `<canvas>` for rendering (~10-15 FPS)
-- MJPEG mode uses `<img>` tag with direct stream URL
+- Snapshots fetched from ustreamer's `/snapshot` endpoint (<50ms)
 
 ### API Key Auth
 - Stored in `localStorage` as `printforge:apiKey`

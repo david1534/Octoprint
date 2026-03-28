@@ -9,24 +9,27 @@ User reports camera feed not working, timelapse recording 0 frames, snapshot err
 
 ### 1. Check Camera Health Endpoint
 Read `backend/app/services/camera.py` and `backend/app/api/system.py` — the `/api/system/camera-health` endpoint reports:
-- `go2rtc.available` — is go2rtc reachable?
+- `ustreamer.available` — is ustreamer reachable?
 - `ffmpeg.available` / `ffmpeg.path` — is ffmpeg installed?
 - `device.path` / `device.exists` — was a V4L2 camera detected?
 - `captureChain` — what fallback sources are active?
 
 ### 2. Check the Capture Fallback Chain
 The `CameraService` in `backend/app/services/camera.py` tries sources in order:
-1. **go2rtc** HTTP snapshot (`/api/frame.jpeg?src=printer_cam`)
+1. **ustreamer** HTTP snapshot (`/snapshot` — instant, <50ms)
 2. **ffmpeg** direct V4L2 capture (`ffmpeg -f v4l2 -i /dev/video0 ...`)
 3. **fswebcam** (`fswebcam --no-banner -d /dev/video0 ...`)
 
 If all three fail, `snapshot()` returns `None`.
 
-### 3. Check go2rtc Config
-Read `scripts/go2rtc.yaml`:
+### 3. Check ustreamer Service
+```bash
+systemctl status ustreamer
+journalctl -u ustreamer -n 30
+```
 - Is the camera device path correct (`/dev/video0`)?
-- Is the stream named `printer_cam`?
-- Is it using `exec:ffmpeg` or `exec:libcamera-vid`?
+- Is it listening on port 8080?
+- Test directly: `curl -s -o /dev/null -w '%{time_total}' http://localhost:8080/snapshot`
 
 ### 4. Check Timelapse Service
 Read `backend/app/services/timelapse.py`:
@@ -36,19 +39,20 @@ Read `backend/app/services/timelapse.py`:
 
 ### 5. Check Frontend Camera Feed
 Read `frontend/src/lib/components/CameraFeed.svelte`:
-- Default mode: snapshot polling via `fetch()` + `createImageBitmap()` + canvas
-- Fallback: MJPEG stream via `<img>` tag
+- Default mode: direct MJPEG from ustreamer (`http://host:8080/stream`)
+- Fallback 1: proxied MJPEG via `/api/camera/mjpeg`
+- Fallback 2: snapshot polling via `fetch()` + `createImageBitmap()` + canvas
 - Mode switcher: SNAP / MJPEG buttons in top-right
 
 ### 6. Common Issues
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| "Camera unavailable" | go2rtc down + no camera device | Check USB cam plugged in, restart go2rtc |
+| "Camera unavailable" | ustreamer down + no camera device | Check USB cam plugged in, restart ustreamer |
 | 0 timelapse frames | Camera unreachable during print | Check `/api/system/camera-health` |
 | ZIP instead of MP4 | ffmpeg not installed | `sudo apt-get install ffmpeg` |
 | Laggy feed | Large chunk size or network | Switch to SNAP mode in UI |
-| Black frames | Wrong `/dev/video*` device | Check `go2rtc.yaml` device path |
+| Black frames | Wrong `/dev/video*` device | Check ustreamer service device path |
 | "Assembling" stuck | ffmpeg crash or timeout (300s) | Check Pi CPU/memory, reduce frame count |
 
 ### 7. Key Files
@@ -59,5 +63,5 @@ Read `frontend/src/lib/components/CameraFeed.svelte`:
 - `backend/app/api/system.py` — Camera health endpoint
 - `frontend/src/lib/components/CameraFeed.svelte` — Camera UI
 - `frontend/src/routes/timelapse/+page.svelte` — Timelapse page
-- `scripts/go2rtc.yaml` — go2rtc camera config
+- `scripts/ustreamer.service` — ustreamer systemd service
 - `docs/CAMERA_SETUP.md` — User-facing troubleshooting guide

@@ -1,12 +1,12 @@
 """Camera capture service with multi-source fallback.
 
 Provides a single async ``snapshot()`` method that tries sources in order:
-1. ustreamer HTTP snapshot  (fastest — already running, ~10ms)
+1. ustreamer HTTP snapshot  (fastest — already running, zero startup cost)
 2. ffmpeg direct V4L2       (no ustreamer needed, ~0.3s per frame)
 3. fswebcam                 (last resort, ~0.5s per frame)
 
-Also provides utilities for auto-detecting the camera device and
-checking ffmpeg availability.
+Also provides utilities for auto-detecting the camera device, checking
+ffmpeg availability, and health diagnostics.
 """
 
 import asyncio
@@ -98,7 +98,7 @@ class CameraService:
         Tries sources in priority order and returns raw JPEG bytes,
         or None if all sources fail.
         """
-        # 1. ustreamer (fastest, ~10ms)
+        # 1. ustreamer (fastest, <50ms)
         if self._ustreamer_ok is not False:
             jpg = await self._snapshot_ustreamer()
             if jpg:
@@ -179,6 +179,8 @@ class CameraService:
             if proc.returncode == 0 and len(stdout) > 100:
                 return stdout
         except asyncio.TimeoutError:
+            # Kill the subprocess to avoid orphaned ffmpeg processes that
+            # could hold the V4L2 device lock on the Pi
             if proc:
                 proc.kill()
                 await proc.wait()
@@ -229,7 +231,7 @@ class CameraService:
         """Quick connectivity check against ustreamer."""
         try:
             client = self._client or httpx.AsyncClient(timeout=httpx.Timeout(2.0))
-            resp = await client.get(f"{self._ustreamer_url}/state")
+            resp = await client.get(f"{self._ustreamer_url}/snapshot")
             return resp.status_code == 200
         except Exception:
             return False

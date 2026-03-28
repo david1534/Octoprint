@@ -76,7 +76,7 @@ async def health():
 async def camera_health():
     """Camera system health check.
 
-    Reports go2rtc status, ffmpeg availability, camera device detection,
+    Reports ustreamer status, ffmpeg availability, camera device detection,
     and the active capture fallback chain.
     """
     from ..printer.controller import PrinterController
@@ -87,12 +87,12 @@ async def camera_health():
     ctrl = getattr(printer_api, "_controller", None)
     if ctrl and ctrl.camera:
         health = ctrl.camera.health_dict()
-        # Also refresh go2rtc status
-        await ctrl.camera.refresh_go2rtc_status()
-        health["go2rtc"]["available"] = ctrl.camera.go2rtc_available
+        # Also refresh ustreamer status
+        await ctrl.camera.refresh_ustreamer_status()
+        health["ustreamer"]["available"] = ctrl.camera.ustreamer_available
         return health
     return {
-        "go2rtc": {"available": False, "url": ""},
+        "ustreamer": {"available": False, "url": ""},
         "ffmpeg": {"available": False, "path": None},
         "fswebcam": {"available": False},
         "device": {"path": None, "exists": False},

@@ -304,7 +304,10 @@ class GcodeSender:
                             return
                     else:
                         consecutive_failures = 0
-                    self._current_line += 1
+                        # Only advance progress on success — prevents
+                        # progress from racing to 100% if commands are
+                        # being silently rejected by the printer.
+                        self._current_line += 1
 
                     # Track filament usage from E values
                     self._track_filament(stripped)

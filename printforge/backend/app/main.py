@@ -162,25 +162,20 @@ app.include_router(filament.router)
 async def camera_stream_url(request: Request):
     """Return camera stream URLs for the frontend.
 
-    Returns the direct ustreamer MJPEG URL (browser connects directly
-    to port 8080) plus a proxied fallback and snapshot endpoint.
+    Returns a direct ustreamer URL for MJPEG streaming (the browser
+    connects directly via Tailscale — no proxy needed, no auth issues)
+    plus the proxied snapshot URL as a fallback.
     """
-    # Build direct ustreamer URL using the request host (same IP, port 8080)
-    host = request.headers.get("host", "").split(":")[0] or "localhost"
+    host = request.headers.get("host", "localhost").split(":")[0]
     return {
-        "mjpeg_direct": f"http://{host}:8080/stream",
-        "mjpeg": "/api/camera/mjpeg",
+        "mjpeg": f"http://{host}:8080/stream",
         "snapshot": "/api/camera/snapshot",
     }
 
 
 @app.get("/api/camera/mjpeg")
 async def camera_mjpeg_proxy():
-    """Proxy ustreamer's MJPEG stream to the browser.
-
-    Used as a fallback when the browser can't reach ustreamer directly
-    on port 8080. Streams raw MJPEG bytes through FastAPI.
-    """
+    """Proxy ustreamer's MJPEG stream (fallback if direct access fails)."""
     stream_url = f"{settings.camera_url}/stream"
 
     # Use a dedicated client per MJPEG stream (the stream is long-lived
@@ -201,9 +196,7 @@ async def camera_mjpeg_proxy():
         await client.aclose()
         return JSONResponse(content={"error": "Camera unavailable"}, status_code=503)
 
-    # Pass through the exact Content-Type from ustreamer so the browser
-    # sees the correct multipart boundary string.
-    content_type = resp.headers.get("content-type", "multipart/x-mixed-replace; boundary=frame")
+    content_type = resp.headers.get("content-type", "multipart/x-mixed-replace; boundary=--frame")
 
     async def stream():
         try:
@@ -220,7 +213,6 @@ async def camera_mjpeg_proxy():
         media_type=content_type,
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
@@ -229,11 +221,10 @@ async def camera_mjpeg_proxy():
 
 @app.get("/api/camera/snapshot")
 async def camera_snapshot():
-    """Return a single JPEG snapshot from the camera.
+    """Return a single JPEG snapshot from ustreamer.
 
     Uses a frame cache to avoid hammering ustreamer on rapid polling.
-    Multiple frontend requests within the TTL window get the same frame,
-    keeping ustreamer load low while the frontend renders smoothly.
+    Multiple frontend requests within the TTL window get the same frame.
     """
     global _frame_cache, _frame_cache_time
     import time
@@ -245,10 +236,7 @@ async def camera_snapshot():
         return Response(
             content=_frame_cache,
             media_type="image/jpeg",
-            headers={
-                "Cache-Control": "no-cache, no-store",
-                "Pragma": "no-cache",
-            },
+            headers={"Cache-Control": "no-cache, no-store"},
         )
 
     # Fetch a new frame (serialized to avoid thundering herd)
@@ -270,31 +258,24 @@ async def camera_snapshot():
         return Response(
             content=jpg,
             media_type="image/jpeg",
-            headers={
-                "Cache-Control": "no-cache, no-store",
-                "Pragma": "no-cache",
-            },
+            headers={"Cache-Control": "no-cache, no-store"},
         )
     return JSONResponse({"error": "Camera unavailable"}, status_code=503)
 
 
 async def _fetch_snapshot() -> bytes | None:
-    """Fetch a fresh JPEG frame from ustreamer or fallback sources."""
-    snapshot_url = f"{settings.camera_url}/snapshot"
-    jpg: bytes | None = None
+    """Fetch a JPEG frame from ustreamer's snapshot endpoint."""
     try:
         if _camera_client:
-            resp = await _camera_client.get(snapshot_url)
+            resp = await _camera_client.get(f"{settings.camera_url}/snapshot")
             if resp.status_code == 200 and len(resp.content) > 100:
-                jpg = resp.content
+                return resp.content
     except Exception:
         pass
-
     # Fallback: use camera service's full chain (ffmpeg direct, fswebcam)
-    if not jpg and controller.camera:
-        jpg = await controller.camera.snapshot()
-
-    return jpg
+    if controller.camera:
+        return await controller.camera.snapshot()
+    return None
 
 
 # Serve built frontend — MUST be last, catches all routes.

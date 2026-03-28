@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     gcode_dir: str = os.path.expanduser("~/printforge/gcodes")
     data_dir: str = os.path.expanduser("~/printforge/data")
 
-    # Camera (ustreamer on port 8080)
+    # Camera (ustreamer)
     camera_url: str = "http://localhost:8080"
 
     # Safety limits

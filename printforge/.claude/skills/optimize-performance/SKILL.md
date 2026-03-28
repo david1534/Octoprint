@@ -8,9 +8,9 @@ User reports slow UI, high CPU, laggy WebSocket updates, slow file uploads, or m
 ## Architecture Bottlenecks
 
 ### CPU-Bound Operations
-1. **go2rtc ffmpeg transcoding** — H.264 encoding from USB cam uses significant CPU
-   - Config: `scripts/go2rtc.yaml`
-   - Fix: Reduce resolution (640x480), lower framerate (10-15fps), use `h264_v4l2m2m` hardware encoder
+1. **ustreamer camera streaming** — Lightweight MJPEG passthrough, minimal CPU
+   - Service: `scripts/ustreamer.service`
+   - Fix: Reduce resolution (640x480), lower framerate, use `--drop-same-frames`
 2. **Timelapse video assembly** — ffmpeg encodes MP4 from JPEG frames
    - Code: `backend/app/services/timelapse.py` `_assemble_video()`
    - Fix: Use `-preset ultrafast`, lower `-crf` quality, or assemble after print on idle
@@ -31,7 +31,7 @@ User reports slow UI, high CPU, laggy WebSocket updates, slow file uploads, or m
 ### Memory
 1. **Camera snapshot buffering** — Each JPEG frame is ~50-200KB in memory
    - `backend/app/services/camera.py`, `main.py` snapshot endpoint
-2. **MJPEG proxy streaming** — httpx streams 8KB chunks, low memory
+2. **MJPEG proxy streaming** — httpx streams 32KB chunks, low memory
 3. **G-code file reading** — Line-by-line streaming, not loaded into memory
 
 ### Frontend
@@ -44,13 +44,13 @@ User reports slow UI, high CPU, laggy WebSocket updates, slow file uploads, or m
 ## Key Config Knobs
 - `POLL_INTERVAL` in `CameraFeed.svelte` — ms between snapshot fetches (100-500)
 - `_safety_loop` tick rate in `controller.py` — currently 1s
-- `chunk_size` in `main.py` MJPEG proxy — currently 8192 bytes
+- `chunk_size` in `main.py` MJPEG proxy — currently 32768 bytes
 - Timelapse `_render_fps` — lower = shorter assembly time
-- go2rtc `-framerate` and `-video_size` in `go2rtc.yaml`
+- ustreamer `--desired-fps` and `--resolution` in `ustreamer.service`
 
 ## Optimization Checklist
 1. Read `/api/system/health` for CPU, memory, temperature
-2. Check go2rtc settings in `scripts/go2rtc.yaml`
+2. Check ustreamer service: `systemctl status ustreamer`
 3. Check camera polling interval in `CameraFeed.svelte`
 4. Review WebSocket broadcast frequency in `_safety_loop`
 5. Check timelapse ffmpeg preset in `timelapse.py`

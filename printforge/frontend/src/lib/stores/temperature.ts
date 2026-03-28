@@ -30,19 +30,17 @@ export function initTempHistory(): void {
 		if (state.status === 'disconnected') return;
 
 		tempHistory.update((history) => {
-			const point: TempPoint = {
+			history.push({
 				time: now,
 				hotendActual: state.hotend.actual,
 				hotendTarget: state.hotend.target,
 				bedActual: state.bed.actual,
 				bedTarget: state.bed.target
-			};
-			const updated = [...history, point];
-			// Trim to max size
-			if (updated.length > MAX_POINTS) {
-				return updated.slice(updated.length - MAX_POINTS);
+			});
+			if (history.length > MAX_POINTS) {
+				history.shift();
 			}
-			return updated;
+			return history;
 		});
 	});
 }

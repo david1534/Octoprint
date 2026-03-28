@@ -1,20 +1,16 @@
 [Unit]
-Description=ustreamer MJPEG camera streamer
+Description=ustreamer Camera Streaming for PrintForge
 After=network.target
 
 [Service]
-ExecStart=/opt/printforge/ustreamer \
-    --device /dev/video0 \
-    --host 0.0.0.0 \
-    --port 8080 \
-    --resolution 640x480 \
-    --desired-fps 30 \
-    --persistent \
-    --quality 80
-Restart=always
-RestartSec=3
+Type=simple
 User=david1534
-Group=video
+Group=david1534
+ExecStart=/usr/local/bin/ustreamer --device /dev/video0 --host 0.0.0.0 --port 8080 --format MJPEG --resolution 640x480 --desired-fps 30 --drop-same-frames 30
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

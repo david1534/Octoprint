@@ -1,9 +1,8 @@
 """File management REST API endpoints with folder support."""
 
-import os
+import re
 import shutil
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, Query
 
@@ -29,7 +28,7 @@ def _safe_resolve(subpath: str) -> Path:
     return resolved
 
 
-async def _file_info(filepath: Path, relative_to: Path) -> dict:
+async def _file_info(filepath: Path) -> dict:
     """Get file info dict for a gcode file."""
     try:
         metadata = parse_gcode_file(filepath)
@@ -81,7 +80,7 @@ async def list_files(path: str = Query("", description="Subfolder path to list")
                 "fileCount": gcode_count,
             })
         elif entry.suffix.lower() in ALLOWED_EXTENSIONS:
-            files.append(await _file_info(entry, GCODE_DIR))
+            files.append(await _file_info(entry))
 
     return {
         "currentPath": path,
@@ -203,7 +202,6 @@ async def rename_file(
     if not src_path.exists() or not src_path.is_file():
         raise HTTPException(404, f"File not found: {src}")
 
-    import re
     safe_name = re.sub(r"[^\w.\-() ]", "_", name.strip())
     if not safe_name:
         raise HTTPException(400, "Invalid filename")
@@ -234,7 +232,6 @@ async def rename_folder(
     if not src_path.exists() or not src_path.is_dir():
         raise HTTPException(404, f"Folder not found: {src}")
 
-    import re
     safe_name = re.sub(r"[^\w.\-() ]", "_", name.strip())
     if not safe_name:
         raise HTTPException(400, "Invalid folder name")
