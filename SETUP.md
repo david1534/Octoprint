@@ -68,36 +68,47 @@ Go to **Settings > Connect** to connect to your printer.
 
 ## Deploying Updates (after code changes)
 
-### Option A: Full deploy script (recommended)
+### Option A: Run the update script on the Pi (recommended)
 
-From your dev machine (not the Pi):
+SSH into the Pi and run the update script. It pulls the latest code from
+GitHub, detects what changed, and only rebuilds/restarts what's needed.
+
+```bash
+ssh david1534@100.108.194.105
+bash ~/Octoprint/printforge/scripts/update.sh
+```
+
+Or as a one-liner from your laptop:
+
+```bash
+ssh david1534@100.108.194.105 "bash ~/Octoprint/printforge/scripts/update.sh"
+```
+
+> **Windows users:** If you get syntax errors, Git may have converted line
+> endings to CRLF. Fix with: `git config --global core.autocrlf input`
+> then re-clone, or run `sed -i 's/\r$//' ~/Octoprint/printforge/scripts/update.sh`
+> on the Pi before running the script. The script also auto-fixes this on its own.
+
+### Option B: Full deploy from your dev machine
+
+Pushes files from your local machine to the Pi via SCP (doesn't need the
+repo cloned on the Pi):
 
 ```bash
 cd ~/Desktop/Octoprint/printforge
 SKIP_CHECKS=true bash scripts/deploy.sh
 ```
 
-This will:
-1. Upload backend to `/opt/printforge/app/` on the Pi
-2. Fix file permissions
-3. Upload frontend source and rebuild on the Pi
-4. Restart `printforge` + `ustreamer` services
-5. Health check against `/api/system/health`
+### Option C: Manual quick deploy
 
-### Option B: Backend-only (faster)
-
-If you only changed Python files:
+If you just want to copy specific files:
 
 ```bash
+# Backend only
 scp -r printforge/backend/app/ david1534@100.108.194.105:/opt/printforge/app/
 ssh david1534@100.108.194.105 "sudo systemctl restart printforge"
-```
 
-### Option C: Specific files only (fastest)
-
-If you changed just one or two files:
-
-```bash
+# Single file
 scp printforge/backend/app/serial/protocol.py \
     david1534@100.108.194.105:/opt/printforge/app/serial/
 ssh david1534@100.108.194.105 "sudo systemctl restart printforge"
