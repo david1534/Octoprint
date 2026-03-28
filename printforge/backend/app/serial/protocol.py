@@ -132,6 +132,20 @@ class MarlinProtocol:
             if line.startswith("Error:"):
                 error_msg = line[6:].strip()
                 logger.error("Printer error: %s", error_msg)
+                # Marlin often follows error responses with
+                # "Resend: N\nok".  Drain those trailing lines so
+                # they don't contaminate the next command's read loop.
+                for _ in range(5):
+                    try:
+                        drain = await self._conn.read_line(timeout=0.1)
+                        if drain:
+                            self._emit_terminal(drain, "recv")
+                            if self._is_temp_report(drain):
+                                self._emit_temp(drain)
+                            if drain.startswith("ok"):
+                                break
+                    except (asyncio.TimeoutError, ConnectionError):
+                        break
                 return CommandResult(command=original_command, ok=False, response_lines=response_lines, error=error_msg)
             response_lines.append(line)
 

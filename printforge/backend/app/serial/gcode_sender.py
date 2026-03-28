@@ -210,6 +210,16 @@ class GcodeSender:
                 self._in_start_gcode = False
                 logger.info("Start G-code complete, streaming file...")
 
+            # Reset the printer's line-number counter so the first
+            # checksummed file command (N1) is accepted.  Without this,
+            # a second print in the same session sends N1 while the
+            # printer still expects the next number after the previous
+            # print, causing every line to be silently rejected.
+            reset_future = await self._queue.enqueue(
+                "M110 N0", priority=CommandPriority.SYSTEM
+            )
+            await reset_future
+
             consecutive_failures = 0
             max_consecutive_failures = 10
 
