@@ -198,5 +198,27 @@ class MarlinProtocol:
                     return line
         return "Unknown"
 
+    async def drain_unsolicited(self) -> None:
+        """Read and process any unsolicited serial data (e.g. M155 auto-reports).
+
+        Called by the command queue during idle periods so that temperature
+        auto-reports, position updates, and other asynchronous printer output
+        are processed even when no commands are being sent.
+        """
+        while True:
+            try:
+                line = await self._conn.read_line(timeout=0.1)
+            except asyncio.TimeoutError:
+                break
+            except ConnectionError:
+                break
+            if not line:
+                continue
+            self._emit_terminal(line, "recv")
+            if self._is_temp_report(line):
+                self._emit_temp(line)
+            if line.startswith("X:") and "Y:" in line and "Z:" in line:
+                self._emit_position(line)
+
     async def enable_auto_temp_report(self, interval: int = 2) -> None:
         await self.send_command(f"M155 S{interval}")

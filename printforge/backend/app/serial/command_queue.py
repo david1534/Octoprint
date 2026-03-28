@@ -109,6 +109,12 @@ class CommandQueue:
             try:
                 queued = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
+                # Drain unsolicited serial data (M155 auto-reports, etc.)
+                # so temperature readings stay fresh between commands.
+                try:
+                    await self._protocol.drain_unsolicited()
+                except Exception:
+                    pass
                 continue
             except asyncio.CancelledError:
                 break
