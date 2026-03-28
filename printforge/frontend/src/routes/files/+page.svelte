@@ -36,6 +36,9 @@
 	let showNewFolder = $state(false);
 	let newFolderName = $state('');
 
+	// Upload toggle
+	let showUpload = $state(false);
+
 	// Rename state
 	let renamingFile = $state<string | null>(null);
 	let renameValue = $state('');
@@ -460,10 +463,12 @@
 	</div>
 {/if}
 
-<!-- Upload area -->
-<div class="mb-4">
-	<FileUpload />
-</div>
+<!-- Upload area (toggled) -->
+{#if showUpload}
+	<div class="mb-4">
+		<FileUpload />
+	</div>
+{/if}
 
 <!-- Disk usage -->
 {#if diskUsage}
@@ -532,6 +537,18 @@
 				</svg>
 			</button>
 		</div>
+
+		<!-- Upload button -->
+		<button
+			class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors {showUpload ? 'bg-accent/10 text-accent' : 'text-surface-400 hover:bg-surface-800 hover:text-surface-200'}"
+			onclick={() => showUpload = !showUpload}
+			title="Upload files"
+		>
+			<svg class="w-4 h-4 inline-block mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+			</svg>
+			Upload
+		</button>
 
 		<!-- New folder button -->
 		<button

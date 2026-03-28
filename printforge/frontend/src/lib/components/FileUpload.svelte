@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '../api';
-	import { refreshFiles } from '../stores/files';
+	import { currentPath, refreshFiles } from '../stores/files';
 	import { toast } from '../stores/toast';
 	import { formatFileSize } from '../utils';
 
@@ -27,7 +27,7 @@
 				await uploadWithProgress(file);
 				names.push(file.name);
 			}
-			await refreshFiles();
+			await refreshFiles($currentPath);
 			toast.success(`Uploaded: ${names.join(', ')}`);
 		} catch (e: any) {
 			toast.error(e.message || 'Upload failed');
@@ -67,7 +67,8 @@
 			xhr.addEventListener('error', () => reject(new Error('Upload failed: network error')));
 			xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
 
-			xhr.open('POST', '/api/files/upload');
+			const params = $currentPath ? `?path=${encodeURIComponent($currentPath)}` : '';
+			xhr.open('POST', `/api/files/upload${params}`);
 			xhr.send(formData);
 		});
 	}
