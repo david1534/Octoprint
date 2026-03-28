@@ -11,7 +11,7 @@
 #   2. Installs system dependencies (Python, Node.js for frontend build)
 #   3. Sets up the Python backend with a virtual environment
 #   4. Builds the SvelteKit frontend
-#   5. Downloads go2rtc for camera streaming
+#   5. Builds and installs ustreamer for camera streaming
 #   6. Auto-detects your printer's serial port and camera
 #   7. Installs systemd services for auto-start on boot
 #   8. Creates a restore script so you can switch back to OctoPrint
@@ -130,7 +130,7 @@ fi
 if systemctl is-active --quiet webcamd 2>/dev/null; then
     sudo systemctl stop webcamd
     sudo systemctl disable webcamd 2>/dev/null || true
-    success "Stopped webcamd (go2rtc replaces this)"
+    success "Stopped webcamd (ustreamer replaces this)"
 fi
 
 ###############################################################################
@@ -232,20 +232,8 @@ if [ -d "$OCTOPRINT_UPLOADS" ]; then
 fi
 
 ###############################################################################
-step 6 "Installing go2rtc (camera streaming)"
+step 6 "Installing ustreamer (camera streaming)"
 ###############################################################################
-
-ARCH=$(uname -m)
-case "$ARCH" in
-    aarch64) GO2RTC_ARCH="arm64" ;;
-    armv7l)  GO2RTC_ARCH="arm" ;;
-    *)       GO2RTC_ARCH="amd64" ;;
-esac
-
-curl -L -s -o "$INSTALL_DIR/go2rtc" \
-    "https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_linux_${GO2RTC_ARCH}"
-chmod +x "$INSTALL_DIR/go2rtc"
-success "go2rtc downloaded ($GO2RTC_ARCH)"
 
 # Auto-detect camera
 DETECTED_CAMERA=""
@@ -256,27 +244,23 @@ for dev in /dev/video0 /dev/video1 /dev/video2; do
     fi
 done
 
-# Generate go2rtc config with detected camera
-# Use exec:ffmpeg source (go2rtc 1.9+ with old ffmpeg 4.x doesn't support ffmpeg:device=)
-CAM_DEV="${DETECTED_CAMERA:-/dev/video0}"
-cat > "$INSTALL_DIR/go2rtc.yaml" << YAML
-streams:
-  printer_cam:
-    - exec:ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 30 -i ${CAM_DEV} -pix_fmt yuv420p -c:v h264_v4l2m2m -b:v 2M -g 30 -f h264 -
-
-api:
-  listen: ":1984"
-
-webrtc:
-  listen: ":8555"
-  ice_servers:
-    - urls: [stun:stun.l.google.com:19302]
-YAML
+# Build ustreamer from source
+if ! command -v ustreamer &> /dev/null; then
+    echo "  Building ustreamer from source..."
+    sudo apt-get install -y -qq libevent-dev libjpeg-dev libbsd-dev > /dev/null 2>&1
+    git clone --depth 1 https://github.com/pikvm/ustreamer.git /tmp/ustreamer 2>/dev/null
+    (cd /tmp/ustreamer && make -j"$(nproc)" > /dev/null 2>&1)
+    sudo install -m 755 /tmp/ustreamer/ustreamer /usr/local/bin/ustreamer
+    rm -rf /tmp/ustreamer
+    success "ustreamer built and installed"
+else
+    success "ustreamer already installed"
+fi
 
 if [ -n "$DETECTED_CAMERA" ]; then
     success "Camera detected at $DETECTED_CAMERA"
 else
-    warn "No camera detected — plug one in and restart go2rtc"
+    warn "No camera detected — plug one in and restart ustreamer"
 fi
 
 ###############################################################################
@@ -353,30 +337,31 @@ WantedBy=multi-user.target
 EOF
 success "PrintForge service created"
 
-# Generate go2rtc service
-cat << EOF | sudo tee /etc/systemd/system/go2rtc.service > /dev/null
+# Generate ustreamer service
+CAM_DEV="${DETECTED_CAMERA:-/dev/video0}"
+cat << EOF | sudo tee /etc/systemd/system/ustreamer.service > /dev/null
 [Unit]
-Description=go2rtc Camera Streaming for PrintForge
+Description=ustreamer Camera Streaming for PrintForge
 After=network.target
 
 [Service]
 Type=simple
 User=$CURRENT_USER
 Group=$CURRENT_USER
-ExecStart=$INSTALL_DIR/go2rtc -config $INSTALL_DIR/go2rtc.yaml
+ExecStart=/usr/local/bin/ustreamer --device ${CAM_DEV} --host 0.0.0.0 --port 8080 --format MJPEG --resolution 640x480 --desired-fps 30 --drop-same-frames 30
 Restart=on-failure
-RestartSec=5
+RestartSec=3
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 EOF
-success "go2rtc service created"
+success "ustreamer service created"
 
 sudo systemctl daemon-reload
-sudo systemctl enable printforge go2rtc
-sudo systemctl start go2rtc
+sudo systemctl enable printforge ustreamer
+sudo systemctl start ustreamer
 sudo systemctl start printforge
 success "Services enabled and started"
 
@@ -392,9 +377,9 @@ cat > "$DATA_DIR/restore-octoprint.sh" << 'RESTORE'
 echo "Restoring OctoPrint..."
 
 sudo systemctl stop printforge 2>/dev/null
-sudo systemctl stop go2rtc 2>/dev/null
+sudo systemctl stop ustreamer 2>/dev/null
 sudo systemctl disable printforge 2>/dev/null
-sudo systemctl disable go2rtc 2>/dev/null
+sudo systemctl disable ustreamer 2>/dev/null
 
 if systemctl list-unit-files | grep -q octoprint; then
     sudo systemctl enable octoprint
@@ -452,7 +437,7 @@ if [ -n "$DETECTED_CAMERA" ]; then
     echo -e "  ${GREEN}✓${NC} Camera: streaming from $DETECTED_CAMERA"
 else
     echo -e "  ${YELLOW}!${NC} Camera: no webcam detected — plug one in and run:"
-    echo -e "    sudo systemctl restart go2rtc"
+    echo -e "    sudo systemctl restart ustreamer"
 fi
 if command -v ffmpeg &> /dev/null; then
     echo -e "  ${GREEN}✓${NC} ffmpeg: installed (timelapse video assembly ready)"
