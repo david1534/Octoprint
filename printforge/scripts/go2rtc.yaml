@@ -3,17 +3,16 @@
 #
 # Latency tuning notes:
 #   - 640x480 is plenty for monitoring a print bed (75% fewer pixels than 720p)
-#   - 30fps for smooth monitoring (Pi 4 h264_v4l2m2m handles this easily)
-#   - -bf 0 disables B-frames, removing one frame of encoding latency
-#   - -g 30 puts a keyframe every second (faster stream start / recovery)
-#   - -b:v 1.5M is sufficient for 480p at 30fps
+#   - Camera outputs native MJPEG at 30fps — passthrough avoids H.264 encoding
+#     overhead entirely and lets go2rtc serve MJPEG directly to the browser
+#   - -c:v copy = zero-CPU passthrough (no re-encoding)
 
 streams:
   printer_cam:
-    # USB Webcam — low-latency H.264 for WebRTC, go2rtc transcodes to MJPEG on demand
-    - exec:ffmpeg -f v4l2 -input_format mjpeg -video_size 640x480 -framerate 30 -i /dev/video0 -pix_fmt yuv420p -c:v h264_v4l2m2m -b:v 1.5M -g 30 -bf 0 -f h264 -
+    # USB Webcam — native MJPEG passthrough (lowest latency, zero CPU encoding)
+    - exec:ffmpeg -f v4l2 -input_format mjpeg -video_size 640x480 -framerate 30 -i /dev/video0 -c:v copy -f mjpeg -
     # If using Raspberry Pi Camera Module, comment above and uncomment below:
-    # - exec:libcamera-vid -t 0 --inline -o - --width 640 --height 480 --framerate 15
+    # - exec:libcamera-vid -t 0 --inline --codec mjpeg -o - --width 640 --height 480 --framerate 30
 
 api:
   listen: ":1984"

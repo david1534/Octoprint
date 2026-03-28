@@ -75,7 +75,9 @@
 
 			// Default to MJPEG (single persistent connection, highest FPS)
 			streamMode = 'mjpeg';
-			// The <img> tag renders with mjpegUrl, onload/onerror handle state
+			// Must clear loading so the <img> tag renders into the DOM —
+			// onImgLoad/onImgError fire once it's mounted and the stream starts
+			loading = false;
 			retryCount = 0;
 		} catch (e) {
 			error = 'Camera not available';
@@ -89,12 +91,12 @@
 		if (imgEl) imgEl.src = '';
 		streamMode = mode;
 		error = '';
-		loading = true;
 
 		if (mode === 'snapshot') {
+			loading = true;
 			startPolling();
 		}
-		// MJPEG: the <img> tag will render with mjpegUrl, loading clears on onload
+		// MJPEG: loading stays false so <img> renders immediately
 	}
 
 	// ── Snapshot polling with canvas rendering ──────────────────
