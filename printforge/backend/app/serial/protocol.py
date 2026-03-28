@@ -45,17 +45,16 @@ class MarlinProtocol:
     def line_number(self) -> int:
         return self._line_number
 
-    async def reset_line_number(self) -> None:
-        """Reset line numbering on both sides.
+    def reset_line_number(self) -> None:
+        """Reset the local line-number counter to zero.
 
-        Sends M110 N0 to Marlin so its counter matches ours. Without this,
-        any print after the first would fail with 'Line Number is not Last
-        Line Number+1' on every checksummed command.
+        Call this only when Marlin is known to be at zero already (e.g.
+        right after a USB-serial connect resets the board).  For runtime
+        resets (between prints), send ``M110 N0`` through the command
+        queue instead — ``send_command`` auto-detects M110 and syncs the
+        counter so both sides stay in lock-step.
         """
         self._line_number = 0
-        result = await self.send_command("M110 N0")
-        if not result.ok:
-            logger.warning("M110 N0 failed: %s (continuing anyway)", result.error)
 
     def add_temp_callback(self, callback) -> None:
         self._temp_callbacks.append(callback)
@@ -129,6 +128,12 @@ class MarlinProtocol:
                 response_lines.append(line)
                 continue
             if line.startswith("ok"):
+                # Auto-sync line counter when M110 succeeds so the next
+                # checksummed command uses the right sequence number.
+                if original_command.upper().startswith("M110"):
+                    match = re.search(r"N(\d+)", original_command, re.IGNORECASE)
+                    self._line_number = int(match.group(1)) if match else 0
+                    logger.info("Line number reset to %d (M110)", self._line_number)
                 return CommandResult(command=original_command, ok=True, response_lines=response_lines)
             if line.lower().startswith("resend:") or line.lower().startswith("rs:"):
                 retry_count += 1

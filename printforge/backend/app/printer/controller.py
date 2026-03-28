@@ -476,7 +476,6 @@ M117 Print Complete"""
         # Store selected spool for filament deduction on completion
         self._current_spool_id = spool_id
 
-        await self._protocol.reset_line_number()
         self._safety.record_serial_activity()
 
         # Start timelapse recording
