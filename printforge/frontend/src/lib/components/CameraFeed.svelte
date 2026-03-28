@@ -4,9 +4,12 @@
 
 	type StreamMode = 'snapshot' | 'mjpeg';
 
-	let mjpegUrl = $state('');
+	let mjpegDirectUrl = $state('');  // Direct ustreamer URL (fastest)
+	let mjpegProxyUrl = $state('');   // Backend-proxied fallback
+	let mjpegUrl = $state('');        // Currently active MJPEG URL
 	let snapshotUrl = $state('');
 	let streamMode = $state<StreamMode>('mjpeg');
+	let mjpegAttempt = $state<'direct' | 'proxy'>('direct');
 	let error = $state('');
 	let loading = $state(true);
 	let retryCount = $state(0);
@@ -53,10 +56,9 @@
 			paused = false;
 			if (streamMode === 'snapshot') {
 				startPolling();
-			} else if (streamMode === 'mjpeg' && mjpegUrl) {
+			} else if (streamMode === 'mjpeg') {
 				// Reconnect MJPEG stream (it stalls when tab is hidden)
-				loading = true;
-				if (imgEl) imgEl.src = mjpegUrl + '?t=' + Date.now();
+				if (imgEl && mjpegUrl) imgEl.src = mjpegUrl + '?t=' + Date.now();
 			}
 		}
 	}
@@ -70,11 +72,14 @@
 		error = '';
 		try {
 			const urls = await api.getCameraUrls();
-			mjpegUrl = urls.mjpeg || '/api/camera/mjpeg';
+			mjpegDirectUrl = urls.mjpeg_direct || '';
+			mjpegProxyUrl = urls.mjpeg || '/api/camera/mjpeg';
 			snapshotUrl = urls.snapshot || '/api/camera/snapshot';
 
-			// Default to MJPEG (single persistent connection, highest FPS)
+			// Default to MJPEG with direct ustreamer URL (no proxy overhead)
 			streamMode = 'mjpeg';
+			mjpegAttempt = 'direct';
+			mjpegUrl = mjpegDirectUrl || mjpegProxyUrl;
 			// Must clear loading so the <img> tag renders into the DOM —
 			// onImgLoad/onImgError fire once it's mounted and the stream starts
 			loading = false;
@@ -95,8 +100,11 @@
 		if (mode === 'snapshot') {
 			loading = true;
 			startPolling();
+		} else {
+			// Reset MJPEG to try direct first
+			mjpegAttempt = 'direct';
+			mjpegUrl = mjpegDirectUrl || mjpegProxyUrl;
 		}
-		// MJPEG: loading stays false so <img> renders immediately
 	}
 
 	// ── Snapshot polling with canvas rendering ──────────────────
@@ -227,7 +235,14 @@
 	// ── MJPEG event handling ──────────────────────────────────
 
 	function onImgError() {
-		// MJPEG failed — fall back to snapshot polling
+		if (streamMode === 'mjpeg' && mjpegAttempt === 'direct' && mjpegProxyUrl) {
+			// Direct ustreamer failed — try proxied MJPEG through backend
+			mjpegAttempt = 'proxy';
+			mjpegUrl = mjpegProxyUrl;
+			if (imgEl) imgEl.src = mjpegProxyUrl + '?t=' + Date.now();
+			return;
+		}
+		// All MJPEG attempts failed — fall back to snapshot polling
 		switchMode('snapshot');
 	}
 
@@ -255,7 +270,9 @@
 	}
 
 	let modeLabel = $derived(
-		streamMode === 'snapshot' ? `Snap ${fps}fps` : 'MJPEG'
+		streamMode === 'snapshot'
+			? `Snap ${fps}fps`
+			: mjpegAttempt === 'direct' ? 'MJPEG' : 'MJPEG (proxy)'
 	);
 </script>
 

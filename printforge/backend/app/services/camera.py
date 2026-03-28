@@ -1,12 +1,12 @@
 """Camera capture service with multi-source fallback.
 
 Provides a single async ``snapshot()`` method that tries sources in order:
-1. go2rtc HTTP snapshot  (fastest — already running, zero startup cost)
-2. ffmpeg direct V4L2    (no go2rtc needed, ~0.3s per frame)
-3. fswebcam              (last resort, ~0.5s per frame)
+1. ustreamer HTTP snapshot  (fastest — already running, ~10ms)
+2. ffmpeg direct V4L2       (no ustreamer needed, ~0.3s per frame)
+3. fswebcam                 (last resort, ~0.5s per frame)
 
-Also provides utilities for auto-detecting the camera device, checking
-ffmpeg availability, and streaming MJPEG from go2rtc.
+Also provides utilities for auto-detecting the camera device and
+checking ffmpeg availability.
 """
 
 import asyncio
@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 class CameraService:
     """Unified camera interface with automatic fallback."""
 
-    def __init__(self, go2rtc_url: str = "http://localhost:1984"):
-        self._go2rtc_url = go2rtc_url
+    def __init__(self, ustreamer_url: str = "http://localhost:8080"):
+        self._ustreamer_url = ustreamer_url
         self._camera_device: Optional[str] = None  # e.g. /dev/video0
         self._ffmpeg_path: Optional[str] = None
         self._fswebcam_path: Optional[str] = None
-        self._go2rtc_ok: Optional[bool] = None  # None = untested
+        self._ustreamer_ok: Optional[bool] = None  # None = untested
         self._client: Optional[httpx.AsyncClient] = None
 
     async def init(self) -> None:
@@ -39,12 +39,12 @@ class CameraService:
         self._camera_device = self._detect_camera_device()
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
 
-        # Test go2rtc connectivity once
-        self._go2rtc_ok = await self._test_go2rtc()
+        # Test ustreamer connectivity once
+        self._ustreamer_ok = await self._test_ustreamer()
 
         logger.info(
-            "Camera service initialized: go2rtc=%s ffmpeg=%s fswebcam=%s device=%s",
-            "up" if self._go2rtc_ok else "down",
+            "Camera service initialized: ustreamer=%s ffmpeg=%s fswebcam=%s device=%s",
+            "up" if self._ustreamer_ok else "down",
             self._ffmpeg_path or "not found",
             self._fswebcam_path or "not found",
             self._camera_device or "none",
@@ -64,8 +64,8 @@ class CameraService:
         return self._camera_device is not None
 
     @property
-    def go2rtc_available(self) -> bool:
-        return self._go2rtc_ok is True
+    def ustreamer_available(self) -> bool:
+        return self._ustreamer_ok is True
 
     @property
     def camera_device(self) -> Optional[str]:
@@ -74,9 +74,9 @@ class CameraService:
     def health_dict(self) -> dict:
         """Return camera health status for the API."""
         return {
-            "go2rtc": {
-                "available": self._go2rtc_ok is True,
-                "url": self._go2rtc_url,
+            "ustreamer": {
+                "available": self._ustreamer_ok is True,
+                "url": self._ustreamer_url,
             },
             "ffmpeg": {
                 "available": self._ffmpeg_path is not None,
@@ -98,14 +98,14 @@ class CameraService:
         Tries sources in priority order and returns raw JPEG bytes,
         or None if all sources fail.
         """
-        # 1. go2rtc (fastest, ~10ms)
-        if self._go2rtc_ok is not False:
-            jpg = await self._snapshot_go2rtc()
+        # 1. ustreamer (fastest, ~10ms)
+        if self._ustreamer_ok is not False:
+            jpg = await self._snapshot_ustreamer()
             if jpg:
-                self._go2rtc_ok = True
+                self._ustreamer_ok = True
                 return jpg
-            self._go2rtc_ok = False
-            logger.debug("go2rtc snapshot failed, trying direct capture")
+            self._ustreamer_ok = False
+            logger.debug("ustreamer snapshot failed, trying direct capture")
 
         # 2. ffmpeg direct V4L2 (~300ms)
         if self._ffmpeg_path and self._camera_device:
@@ -121,16 +121,16 @@ class CameraService:
 
         return None
 
-    async def refresh_go2rtc_status(self) -> bool:
-        """Re-test go2rtc availability (called periodically)."""
-        self._go2rtc_ok = await self._test_go2rtc()
-        return self._go2rtc_ok
+    async def refresh_ustreamer_status(self) -> bool:
+        """Re-test ustreamer availability (called periodically)."""
+        self._ustreamer_ok = await self._test_ustreamer()
+        return self._ustreamer_ok
 
     # ── Private capture methods ──────────────────────────────────
 
-    async def _snapshot_go2rtc(self) -> Optional[bytes]:
-        """Fetch JPEG from go2rtc's HTTP snapshot API."""
-        url = f"{self._go2rtc_url}/api/frame.jpeg?src=printer_cam"
+    async def _snapshot_ustreamer(self) -> Optional[bytes]:
+        """Fetch JPEG from ustreamer's snapshot endpoint."""
+        url = f"{self._ustreamer_url}/snapshot"
         try:
             client = self._client or httpx.AsyncClient(timeout=httpx.Timeout(5.0))
             resp = await client.get(url)
@@ -139,7 +139,7 @@ class CameraService:
         except (httpx.ConnectError, httpx.ReadTimeout):
             pass
         except Exception:
-            logger.debug("go2rtc snapshot error", exc_info=True)
+            logger.debug("ustreamer snapshot error", exc_info=True)
         return None
 
     async def _snapshot_ffmpeg(self) -> Optional[bytes]:
@@ -179,8 +179,6 @@ class CameraService:
             if proc.returncode == 0 and len(stdout) > 100:
                 return stdout
         except asyncio.TimeoutError:
-            # Kill the subprocess to avoid orphaned ffmpeg processes that
-            # could hold the V4L2 device lock on the Pi
             if proc:
                 proc.kill()
                 await proc.wait()
@@ -227,11 +225,11 @@ class CameraService:
             logger.debug("fswebcam snapshot error", exc_info=True)
         return None
 
-    async def _test_go2rtc(self) -> bool:
-        """Quick connectivity check against go2rtc's API."""
+    async def _test_ustreamer(self) -> bool:
+        """Quick connectivity check against ustreamer."""
         try:
             client = self._client or httpx.AsyncClient(timeout=httpx.Timeout(2.0))
-            resp = await client.get(f"{self._go2rtc_url}/api/streams")
+            resp = await client.get(f"{self._ustreamer_url}/state")
             return resp.status_code == 200
         except Exception:
             return False
@@ -252,8 +250,8 @@ class CameraService:
     def _describe_chain(self) -> list[str]:
         """Describe the active fallback chain for diagnostics."""
         chain = []
-        if self._go2rtc_ok is not False:
-            chain.append("go2rtc")
+        if self._ustreamer_ok is not False:
+            chain.append("ustreamer")
         if self._ffmpeg_path and self._camera_device:
             chain.append(f"ffmpeg:{self._camera_device}")
         if self._fswebcam_path and self._camera_device:

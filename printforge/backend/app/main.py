@@ -48,11 +48,11 @@ controller = PrinterController(state)
 # Persistent HTTP client for camera proxying (reused across requests)
 _camera_client: httpx.AsyncClient | None = None
 
-# Frame cache: avoid re-fetching from go2rtc for rapid snapshot polling
+# Frame cache: avoid re-fetching from ustreamer for rapid snapshot polling
 _frame_cache: bytes | None = None
 _frame_cache_time: float = 0
 _frame_cache_lock: asyncio.Lock | None = None
-_FRAME_CACHE_TTL = 0.03  # 30ms — limits go2rtc hits to ~33fps max
+_FRAME_CACHE_TTL = 0.03  # 30ms — limits ustreamer hits to ~33fps max
 
 
 @asynccontextmanager
@@ -162,56 +162,26 @@ app.include_router(filament.router)
 async def camera_stream_url(request: Request):
     """Return camera stream URLs for the frontend.
 
-    MJPEG is proxied through the backend (browser can't reach go2rtc
-    on port 1984 via Tailscale). Snapshot polling is the fallback.
+    Returns the direct ustreamer MJPEG URL (browser connects directly
+    to port 8080) plus a proxied fallback and snapshot endpoint.
     """
+    # Build direct ustreamer URL using the request host (same IP, port 8080)
+    host = request.headers.get("host", "").split(":")[0] or "localhost"
     return {
-        "webrtc": "",
+        "mjpeg_direct": f"http://{host}:8080/stream",
         "mjpeg": "/api/camera/mjpeg",
         "snapshot": "/api/camera/snapshot",
     }
 
 
-@app.post("/api/camera/webrtc")
-async def camera_webrtc_signaling(request: Request):
-    """Proxy WebRTC signaling to go2rtc.
-
-    The browser sends an SDP offer, we forward it to go2rtc and return the answer.
-    This avoids exposing port 1984 directly.
-    """
-    body = await request.body()
-    upstream = f"{settings.camera_url}/api/webrtc?src=printer_cam"
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            resp = await client.post(
-                upstream,
-                content=body,
-                headers={"Content-Type": request.headers.get("content-type", "application/sdp")},
-            )
-            # Return raw SDP text — NOT JSONResponse which would
-            # JSON-encode the string (adding quotes), breaking WebRTC.
-            return Response(
-                content=resp.content,
-                status_code=resp.status_code,
-                media_type=resp.headers.get("content-type", "application/sdp"),
-            )
-        except httpx.ConnectError:
-            return JSONResponse(
-                content={"error": "Camera service unavailable"},
-                status_code=503,
-            )
-
-
 @app.get("/api/camera/mjpeg")
 async def camera_mjpeg_proxy():
-    """Proxy go2rtc's MJPEG stream to the browser.
+    """Proxy ustreamer's MJPEG stream to the browser.
 
-    Connects to go2rtc first to read the real Content-Type header
-    (which contains the correct multipart boundary), then streams
-    raw bytes through to the browser.
+    Used as a fallback when the browser can't reach ustreamer directly
+    on port 8080. Streams raw MJPEG bytes through FastAPI.
     """
-    stream_url = f"{settings.camera_url}/api/stream.mjpeg?src=printer_cam"
+    stream_url = f"{settings.camera_url}/stream"
 
     # Use a dedicated client per MJPEG stream (the stream is long-lived
     # and must be closed independently of other requests)
@@ -231,7 +201,7 @@ async def camera_mjpeg_proxy():
         await client.aclose()
         return JSONResponse(content={"error": "Camera unavailable"}, status_code=503)
 
-    # Pass through the exact Content-Type from go2rtc so the browser
+    # Pass through the exact Content-Type from ustreamer so the browser
     # sees the correct multipart boundary string.
     content_type = resp.headers.get("content-type", "multipart/x-mixed-replace; boundary=frame")
 
@@ -261,9 +231,9 @@ async def camera_mjpeg_proxy():
 async def camera_snapshot():
     """Return a single JPEG snapshot from the camera.
 
-    Uses a frame cache to avoid hammering go2rtc on rapid polling.
+    Uses a frame cache to avoid hammering ustreamer on rapid polling.
     Multiple frontend requests within the TTL window get the same frame,
-    keeping go2rtc load low while the frontend renders smoothly.
+    keeping ustreamer load low while the frontend renders smoothly.
     """
     global _frame_cache, _frame_cache_time
     import time
@@ -309,8 +279,8 @@ async def camera_snapshot():
 
 
 async def _fetch_snapshot() -> bytes | None:
-    """Fetch a fresh JPEG frame from go2rtc or fallback sources."""
-    snapshot_url = f"{settings.camera_url}/api/frame.jpeg?src=printer_cam"
+    """Fetch a fresh JPEG frame from ustreamer or fallback sources."""
+    snapshot_url = f"{settings.camera_url}/snapshot"
     jpg: bytes | None = None
     try:
         if _camera_client:
