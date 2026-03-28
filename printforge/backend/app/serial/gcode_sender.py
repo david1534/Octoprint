@@ -213,6 +213,15 @@ class GcodeSender:
             consecutive_failures = 0
             max_consecutive_failures = 10
 
+            # When PrintForge ran its own start gcode, skip duplicate
+            # startup commands embedded in the file by the slicer (e.g.
+            # G28, G29, M104/M109/M140/M190) until we reach the first
+            # ;LAYER: marker.  This prevents double-homing which crashes
+            # BLTouch and duplicate heating which wastes time.
+            skip_preamble = bool(start_gcode.strip())
+            preamble_skip_cmds = {"G28", "G29", "M104", "M109", "M140", "M190"}
+            preamble_skipped = 0
+
             with open(filepath, "r") as f:
                 for line in f:
                     if self._cancelled:
@@ -230,6 +239,14 @@ class GcodeSender:
 
                     # Track layer changes
                     if ";LAYER:" in stripped or "; LAYER:" in stripped:
+                        if skip_preamble:
+                            skip_preamble = False
+                            if preamble_skipped > 0:
+                                logger.info(
+                                    "Skipped %d embedded preamble commands "
+                                    "before first layer",
+                                    preamble_skipped,
+                                )
                         try:
                             layer_str = stripped.split("LAYER:")[-1].strip()
                             self._current_layer = int(layer_str) + 1
@@ -246,6 +263,16 @@ class GcodeSender:
                         stripped = stripped[: stripped.index(";")].strip()
                     if not stripped:
                         continue
+
+                    # Skip slicer-embedded preamble commands before first layer
+                    if skip_preamble:
+                        cmd_base = stripped.split()[0].upper()
+                        if cmd_base in preamble_skip_cmds:
+                            preamble_skipped += 1
+                            logger.debug(
+                                "Skipping preamble command: %s", stripped
+                            )
+                            continue
 
                     # Send through command queue (plain G-code, no
                     # checksums — USB serial has its own CRC layer and
