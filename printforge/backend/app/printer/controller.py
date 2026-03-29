@@ -22,6 +22,7 @@ from ..serial.safety import SafetyAction, SafetyAlert, SafetyMonitor
 from ..serial.temperature import TemperatureMonitor, TemperatureSnapshot
 from ..services.camera import CameraService
 from ..services.timelapse import TimelapseRecorder
+from .error_log import ErrorLog
 from .state import PrinterState, PrinterStatus
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ class PrinterController:
         self._temp_monitor = TemperatureMonitor()
         self._safety = SafetyMonitor()
         self._safety_task: Optional[asyncio.Task] = None
+        self._error_log = ErrorLog()
         self._state_callbacks: list[Callable[[], None]] = []
         self._terminal_callbacks: list[Callable[[str, str], None]] = []
         # Print time correction
@@ -64,6 +66,10 @@ class PrinterController:
     @property
     def safety_monitor(self) -> SafetyMonitor:
         return self._safety
+
+    @property
+    def error_log(self) -> ErrorLog:
+        return self._error_log
 
     @property
     def sender(self) -> Optional[GcodeSender]:
@@ -144,6 +150,13 @@ class PrinterController:
         self._safety.record_serial_activity()
         self._notify_terminal(line, direction)
 
+        # Capture firmware error lines into the error log
+        if direction == "recv" and line.startswith("Error:"):
+            self._error_log.log_raw(line)
+        elif direction == "recv" and "!! " in line:
+            # Marlin emergency messages like "!! STOP called because of BLTouch error"
+            self._error_log.log_raw(line)
+
         # Feed received lines to the bed mesh parser
         if direction == "recv":
             mesh = self._bed_mesh_parser.feed_line(line)
@@ -164,6 +177,9 @@ class PrinterController:
     def _handle_safety_alert(self, alert: SafetyAlert) -> None:
         logger.warning("Safety alert: %s", alert.message)
         self._notify_terminal(f"[SAFETY] {alert.message}", "system")
+        self._error_log.log_safety_alert(
+            alert.message, alert.level.value, alert.action.value
+        )
         if alert.action == SafetyAction.EMERGENCY_STOP:
             asyncio.create_task(self.emergency_stop())
         elif alert.action == SafetyAction.PAUSE_PRINT:

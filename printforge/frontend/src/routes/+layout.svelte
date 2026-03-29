@@ -6,6 +6,7 @@
 	import { initPrinterStore, printerState, wsConnected, statusBadge, isPrinting, isPaused } from '$lib/stores/printer';
 	import { initTempHistory } from '$lib/stores/temperature';
 	import { initTerminalStore } from '$lib/stores/terminal';
+	import { initErrorStore } from '$lib/stores/errors';
 	import { api } from '$lib/api';
 	import ToastContainer from '$lib/components/ToastContainer.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -52,6 +53,7 @@
 		initPrinterStore();
 		initTempHistory();
 		initTerminalStore();
+		initErrorStore();
 		wsManager.connect();
 
 		return () => wsManager.disconnect();

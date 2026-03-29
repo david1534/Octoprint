@@ -18,6 +18,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .api import (
+    errors as errors_api,
     filament,
     files,
     history,
@@ -71,6 +72,7 @@ async def lifespan(app: FastAPI):
     # Inject controller into API modules
     printer.set_controller(controller)
     websocket.set_controller(controller)
+    errors_api.set_controller(controller)
 
     # Initialize camera service + timelapse recorder
     timelapse_dir = Path(settings.data_dir).parent / "timelapse"
@@ -153,6 +155,7 @@ app.include_router(history.router)
 app.include_router(timelapse.router)
 app.include_router(settings_api.router)
 app.include_router(filament.router)
+app.include_router(errors_api.router)
 
 
 # ── Camera endpoints ─────────────────────────────────────────────

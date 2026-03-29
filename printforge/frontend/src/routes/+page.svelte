@@ -6,6 +6,7 @@
 	import PrintProgress from '$lib/components/PrintProgress.svelte';
 	import PreheatPresets from '$lib/components/PreheatPresets.svelte';
 	import PrintStartDialog from '$lib/components/PrintStartDialog.svelte';
+	import AlertPanel from '$lib/components/AlertPanel.svelte';
 	import { printerState, isConnected, isPrinting, isPaused, isFinishing } from '$lib/stores/printer';
 	import { files, refreshFiles } from '$lib/stores/files';
 	import { api } from '$lib/api';
@@ -255,6 +256,9 @@
 				</div>
 			</div>
 		{/if}
+
+		<!-- Active Alerts -->
+		<AlertPanel />
 
 		<!-- Camera + Temperature Row -->
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">

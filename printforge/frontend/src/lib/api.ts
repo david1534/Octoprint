@@ -197,5 +197,12 @@ export const api = {
 	},
 	getHistoryStats: () => request<any>('/history/stats'),
 	deleteHistoryEntry: (id: number) =>
-		request<any>(`/history/${id}`, { method: 'DELETE' })
+		request<any>(`/history/${id}`, { method: 'DELETE' }),
+
+	// Errors
+	getErrors: (activeOnly = false) =>
+		request<any>(`/errors/${activeOnly ? '?active_only=true' : ''}`),
+	dismissError: (id: number) => post<any>(`/errors/${id}/dismiss`),
+	dismissAllErrors: () => post<any>('/errors/dismiss-all'),
+	clearErrors: () => post<any>('/errors/clear')
 };

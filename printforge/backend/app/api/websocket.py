@@ -116,6 +116,12 @@ _terminal_flush_task: Optional[asyncio.Task] = None
 _terminal_clients: list[WebSocket] = []
 
 
+def _broadcast_error(entry) -> None:
+    """Sync callback from the error log — broadcasts new errors to all clients."""
+    data = json.dumps({"type": "error_logged", "data": entry.to_dict()})
+    manager._broadcast_raw(data)
+
+
 def _buffer_terminal_line(line: str, direction: str) -> None:
     """Sync callback from the printer controller — just appends to the buffer."""
     _terminal_buffer.append({"line": line, "direction": direction})
@@ -185,6 +191,10 @@ async def websocket_endpoint(websocket: WebSocket):
     if _controller and _buffer_terminal_line not in _controller._terminal_callbacks:
         _controller.add_terminal_callback(_buffer_terminal_line)
 
+    # Register error log callback for real-time error broadcasting
+    if _controller and _broadcast_error not in _controller.error_log._callbacks:
+        _controller.error_log.add_callback(_broadcast_error)
+
     try:
         # Send initial state
         if _controller:
@@ -196,6 +206,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     }
                 )
             )
+            # Send active errors
+            active = _controller.error_log.active_entries
+            if active:
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "error_list",
+                            "data": [e.to_dict() for e in active],
+                        }
+                    )
+                )
 
         # Listen for client messages
         while True:
