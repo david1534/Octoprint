@@ -255,9 +255,6 @@ class PrinterController:
                 # Re-enable temperature auto-reporting
                 await self._queue.enqueue("M155 S2", CommandPriority.SYSTEM)
 
-                # Reset BLTouch to prevent immediate re-failure
-                await self._queue.enqueue("M280 P0 S160", CommandPriority.SYSTEM)
-
                 self.state.status = PrinterStatus.IDLE
                 self.state.error_message = None
                 self._safety.record_serial_activity()
@@ -494,8 +491,6 @@ class PrinterController:
     DEFAULT_START_GCODE = """\
 M140 S{bed_temp} ; Start heating bed (non-blocking)
 M104 S{nozzle_temp} ; Start heating nozzle (non-blocking)
-M280 P0 S160 ; Reset BLTouch probe (self-test + stow)
-G4 P500 ; Wait 500ms for BLTouch to complete self-test
 G28 ; Home all axes
 G29 ; Auto bed leveling probe (remove if no ABL)
 M420 S1 ; Activate mesh compensation (ensures G29 values are used)
