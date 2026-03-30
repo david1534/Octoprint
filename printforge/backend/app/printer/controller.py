@@ -214,9 +214,17 @@ class PrinterController:
         if self._sender and self._sender.is_printing:
             await self._sender.cancel()
 
-        # Flush the command queue so stale commands don't pile up
+        # Flush the command queue so stale commands don't pile up.
+        # Await the task to ensure the process loop has fully exited
+        # before we start reading from serial directly — otherwise
+        # two coroutines would race on the same StreamReader.
         if self._queue:
             self._queue.stop()
+            if self._queue._task:
+                try:
+                    await self._queue._task
+                except asyncio.CancelledError:
+                    pass
 
         try:
             # Send M999 directly on the serial line (bypasses the stopped queue)

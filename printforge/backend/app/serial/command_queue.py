@@ -85,14 +85,6 @@ class CommandQueue:
                 break
         logger.info("Cleared %d commands from queue", cleared)
 
-    async def drain_buffer(self) -> int:
-        """Drain stale data from the serial buffer.
-
-        Must be called when the queue is idle (no commands in flight).
-        Returns the number of lines drained.
-        """
-        return await self._protocol.drain_all()
-
     async def enqueue(
         self,
         command: str,

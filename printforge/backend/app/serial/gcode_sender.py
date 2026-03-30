@@ -183,10 +183,6 @@ class GcodeSender:
                 preamble_start = time.time()
                 consecutive_start_failures = 0
                 max_start_failures = 3
-                # Minimum expected duration (seconds) for commands that
-                # involve physical movement — if they complete faster than
-                # this, the response was almost certainly a phantom "ok".
-                min_duration = {"G28": 5.0, "G29": 10.0}
 
                 for raw_line in start_gcode.splitlines():
                     if self._cancelled:
@@ -209,7 +205,6 @@ class GcodeSender:
                     )
                     result: CommandResult = await future
                     cmd_elapsed = time.time() - cmd_start
-                    cmd_base = line.split()[0].upper() if line else ""
 
                     if not result.ok:
                         consecutive_start_failures += 1
@@ -235,24 +230,6 @@ class GcodeSender:
                         logger.info(
                             "Start gcode OK: %s (%.1fs)", line, cmd_elapsed
                         )
-
-                        # Sanity check: G28/G29 require physical movement.
-                        # If they "succeed" in under min_duration seconds the
-                        # response was a stale phantom "ok", not real.
-                        expected = min_duration.get(cmd_base)
-                        if expected and cmd_elapsed < expected:
-                            logger.critical(
-                                "Aborting print: %s completed in %.1fs "
-                                "(expected >%.0fs) — phantom serial response "
-                                "detected, printer did not actually execute "
-                                "the command",
-                                cmd_base,
-                                cmd_elapsed,
-                                expected,
-                            )
-                            self._cancelled = True
-                            await self._on_cancel()
-                            return
 
                     # Track filament used in start gcode (purge lines)
                     self._track_filament(line)
