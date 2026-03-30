@@ -156,6 +156,8 @@ class PrinterController:
         elif direction == "recv" and "!! " in line:
             # Marlin emergency messages like "!! STOP called because of BLTouch error"
             self._error_log.log_raw(line)
+            # Attempt automatic recovery from kill state
+            asyncio.create_task(self._attempt_kill_recovery(line))
 
         # Feed received lines to the bed mesh parser
         if direction == "recv":
@@ -185,6 +187,104 @@ class PrinterController:
         elif alert.action == SafetyAction.PAUSE_PRINT:
             if self._sender and self._sender.is_printing:
                 asyncio.create_task(self.pause_print())
+
+    _kill_recovery_in_progress = False
+
+    async def _attempt_kill_recovery(self, kill_line: str) -> None:
+        """Attempt to recover from a Marlin kill/STOP state via M999.
+
+        When Marlin enters a kill state (!! STOP), it halts all command
+        processing. We bypass the command queue and send M999 directly
+        on the serial connection to reset the firmware. If successful,
+        we re-enable temperature reporting and transition back to idle.
+        """
+        if self._kill_recovery_in_progress:
+            return
+        if not self._connection or not self._connection.connected:
+            return
+
+        self._kill_recovery_in_progress = True
+        logger.warning("Kill state detected: %s — attempting M999 recovery", kill_line)
+        self._notify_terminal(
+            "[SYSTEM] Printer halted — attempting automatic recovery (M999)...",
+            "system",
+        )
+
+        # Cancel any active print — it's dead anyway
+        if self._sender and self._sender.is_printing:
+            await self._sender.cancel()
+
+        # Flush the command queue so stale commands don't pile up
+        if self._queue:
+            self._queue.stop()
+
+        try:
+            # Send M999 directly on the serial line (bypasses the stopped queue)
+            await self._connection.send("M999")
+
+            # Wait for Marlin to reboot — it sends startup messages then "ok"
+            recovered = False
+            for _ in range(30):  # Up to 30 seconds
+                try:
+                    line = await self._connection.read_line(timeout=1.0)
+                    if line:
+                        self._notify_terminal(line, "recv")
+                        logger.debug("M999 recovery: %s", line)
+                        if line.strip().startswith("ok") or "start" in line.lower():
+                            recovered = True
+                            break
+                except asyncio.TimeoutError:
+                    continue
+                except ConnectionError:
+                    break
+
+            if recovered:
+                logger.info("M999 recovery successful — reinitializing")
+                self._notify_terminal(
+                    "[SYSTEM] Recovery successful — reinitializing printer",
+                    "system",
+                )
+
+                # Restart the command queue
+                if self._protocol:
+                    self._protocol.reset_line_number()
+                    self._queue = CommandQueue(self._protocol)
+                    self._queue.start()
+                    self._sender = GcodeSender(self._queue)
+
+                # Re-enable temperature auto-reporting
+                await self._queue.enqueue("M155 S2", CommandPriority.SYSTEM)
+
+                # Reset BLTouch to prevent immediate re-failure
+                await self._queue.enqueue("M280 P0 S160", CommandPriority.SYSTEM)
+
+                self.state.status = PrinterStatus.IDLE
+                self.state.error_message = None
+                self._safety.record_serial_activity()
+                self._notify_state_change()
+            else:
+                logger.error("M999 recovery failed — printer needs power cycle")
+                self._notify_terminal(
+                    "[SYSTEM] Recovery failed — please power cycle the printer",
+                    "system",
+                )
+                self._error_log.log_system_error(
+                    "Recovery Failed",
+                    "Automatic M999 recovery failed. The printer needs a manual power cycle.",
+                )
+                self.state.status = PrinterStatus.ERROR
+                self.state.error_message = (
+                    "Printer halted — power cycle required"
+                )
+                self._notify_state_change()
+
+        except Exception as e:
+            logger.exception("Error during kill recovery: %s", e)
+            self.state.status = PrinterStatus.ERROR
+            self.state.error_message = "Printer halted — power cycle required"
+            self._notify_state_change()
+        finally:
+            self._kill_recovery_in_progress = False
 
     async def auto_connect(self) -> None:
         """Auto-connect to the printer on startup if enabled in settings."""
@@ -394,6 +494,8 @@ class PrinterController:
     DEFAULT_START_GCODE = """\
 M140 S{bed_temp} ; Start heating bed (non-blocking)
 M104 S{nozzle_temp} ; Start heating nozzle (non-blocking)
+M280 P0 S160 ; Reset BLTouch probe (self-test + stow)
+G4 P500 ; Wait 500ms for BLTouch to complete self-test
 G28 ; Home all axes
 G29 ; Auto bed leveling probe (remove if no ABL)
 M420 S1 ; Activate mesh compensation (ensures G29 values are used)
@@ -858,19 +960,38 @@ M117 Print Complete"""
                         if alert:
                             self._handle_safety_alert(alert)
 
-                # --- Fallback temperature polling ---
-                # If M155 auto-report isn't producing data, poll M105
-                # every 10 seconds. Checks if the last temp reading is
-                # stale (>15s old) or never received.
-                if tick % 10 == 0 and self._queue:
+                # --- Keep-alive & fallback temperature polling ---
+                # Sends M105 to serve two purposes:
+                # 1. Ensures temperature data when M155 auto-report stops
+                # 2. Keeps USB serial active to prevent Linux autosuspend
+                #    which causes DTR resets and BLTouch errors after idle
+                #
+                # During printing: only poll if M155 data is stale (>15s)
+                # During idle: poll every 30s to keep USB alive
+                if self._queue and not self._kill_recovery_in_progress:
+                    is_idle = self.state.status in (
+                        PrinterStatus.IDLE,
+                        PrinterStatus.ERROR,
+                    )
                     last_temp_age = (
                         _time.time() - self._temp_monitor.hotend.timestamp
                         if self._temp_monitor.hotend.timestamp > 0
                         else float("inf")
                     )
-                    if last_temp_age > 15.0:
+
+                    should_poll = False
+                    if is_idle and tick % 30 == 0:
+                        # Idle keep-alive: every 30 seconds
+                        should_poll = True
+                    elif tick % 10 == 0 and last_temp_age > 15.0:
+                        # Fallback: every 10s when M155 data is stale
+                        should_poll = True
+
+                    if should_poll:
                         try:
-                            await self._queue.enqueue("M105", CommandPriority.SYSTEM)
+                            await self._queue.enqueue(
+                                "M105", CommandPriority.SYSTEM
+                            )
                         except Exception:
                             pass
 

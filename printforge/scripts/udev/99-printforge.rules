@@ -1,5 +1,7 @@
 # PrintForge udev rules
 # Creates a stable /dev/printforge symlink for the 3D printer's USB serial port
+# and disables USB autosuspend to prevent idle disconnects that cause BLTouch
+# errors after the printer sits unused for hours.
 #
 # To find your printer's vendor/product IDs, run:
 #   lsusb
@@ -11,9 +13,12 @@
 
 # CH340 USB-Serial adapter (common on Ender 3 S1 Pro)
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="printforge", MODE="0666"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="7523", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
 
 # FTDI USB-Serial adapter (alternative)
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", SYMLINK+="printforge", MODE="0666"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="6001", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
 
 # CP2102 USB-Serial adapter (another alternative)
 SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="printforge", MODE="0666"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="10c4", ATTR{idProduct}=="ea60", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
