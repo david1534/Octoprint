@@ -179,12 +179,6 @@ class GcodeSender:
         try:
             # Run start G-code preamble (homing, leveling, heating, purge)
             if start_gcode.strip():
-                # Drain any stale data from the serial buffer before sending
-                # critical startup commands. Phantom "ok" responses left in
-                # the buffer can make G28/G29 appear to succeed instantly
-                # without the printer actually moving.
-                await self._queue.drain_buffer()
-
                 logger.info("Running start G-code preamble...")
                 preamble_start = time.time()
                 consecutive_start_failures = 0
