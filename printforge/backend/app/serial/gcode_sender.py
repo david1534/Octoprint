@@ -179,9 +179,20 @@ class GcodeSender:
         try:
             # Run start G-code preamble (homing, leveling, heating, purge)
             if start_gcode.strip():
+                # Drain any stale data from the serial buffer before sending
+                # critical startup commands. Phantom "ok" responses left in
+                # the buffer can make G28/G29 appear to succeed instantly
+                # without the printer actually moving.
+                await self._queue.drain_buffer()
+
                 logger.info("Running start G-code preamble...")
+                preamble_start = time.time()
                 consecutive_start_failures = 0
                 max_start_failures = 3
+                # Minimum expected duration (seconds) for commands that
+                # involve physical movement — if they complete faster than
+                # this, the response was almost certainly a phantom "ok".
+                min_duration = {"G28": 5.0, "G29": 10.0}
 
                 for raw_line in start_gcode.splitlines():
                     if self._cancelled:
@@ -198,18 +209,23 @@ class GcodeSender:
                         line = line[: line.index(";")].strip()
                     if not line:
                         continue
+                    cmd_start = time.time()
                     future = await self._queue.enqueue(
                         line, priority=CommandPriority.SYSTEM
                     )
                     result: CommandResult = await future
+                    cmd_elapsed = time.time() - cmd_start
+                    cmd_base = line.split()[0].upper() if line else ""
+
                     if not result.ok:
                         consecutive_start_failures += 1
                         logger.warning(
-                            "Start gcode command failed (%d/%d): %s -> %s",
+                            "Start gcode command failed (%d/%d): %s -> %s (%.1fs)",
                             consecutive_start_failures,
                             max_start_failures,
                             line,
                             result.error,
+                            cmd_elapsed,
                         )
                         if consecutive_start_failures >= max_start_failures:
                             logger.critical(
@@ -222,10 +238,37 @@ class GcodeSender:
                             return
                     else:
                         consecutive_start_failures = 0
+                        logger.info(
+                            "Start gcode OK: %s (%.1fs)", line, cmd_elapsed
+                        )
+
+                        # Sanity check: G28/G29 require physical movement.
+                        # If they "succeed" in under min_duration seconds the
+                        # response was a stale phantom "ok", not real.
+                        expected = min_duration.get(cmd_base)
+                        if expected and cmd_elapsed < expected:
+                            logger.critical(
+                                "Aborting print: %s completed in %.1fs "
+                                "(expected >%.0fs) — phantom serial response "
+                                "detected, printer did not actually execute "
+                                "the command",
+                                cmd_base,
+                                cmd_elapsed,
+                                expected,
+                            )
+                            self._cancelled = True
+                            await self._on_cancel()
+                            return
+
                     # Track filament used in start gcode (purge lines)
                     self._track_filament(line)
+
+                preamble_elapsed = time.time() - preamble_start
                 self._in_start_gcode = False
-                logger.info("Start G-code complete, streaming file...")
+                logger.info(
+                    "Start G-code complete (%.1fs), streaming file...",
+                    preamble_elapsed,
+                )
 
             consecutive_failures = 0
             max_consecutive_failures = 10

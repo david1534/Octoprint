@@ -220,5 +220,36 @@ class MarlinProtocol:
             if line.startswith("X:") and "Y:" in line and "Z:" in line:
                 self._emit_position(line)
 
+    async def drain_all(self) -> int:
+        """Aggressively drain the serial buffer, discarding everything.
+
+        Unlike drain_unsolicited(), this also discards stale 'ok' responses,
+        'Resend:' lines, and any other data. Used before critical sequences
+        (like start gcode) to ensure no phantom responses cause commands to
+        appear to succeed without executing.
+
+        Returns the number of lines drained.
+        """
+        drained = 0
+        while True:
+            try:
+                line = await self._conn.read_line(timeout=0.2)
+            except asyncio.TimeoutError:
+                break
+            except ConnectionError:
+                break
+            if not line:
+                continue
+            drained += 1
+            logger.debug("Drain: %s", line)
+            self._emit_terminal(line, "recv")
+            if self._is_temp_report(line):
+                self._emit_temp(line)
+            if line.startswith("X:") and "Y:" in line and "Z:" in line:
+                self._emit_position(line)
+        if drained:
+            logger.info("Drained %d stale lines from serial buffer", drained)
+        return drained
+
     async def enable_auto_temp_report(self, interval: int = 2) -> None:
         await self.send_command(f"M155 S{interval}")
