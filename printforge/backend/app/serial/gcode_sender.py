@@ -273,13 +273,15 @@ class GcodeSender:
             consecutive_failures = 0
             max_consecutive_failures = 10
 
-            # When PrintForge ran its own start gcode, skip duplicate
-            # startup commands embedded in the file by the slicer (e.g.
-            # G28, G29, M104/M109/M140/M190) until we reach the first
-            # ;LAYER: marker.  This prevents double-homing which crashes
-            # BLTouch and duplicate heating which wastes time.
+            # When PrintForge ran its own start gcode, skip ALL commands
+            # embedded in the file by the slicer before the first ;LAYER:
+            # marker. The slicer's start gcode (homing, heating, purge
+            # lines, etc.) is fully redundant since PrintForge already
+            # executed its own start sequence. Sending partial slicer
+            # start gcode (only specific commands skipped) caused motors
+            # to skip when leftover movement commands conflicted with
+            # PrintForge's completed start sequence.
             skip_preamble = bool(start_gcode.strip())
-            preamble_skip_cmds = {"G28", "G29", "M104", "M109", "M140", "M190"}
             preamble_skipped = 0
 
             with open(filepath, "r") as f:
@@ -324,15 +326,13 @@ class GcodeSender:
                     if not stripped:
                         continue
 
-                    # Skip slicer-embedded preamble commands before first layer
+                    # Skip ALL slicer-embedded commands before first layer
                     if skip_preamble:
-                        cmd_base = stripped.split()[0].upper()
-                        if cmd_base in preamble_skip_cmds:
-                            preamble_skipped += 1
-                            logger.debug(
-                                "Skipping preamble command: %s", stripped
-                            )
-                            continue
+                        preamble_skipped += 1
+                        logger.debug(
+                            "Skipping preamble command: %s", stripped
+                        )
+                        continue
 
                     # Send through command queue (plain G-code, no
                     # checksums — USB serial has its own CRC layer and
