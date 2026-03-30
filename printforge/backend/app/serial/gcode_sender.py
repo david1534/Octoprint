@@ -180,6 +180,9 @@ class GcodeSender:
             # Run start G-code preamble (homing, leveling, heating, purge)
             if start_gcode.strip():
                 logger.info("Running start G-code preamble...")
+                consecutive_start_failures = 0
+                max_start_failures = 3
+
                 for raw_line in start_gcode.splitlines():
                     if self._cancelled:
                         await self._on_cancel()
@@ -200,11 +203,25 @@ class GcodeSender:
                     )
                     result: CommandResult = await future
                     if not result.ok:
+                        consecutive_start_failures += 1
                         logger.warning(
-                            "Start gcode command failed: %s -> %s",
+                            "Start gcode command failed (%d/%d): %s -> %s",
+                            consecutive_start_failures,
+                            max_start_failures,
                             line,
                             result.error,
                         )
+                        if consecutive_start_failures >= max_start_failures:
+                            logger.critical(
+                                "Aborting print: %d consecutive start gcode "
+                                "failures — printer may not be responding",
+                                consecutive_start_failures,
+                            )
+                            self._cancelled = True
+                            await self._on_cancel()
+                            return
+                    else:
+                        consecutive_start_failures = 0
                     # Track filament used in start gcode (purge lines)
                     self._track_filament(line)
                 self._in_start_gcode = False

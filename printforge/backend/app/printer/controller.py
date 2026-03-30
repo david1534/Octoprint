@@ -589,7 +589,10 @@ M117 Print Complete"""
         # Store selected spool for filament deduction on completion
         self._current_spool_id = spool_id
 
+        # Reset line numbers on both sides to prevent "Resend: N" errors
+        # after E-Stop/power cycle sequences where counters desync.
         self._protocol.reset_line_number()
+        await self._queue.enqueue("M110 N0", CommandPriority.SYSTEM)
         self._safety.record_serial_activity()
 
         # Start timelapse recording
@@ -903,8 +906,11 @@ M117 Print Complete"""
                         self.state.status = PrinterStatus.IDLE
                     else:
                         # Aborted due to consecutive failures
+                        aborted_in_start = self._sender.in_start_gcode
                         logger.warning(
-                            "Print task aborted (cancelled=%s)", was_cancelled
+                            "Print task aborted (cancelled=%s, in_start_gcode=%s)",
+                            was_cancelled,
+                            aborted_in_start,
                         )
                         # Stop timelapse on abort
                         await self._stop_timelapse(success=False)
@@ -928,10 +934,31 @@ M117 Print Complete"""
                             self._current_job_id = None
                         self._current_spool_id = None
                         self._sender.reset()
+
+                        if aborted_in_start:
+                            error_msg = (
+                                "Print aborted: start G-code commands failed — "
+                                "printer may need reconnection or power cycle"
+                            )
+                            self._error_log.log_system_error(
+                                "Start G-code Failed",
+                                "Multiple consecutive start G-code commands were "
+                                "rejected by the printer. The print was safely "
+                                "aborted before any movement occurred. Try "
+                                "disconnecting and reconnecting, or power cycle "
+                                "the printer.",
+                            )
+                        else:
+                            error_msg = (
+                                "Print aborted: communication lost with printer"
+                            )
+                            self._error_log.log_system_error(
+                                "Print Communication Lost",
+                                "Too many consecutive commands failed during "
+                                "printing. The printer may have disconnected.",
+                            )
                         self.state.status = PrinterStatus.ERROR
-                        self.state.error_message = (
-                            "Print aborted: communication lost with printer"
-                        )
+                        self.state.error_message = error_msg
 
                     # Clear print state in both cases
                     self.state.current_file = None
