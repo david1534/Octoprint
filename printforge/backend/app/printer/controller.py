@@ -586,12 +586,49 @@ M117 Print Complete"""
         bed_temp = meta.bed_temp if meta and meta.bed_temp else 60
 
         # Prepare start G-code with temperature substitution
+        from ..storage.models import set_setting
+
         start_gcode_raw = await get_setting("start_gcode", self.DEFAULT_START_GCODE)
         start_gcode = ""
         if start_gcode_raw.strip():
             start_gcode = start_gcode_raw.replace(
                 "{nozzle_temp}", str(int(nozzle_temp))
             ).replace("{bed_temp}", str(int(bed_temp)))
+
+            # Periodic bed probing: skip G29 if probed recently.
+            # M420 S1 (already in default start gcode) loads the saved
+            # mesh from EEPROM, so skipping G29 is safe.
+            if any(l.strip().startswith("G29") for l in start_gcode.splitlines()):
+                probe_interval = float(
+                    await get_setting("bed_probe_interval_hours", "24")
+                )
+                last_probe = float(
+                    await get_setting("last_bed_probe_timestamp", "0")
+                )
+                hours_since = (_time.time() - last_probe) / 3600
+
+                if probe_interval > 0 and hours_since < probe_interval:
+                    start_gcode = "\n".join(
+                        l for l in start_gcode.splitlines()
+                        if not l.strip().startswith("G29")
+                    )
+                    logger.info(
+                        "Skipping G29 (probed %.1fh ago, interval %.0fh)",
+                        hours_since, probe_interval,
+                    )
+                    self._notify_terminal(
+                        f"[SYSTEM] Skipping bed probe (last probed {hours_since:.1f}h ago) — using saved mesh",
+                        "system",
+                    )
+                else:
+                    await set_setting(
+                        "last_bed_probe_timestamp", str(_time.time())
+                    )
+                    logger.info(
+                        "Running G29 (last probe %.1fh ago, interval %.0fh)",
+                        hours_since, probe_interval,
+                    )
+
             self._notify_terminal("[SYSTEM] Running start G-code...", "system")
 
         # Store selected spool for filament deduction on completion
