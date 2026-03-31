@@ -58,6 +58,8 @@ class PrinterController:
         self._timelapse: Optional[TimelapseRecorder] = None
         # Bed mesh parser (fed by terminal callback)
         self._bed_mesh_parser = BedMeshParser()
+        # Kill recovery state (instance variable, not class variable)
+        self._kill_recovery_in_progress: bool = False
 
     @property
     def temp_monitor(self) -> TemperatureMonitor:
@@ -153,14 +155,18 @@ class PrinterController:
         # Capture firmware error lines into the error log
         if direction == "recv" and line.startswith("Error:"):
             self._error_log.log_raw(line)
-            # Check for kill/STOP errors embedded in Error: lines
-            # (e.g. "Error:!! STOP called because of BLTouch error")
-            if "!! " in line:
+            # Only attempt kill recovery when idle — during printing the
+            # print task detects the kill through command failures (timeout
+            # or error response) and aborts cleanly via _is_fatal_error().
+            # Firing kill recovery during a print cancels it immediately,
+            # which was causing spurious mid-print stops on BLTouch errors.
+            if "!! " in line and not self._is_printing():
                 asyncio.create_task(self._attempt_kill_recovery(line))
         elif direction == "recv" and "!! " in line:
-            # Standalone Marlin emergency messages
+            # Standalone Marlin emergency messages (not prefixed with Error:)
             self._error_log.log_raw(line)
-            asyncio.create_task(self._attempt_kill_recovery(line))
+            if not self._is_printing():
+                asyncio.create_task(self._attempt_kill_recovery(line))
 
         # Feed received lines to the bed mesh parser
         if direction == "recv":
@@ -191,15 +197,20 @@ class PrinterController:
             if self._sender and self._sender.is_printing:
                 asyncio.create_task(self.pause_print())
 
-    _kill_recovery_in_progress = False
+    def _is_printing(self) -> bool:
+        """Return True if a print is actively running or paused."""
+        return self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED)
 
     async def _attempt_kill_recovery(self, kill_line: str) -> None:
         """Attempt to recover from a Marlin kill/STOP state via M999.
 
-        When Marlin enters a kill state (!! STOP), it halts all command
-        processing. We bypass the command queue and send M999 directly
-        on the serial connection to reset the firmware. If successful,
-        we re-enable temperature reporting and transition back to idle.
+        Only called when idle (not printing). During printing, the print
+        task detects kill states through command failures and aborts via
+        the _is_fatal_error() path in gcode_sender — triggering recovery
+        there would race with the print task and cause spurious stops.
+
+        Stops the queue, sends M999 directly on serial (Marlin ignores
+        queued commands in kill state), waits for reboot, then restarts.
         """
         if self._kill_recovery_in_progress:
             return
@@ -213,29 +224,23 @@ class PrinterController:
             "system",
         )
 
-        # Cancel any active print — it's dead anyway
-        if self._sender and self._sender.is_printing:
-            await self._sender.cancel()
-
-        # Flush the command queue so stale commands don't pile up.
-        # Await the task to ensure the process loop has fully exited
-        # before we start reading from serial directly — otherwise
-        # two coroutines would race on the same StreamReader.
+        # Stop the queue and wait for its task to fully exit before we
+        # access the serial port directly — prevents concurrent reads.
         if self._queue:
             self._queue.stop()
             if self._queue._task:
                 try:
-                    await self._queue._task
-                except asyncio.CancelledError:
+                    await asyncio.wait_for(self._queue._task, timeout=5.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
                     pass
 
         try:
-            # Send M999 directly on the serial line (bypasses the stopped queue)
+            # Send M999 directly — bypasses the stopped queue
             await self._connection.send("M999")
 
-            # Wait for Marlin to reboot — it sends startup messages then "ok"
+            # Wait up to 15 seconds for Marlin to reboot and send "ok"
             recovered = False
-            for _ in range(30):  # Up to 30 seconds
+            for _ in range(15):
                 try:
                     line = await self._connection.read_line(timeout=1.0)
                     if line:
@@ -255,17 +260,12 @@ class PrinterController:
                     "[SYSTEM] Recovery successful — reinitializing printer",
                     "system",
                 )
-
-                # Restart the command queue
                 if self._protocol:
                     self._protocol.reset_line_number()
                     self._queue = CommandQueue(self._protocol)
                     self._queue.start()
                     self._sender = GcodeSender(self._queue)
-
-                # Re-enable temperature auto-reporting
                 await self._queue.enqueue("M155 S2", CommandPriority.SYSTEM)
-
                 self.state.status = PrinterStatus.IDLE
                 self.state.error_message = None
                 self._safety.record_serial_activity()
@@ -281,9 +281,7 @@ class PrinterController:
                     "Automatic M999 recovery failed. The printer needs a manual power cycle.",
                 )
                 self.state.status = PrinterStatus.ERROR
-                self.state.error_message = (
-                    "Printer halted — power cycle required"
-                )
+                self.state.error_message = "Printer halted — power cycle required"
                 self._notify_state_change()
 
         except Exception as e:
@@ -508,8 +506,6 @@ class PrinterController:
     DEFAULT_START_GCODE = """\
 M140 S{bed_temp} ; Start heating bed (non-blocking)
 M104 S{nozzle_temp} ; Start heating nozzle (non-blocking)
-M280 P0 S160 ; Reset BLTouch (clears alarm state)
-G4 P500 ; Wait 500ms for BLTouch reset
 G28 ; Home all axes
 G29 ; Auto bed leveling probe (remove if no ABL)
 M420 S1 ; Activate mesh compensation (ensures G29 values are used)
