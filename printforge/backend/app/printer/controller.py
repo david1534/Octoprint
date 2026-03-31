@@ -405,7 +405,9 @@ class PrinterController:
         return await future
 
     async def home(self, axes: str = "XYZ") -> CommandResult:
-        """Home specified axes."""
+        """Home specified axes. Must not be called during printing."""
+        if self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED):
+            raise RuntimeError("Cannot home while printing")
         cmd = "G28"
         for axis in axes.upper():
             if axis in "XYZ":
@@ -429,7 +431,9 @@ class PrinterController:
     async def jog(
         self, x: float = 0, y: float = 0, z: float = 0, feedrate: int = 3000
     ) -> None:
-        """Relative move."""
+        """Relative move. Must not be called during printing."""
+        if self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED):
+            raise RuntimeError("Cannot jog while printing")
         await self.send_command("G91")  # Relative mode
         parts = ["G1"]
         if x:
@@ -450,7 +454,9 @@ class PrinterController:
         self._notify_state_change()
 
     async def extrude(self, length: float, feedrate: int = 300) -> None:
-        """Extrude or retract filament (negative length = retract)."""
+        """Extrude or retract filament. Must not be called during printing."""
+        if self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED):
+            raise RuntimeError("Cannot extrude while printing")
         await self.send_command("G91")
         await self.send_command(f"G1 E{length} F{feedrate}")
         await self.send_command("G90")

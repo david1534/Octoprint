@@ -6,6 +6,7 @@ Handles pause, resume, and cancel operations with safe nozzle parking.
 
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -14,6 +15,12 @@ from .command_queue import CommandPriority, CommandQueue
 from .protocol import CommandResult
 
 logger = logging.getLogger(__name__)
+
+# Pre-compiled patterns for position tracking
+_AXIS_X = re.compile(r"X([-\d.]+)", re.IGNORECASE)
+_AXIS_Y = re.compile(r"Y([-\d.]+)", re.IGNORECASE)
+_AXIS_Z = re.compile(r"Z([-\d.]+)", re.IGNORECASE)
+_AXIS_F = re.compile(r"F([-\d.]+)", re.IGNORECASE)
 
 
 class GcodeSender:
@@ -340,7 +347,8 @@ class GcodeSender:
                         # being silently rejected by the printer.
                         self._current_line += 1
 
-                    # Track filament usage from E values
+                    # Track position and filament usage
+                    self._track_position(stripped)
                     self._track_filament(stripped)
 
                     # Send LCD progress update (M117)
@@ -376,12 +384,21 @@ class GcodeSender:
             logger.exception("Error during print (unhandled exception)")
 
     async def pause(self) -> None:
-        """Pause the print with safe nozzle parking."""
+        """Pause the print with safe nozzle parking.
+
+        Saves current X/Y/Z position, retracts filament, lifts Z,
+        and parks the nozzle at the front-left corner.
+        """
         if not self.is_printing or self._paused:
             return
         self._paused = True
         self._pause_time = time.time()
         self._queue.pause()
+
+        logger.info(
+            "Pausing at line %d — saved position X%.2f Y%.2f Z%.2f",
+            self._current_line, self._saved_x, self._saved_y, self._saved_z,
+        )
 
         # Safe parking sequence
         # Retract filament slightly to prevent ooze
@@ -393,22 +410,39 @@ class GcodeSender:
         # Park to front-left corner
         await self._queue.enqueue("G1 X5 Y5 F3000", CommandPriority.SYSTEM)
 
-        logger.info("Print paused at line %d", self._current_line)
-
     async def resume(self) -> None:
-        """Resume the print from paused state."""
+        """Resume the print from paused state.
+
+        Restores X/Y position, lowers Z back, re-primes filament,
+        then resumes the gcode stream.
+        """
         if not self.is_printing or not self._paused:
             return
 
-        # Return to print position
-        # Move back to X/Y first (Z stays lifted)
+        logger.info(
+            "Resuming at line %d — restoring position X%.2f Y%.2f Z%.2f",
+            self._current_line, self._saved_x, self._saved_y, self._saved_z,
+        )
+
+        # Restore position: move X/Y first (Z still lifted), then lower Z
         await self._queue.enqueue("G90", CommandPriority.SYSTEM)
-        # Lower Z back (relative -5 to undo the lift)
-        await self._queue.enqueue("G91", CommandPriority.SYSTEM)
-        await self._queue.enqueue("G1 Z-5 F600", CommandPriority.SYSTEM)
+        await self._queue.enqueue(
+            f"G1 X{self._saved_x:.3f} Y{self._saved_y:.3f} F3000",
+            CommandPriority.SYSTEM,
+        )
+        # Lower Z back to saved height
+        await self._queue.enqueue(
+            f"G1 Z{self._saved_z:.3f} F600",
+            CommandPriority.SYSTEM,
+        )
         # Prime filament (push back what we retracted)
+        await self._queue.enqueue("G91", CommandPriority.SYSTEM)
         await self._queue.enqueue("G1 E2 F1800", CommandPriority.SYSTEM)
         await self._queue.enqueue("G90", CommandPriority.SYSTEM)
+        # Restore feedrate so the next print line doesn't inherit park speed
+        await self._queue.enqueue(
+            f"G1 F{self._saved_feedrate}", CommandPriority.SYSTEM
+        )
 
         if self._pause_time:
             self._total_pause_duration += time.time() - self._pause_time
@@ -447,6 +481,25 @@ class GcodeSender:
         await self._queue.enqueue("M106 S0", CommandPriority.SYSTEM)
         # Disable steppers after a delay
         await self._queue.enqueue("M84", CommandPriority.SYSTEM)
+
+    def _track_position(self, command: str) -> None:
+        """Track nozzle position from G0/G1 move commands (absolute mode)."""
+        upper = command.upper()
+        if not (upper.startswith("G0 ") or upper.startswith("G1 ")
+                or upper.startswith("G0\t") or upper.startswith("G1\t")):
+            return
+        m = _AXIS_X.search(command)
+        if m:
+            self._saved_x = float(m.group(1))
+        m = _AXIS_Y.search(command)
+        if m:
+            self._saved_y = float(m.group(1))
+        m = _AXIS_Z.search(command)
+        if m:
+            self._saved_z = float(m.group(1))
+        m = _AXIS_F.search(command)
+        if m:
+            self._saved_feedrate = int(float(m.group(1)))
 
     def _track_filament(self, command: str) -> None:
         """Track filament usage from G0/G1 E values."""

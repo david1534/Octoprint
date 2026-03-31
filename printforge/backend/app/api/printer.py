@@ -26,6 +26,12 @@ def get_controller() -> PrinterController:
     return _controller
 
 
+def _reject_if_printing(ctrl: PrinterController, msg: str = "Cannot perform this action while printing") -> None:
+    """Raise 409 if a print is in progress (printing or paused)."""
+    if ctrl.state.status.value in ("printing", "paused"):
+        raise HTTPException(409, msg)
+
+
 class ConnectRequest(BaseModel):
     port: str = "/dev/ttyUSB0"
     baudrate: int = 115200
@@ -91,6 +97,7 @@ async def disconnect():
 async def home(axes: str = "XYZ"):
     """Home specified axes."""
     ctrl = get_controller()
+    _reject_if_printing(ctrl, "Cannot home axes while printing")
     result = await ctrl.home(axes)
     return {"ok": result.ok, "response": result.response_lines}
 
@@ -107,6 +114,7 @@ async def set_temperature(req: TemperatureRequest):
 async def jog(req: JogRequest):
     """Relative move."""
     ctrl = get_controller()
+    _reject_if_printing(ctrl, "Cannot jog while printing")
     await ctrl.jog(x=req.x, y=req.y, z=req.z, feedrate=req.feedrate)
     return {"ok": True}
 
@@ -115,6 +123,7 @@ async def jog(req: JogRequest):
 async def extrude(req: ExtrudeRequest):
     """Extrude or retract filament."""
     ctrl = get_controller()
+    _reject_if_printing(ctrl, "Cannot extrude while printing")
     await ctrl.extrude(length=req.length, feedrate=req.feedrate)
     return {"ok": True}
 
@@ -127,10 +136,21 @@ async def set_fan(req: FanRequest):
     return {"ok": True}
 
 
+_DANGEROUS_DURING_PRINT = {"G28", "G29", "G91", "G92", "M84", "M18"}
+
+
 @router.post("/command")
 async def send_command(req: CommandRequest):
     """Send a raw G-code command."""
     ctrl = get_controller()
+    # Block commands that would corrupt position or disable motors mid-print
+    if ctrl.state.status.value in ("printing", "paused"):
+        cmd_base = req.command.strip().split()[0].upper() if req.command.strip() else ""
+        if cmd_base in _DANGEROUS_DURING_PRINT:
+            raise HTTPException(
+                409,
+                f"Cannot send {cmd_base} while printing — would corrupt print position",
+            )
     result = await ctrl.send_command(req.command)
     return {
         "ok": result.ok,
@@ -191,6 +211,7 @@ async def emergency_stop():
 async def disable_motors():
     """Disable stepper motors."""
     ctrl = get_controller()
+    _reject_if_printing(ctrl, "Cannot disable motors while printing")
     await ctrl.disable_motors()
     return {"ok": True}
 
