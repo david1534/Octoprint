@@ -109,9 +109,18 @@ class MarlinProtocol:
         response_lines = []
         max_retries = 3
         retry_count = 0
+        # Total wall-clock deadline for this command. The per-read timeout
+        # resets every time data arrives (e.g. M155 temp reports), so a
+        # command can hang forever if the printer sends temp data but never
+        # "ok". This deadline catches that case.
+        deadline = asyncio.get_event_loop().time() + timeout
         while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                return CommandResult(command=original_command, ok=False, response_lines=response_lines, error=f"Timeout after {timeout}s (no ok received)")
+            read_timeout = min(remaining, self.default_timeout)
             try:
-                line = await self._conn.read_line(timeout=timeout)
+                line = await self._conn.read_line(timeout=read_timeout)
             except asyncio.TimeoutError:
                 return CommandResult(command=original_command, ok=False, response_lines=response_lines, error=f"Timeout after {timeout}s")
             except ConnectionError as e:

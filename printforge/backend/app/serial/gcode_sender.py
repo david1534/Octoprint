@@ -16,6 +16,17 @@ from .protocol import CommandResult
 
 logger = logging.getLogger(__name__)
 
+# Errors that indicate the printer has halted and cannot continue.
+# The sender should abort immediately on these, not count retries.
+_FATAL_ERROR_PATTERNS = ("STOP", "KILLED", "Halted", "BLTouch")
+
+
+def _is_fatal_error(error_msg: Optional[str]) -> bool:
+    if not error_msg:
+        return False
+    return any(p in error_msg for p in _FATAL_ERROR_PATTERNS)
+
+
 # Pre-compiled patterns for position tracking
 _AXIS_X = re.compile(r"X([-\d.]+)", re.IGNORECASE)
 _AXIS_Y = re.compile(r"Y([-\d.]+)", re.IGNORECASE)
@@ -214,6 +225,16 @@ class GcodeSender:
                     cmd_elapsed = time.time() - cmd_start
 
                     if not result.ok:
+                        # Fatal errors (STOP, BLTouch) → abort immediately
+                        if _is_fatal_error(result.error):
+                            logger.critical(
+                                "Aborting print: fatal error during start "
+                                "gcode: %s -> %s",
+                                line, result.error,
+                            )
+                            self._cancelled = True
+                            await self._on_cancel()
+                            return
                         consecutive_start_failures += 1
                         logger.warning(
                             "Start gcode command failed (%d/%d): %s -> %s (%.1fs)",
@@ -323,6 +344,16 @@ class GcodeSender:
                     # Wait for command to complete before sending next
                     result: CommandResult = await future
                     if not result.ok:
+                        # Fatal errors (STOP, BLTouch) → abort immediately
+                        if _is_fatal_error(result.error):
+                            logger.critical(
+                                "Aborting print: fatal error at line %d: "
+                                "%s -> %s",
+                                self._current_line, stripped, result.error,
+                            )
+                            self._cancelled = True
+                            await self._on_cancel()
+                            return
                         consecutive_failures += 1
                         logger.error(
                             "Print command failed at line %d (%d consecutive): %s -> %s",

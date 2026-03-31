@@ -153,10 +153,13 @@ class PrinterController:
         # Capture firmware error lines into the error log
         if direction == "recv" and line.startswith("Error:"):
             self._error_log.log_raw(line)
+            # Check for kill/STOP errors embedded in Error: lines
+            # (e.g. "Error:!! STOP called because of BLTouch error")
+            if "!! " in line:
+                asyncio.create_task(self._attempt_kill_recovery(line))
         elif direction == "recv" and "!! " in line:
-            # Marlin emergency messages like "!! STOP called because of BLTouch error"
+            # Standalone Marlin emergency messages
             self._error_log.log_raw(line)
-            # Attempt automatic recovery from kill state
             asyncio.create_task(self._attempt_kill_recovery(line))
 
         # Feed received lines to the bed mesh parser
