@@ -51,8 +51,19 @@ The frontend uses **bun** for install/dev but `npm run build` in the Makefile/de
 ### Deploy Flow
 1. Build frontend: `cd printforge/frontend && bun run build`
 2. SCP files to Pi: `scp -r ... david1534@100.108.194.105:...`
-3. Restart service: `ssh david1534@100.108.194.105 "sudo systemctl restart printforge"`
-4. Check: `curl http://100.108.194.105:8000`
+3. Install new deps (if any): `ssh david1534@... "~/printforge/venv/bin/pip install -r ~/printforge/requirements.txt"`
+4. Restart service: `ssh david1534@100.108.194.105 "sudo systemctl restart printforge"`
+5. Check: `curl http://100.108.194.105:8000`
+
+### Environment Variables
+All are optional with sensible defaults. Set via systemd unit (`/etc/systemd/system/printforge.service`) or shell env.
+- `PRINTFORGE_SERIAL_PORT` — Serial device path (default: `/dev/ttyUSB0`)
+- `PRINTFORGE_SERIAL_BAUDRATE` — Baud rate (default: `115200`)
+- `PRINTFORGE_GCODE_DIR` — G-code storage path (default: `~/printforge/gcodes`)
+- `PRINTFORGE_DATA_DIR` — Database/data path (default: `~/printforge/data`)
+- `PRINTFORGE_CAMERA_URL` — ustreamer base URL (default: `http://localhost:8080`)
+- `PRINTFORGE_LOG_LEVEL` — Logging level (default: `INFO`)
+- `PRINTFORGE_CORS_ORIGINS` — Comma-separated allowed CORS origins (default: `*`). Set to the Pi's actual address(es) in production to prevent cross-site printer control, e.g. `http://100.108.194.105:8000,http://printforge.local:8000`
 
 ### Camera System
 - ustreamer runs as a separate service at `localhost:8080`
