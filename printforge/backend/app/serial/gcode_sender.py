@@ -39,6 +39,8 @@ _AXIS_F = re.compile(r"F([-\d.]+)", re.IGNORECASE)
 # speed, and linear advance — which are typically far too aggressive
 # for a first layer.
 _PREAMBLE_PASSTHROUGH_PREFIXES = (
+    "M201",  # Max acceleration per axis
+    "M203",  # Max feedrate per axis
     "M204",  # Print/travel acceleration
     "M205",  # Jerk / junction deviation limits
     "M220",  # Speed factor override (feedrate %)
@@ -46,7 +48,11 @@ _PREAMBLE_PASSTHROUGH_PREFIXES = (
     "M106",  # Fan speed (slicers often set fan off for layer 1)
     "M107",  # Fan off
     "M900",  # Linear advance K-factor
+    "M73",   # Progress display (OrcaSlicer sends M73 P0 R<min>)
+    "G90",   # Absolute positioning mode
+    "G91",   # Relative positioning mode
     "G92",   # Reset extruder position (needed before first extrude)
+    "G21",   # Metric units
     "M82",   # Absolute extrusion mode
     "M83",   # Relative extrusion mode
 )
@@ -322,17 +328,9 @@ class GcodeSender:
             # These are NOT redundant: PrintForge's start gcode doesn't
             # set them, and skipping them causes the first layer to print
             # with default firmware values (typically much too fast).
-            #
-            # We also track the last feedrate (F value) seen in skipped
-            # G0/G1 commands and inject it when the preamble ends. This
-            # is critical because OrcaSlicer often omits the F parameter
-            # on the first print move after ;LAYER_CHANGE, expecting it
-            # to persist from a prior move that we skipped. Without this,
-            # the printer inherits F3000 from PrintForge's purge lift.
             skip_preamble = bool(start_gcode.strip())
             preamble_skipped = 0
             preamble_passthrough = 0
-            preamble_last_feedrate: Optional[int] = None
 
             with open(filepath, "r") as f:
                 for line in f:
@@ -362,19 +360,6 @@ class GcodeSender:
                                 preamble_skipped,
                                 preamble_passthrough,
                             )
-                            # Inject the last feedrate seen in the skipped
-                            # preamble so the first layer doesn't inherit
-                            # F3000 from PrintForge's purge nozzle lift.
-                            if preamble_last_feedrate is not None:
-                                logger.info(
-                                    "Injecting preamble feedrate: F%d",
-                                    preamble_last_feedrate,
-                                )
-                                f_future = await self._queue.enqueue(
-                                    f"G1 F{preamble_last_feedrate}",
-                                    CommandPriority.PRINT,
-                                )
-                                await f_future
                         # Cura embeds the layer number: ;LAYER:N (0-based)
                         # OrcaSlicer just marks the boundary: ;LAYER_CHANGE
                         if ";LAYER:" in stripped or "; LAYER:" in stripped:
@@ -407,18 +392,6 @@ class GcodeSender:
                             )
                             # Fall through to send this command normally
                         else:
-                            # Capture the last feedrate from skipped G0/G1
-                            # commands. OrcaSlicer sets the first-layer
-                            # feedrate in a move before ;LAYER_CHANGE that
-                            # we skip; without capturing it the printer
-                            # inherits the wrong speed from the purge.
-                            upper = stripped.upper()
-                            if upper.startswith(("G0 ", "G1 ", "G0\t", "G1\t")):
-                                f_match = _AXIS_F.search(stripped)
-                                if f_match:
-                                    preamble_last_feedrate = int(
-                                        float(f_match.group(1))
-                                    )
                             preamble_skipped += 1
                             logger.debug(
                                 "Skipping preamble command: %s", stripped
