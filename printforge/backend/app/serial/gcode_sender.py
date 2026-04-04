@@ -180,7 +180,10 @@ class GcodeSender:
                 if stripped and not stripped.startswith(";"):
                     self._total_lines += 1
                 # Count layer changes (slicer comments)
-                if ";LAYER:" in stripped or "; LAYER:" in stripped:
+                # Cura: ;LAYER:N  OrcaSlicer/PrusaSlicer: ;LAYER_CHANGE
+                if (";LAYER:" in stripped or "; LAYER:" in stripped
+                        or stripped == ";LAYER_CHANGE"
+                        or stripped.startswith(";LAYER_CHANGE ")):
                     self._total_layers += 1
 
         self._start_time = time.time()
@@ -299,7 +302,10 @@ class GcodeSender:
                     stripped = line.strip()
 
                     # Track layer changes
-                    if ";LAYER:" in stripped or "; LAYER:" in stripped:
+                    # Cura: ;LAYER:N  OrcaSlicer/PrusaSlicer: ;LAYER_CHANGE
+                    if (";LAYER:" in stripped or "; LAYER:" in stripped
+                            or stripped == ";LAYER_CHANGE"
+                            or stripped.startswith(";LAYER_CHANGE ")):
                         if skip_preamble:
                             skip_preamble = False
                             if preamble_skipped > 0:
