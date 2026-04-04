@@ -314,10 +314,15 @@ class GcodeSender:
                                     "before first layer",
                                     preamble_skipped,
                                 )
-                        try:
-                            layer_str = stripped.split("LAYER:")[-1].strip()
-                            self._current_layer = int(layer_str) + 1
-                        except ValueError:
+                        # Cura embeds the layer number: ;LAYER:N (0-based)
+                        # OrcaSlicer just marks the boundary: ;LAYER_CHANGE
+                        if ";LAYER:" in stripped or "; LAYER:" in stripped:
+                            try:
+                                layer_str = stripped.split("LAYER:")[-1].strip()
+                                self._current_layer = int(layer_str) + 1
+                            except ValueError:
+                                self._current_layer += 1
+                        else:
                             self._current_layer += 1
                         self._notify_layer_change(self._current_layer)
 

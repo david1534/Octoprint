@@ -203,12 +203,14 @@ async def octoprint_upload_file(
     file: UploadFile,
     path: str = Query("", description="Subfolder within G-code directory"),
     print: Optional[str] = Query(None, description="Set to 'true' to start print immediately"),
+    select: Optional[str] = Query(None, description="Set to 'true' to select file after upload"),
 ):
     """Upload a G-code file (OctoPrint-compatible multipart endpoint).
 
     OrcaSlicer sends the file as a multipart upload to this path. If the
     ``print`` query param is ``"true"``, the print is started immediately
-    after upload.
+    after upload. If ``select`` is ``"true"``, the file is marked as the
+    selected file (no-op here since PrintForge selects at print time).
     """
     GCODE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -245,14 +247,14 @@ async def octoprint_upload_file(
         while chunk := await file.read(65536):
             f.write(chunk)
 
-    # Parse metadata
+    # Parse metadata — always build refs so OrcaSlicer can resolve the file
+    rel_path = str(filepath.relative_to(GCODE_DIR)).replace("\\", "/")
+    refs = {
+        "resource": f"/api/files/local/{rel_path}",
+        "download": f"/api/files/{rel_path}",
+    }
     try:
-        metadata = parse_gcode_file(filepath)
-        rel_path = str(filepath.relative_to(GCODE_DIR)).replace("\\", "/")
-        refs = {
-            "resource": f"/api/files/local/{rel_path}",
-            "download": f"/api/files/{rel_path}",
-        }
+        parse_gcode_file(filepath)
         file_resp = {
             "name": safe_name,
             "path": rel_path,
@@ -262,12 +264,12 @@ async def octoprint_upload_file(
             "refs": refs,
         }
     except Exception:
-        rel_path = safe_name
         file_resp = {
             "name": safe_name,
             "path": rel_path,
             "type": "machinecode",
             "size": filepath.stat().st_size,
+            "refs": refs,
         }
 
     # Optionally start the print immediately
