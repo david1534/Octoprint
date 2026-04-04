@@ -228,11 +228,7 @@ class PrinterController:
         # access the serial port directly — prevents concurrent reads.
         if self._queue:
             self._queue.stop()
-            if self._queue._task:
-                try:
-                    await asyncio.wait_for(self._queue._task, timeout=5.0)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    pass
+            await self._queue.wait_for_stop(timeout=5.0)
 
         try:
             # Send M999 directly — bypasses the stopped queue
@@ -265,7 +261,8 @@ class PrinterController:
                     self._queue = CommandQueue(self._protocol)
                     self._queue.start()
                     self._sender = GcodeSender(self._queue)
-                await self._queue.enqueue("M155 S2", CommandPriority.SYSTEM)
+                if self._queue:
+                    await self._queue.enqueue("M155 S2", CommandPriority.SYSTEM)
                 self.state.status = PrinterStatus.IDLE
                 self.state.error_message = None
                 self._safety.record_serial_activity()

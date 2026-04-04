@@ -8,7 +8,7 @@
 	let progress = $derived(p.progress);
 	let isPrintActive = $derived(state.status === 'printing' || state.status === 'paused');
 
-	let etaTime = $derived(() => {
+	let etaTime = $derived.by(() => {
 		if (p.remaining <= 0) return '';
 		const eta = new Date(Date.now() + p.remaining * 1000);
 		return eta.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -61,8 +61,8 @@
 					<span class="text-xs text-surface-500">Remaining</span>
 					<p class="text-sm font-medium tabular-nums text-surface-200">
 						{formatDuration(p.remaining)}
-						{#if etaTime()}
-							<span class="text-surface-500 text-xs">~{etaTime()}</span>
+						{#if etaTime}
+							<span class="text-surface-500 text-xs">~{etaTime}</span>
 						{/if}
 					</p>
 				</div>

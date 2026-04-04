@@ -69,6 +69,9 @@
 
 			const params = $currentPath ? `?path=${encodeURIComponent($currentPath)}` : '';
 			xhr.open('POST', `/api/files/upload${params}`);
+			// Include auth header — without this, uploads fail 401 when API key is set
+			const apiKey = typeof localStorage !== 'undefined' ? localStorage.getItem('printforge:apiKey') : null;
+			if (apiKey) xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
 			xhr.send(formData);
 		});
 	}

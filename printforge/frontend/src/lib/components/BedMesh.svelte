@@ -180,7 +180,7 @@
 		if (mesh) drawMesh();
 	});
 
-	let ageLabel = $derived(() => {
+	let ageLabel = $derived.by(() => {
 		if (!mesh?.timestamp) return '';
 		const age = Math.floor((Date.now() / 1000) - mesh.timestamp);
 		if (age < 60) return `${age}s ago`;
@@ -201,8 +201,8 @@
 					{:else}
 						<span class="text-amber-400 ml-1">Inactive</span>
 					{/if}
-					{#if ageLabel()}
-						<span class="text-surface-600 ml-1">{ageLabel()}</span>
+					{#if ageLabel}
+						<span class="text-surface-600 ml-1">{ageLabel}</span>
 					{/if}
 				</p>
 			{/if}

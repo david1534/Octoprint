@@ -168,10 +168,19 @@ async def get_spool(spool_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+_SPOOL_COLUMNS = frozenset({
+    "name", "material", "color", "total_weight_g", "used_weight_g",
+    "cost_per_kg", "active", "notes", "density",
+})
+
+
 async def update_spool(spool_id: int, **kwargs) -> None:
-    """Update spool fields."""
+    """Update spool fields (column names are whitelisted to prevent injection)."""
     if not kwargs:
         return
+    for k in kwargs:
+        if k not in _SPOOL_COLUMNS:
+            raise ValueError(f"Invalid spool column: {k}")
     db = await get_db()
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     values = list(kwargs.values()) + [spool_id]
@@ -180,11 +189,16 @@ async def update_spool(spool_id: int, **kwargs) -> None:
 
 
 async def set_active_spool(spool_id: int) -> None:
-    """Set a spool as active (deactivates all others)."""
+    """Set a spool as active (deactivates all others) atomically."""
     db = await get_db()
-    await db.execute("UPDATE filament_spools SET active = 0")
-    await db.execute("UPDATE filament_spools SET active = 1 WHERE id = ?", (spool_id,))
-    await db.commit()
+    await db.execute("BEGIN")
+    try:
+        await db.execute("UPDATE filament_spools SET active = 0")
+        await db.execute("UPDATE filament_spools SET active = 1 WHERE id = ?", (spool_id,))
+        await db.execute("COMMIT")
+    except Exception:
+        await db.execute("ROLLBACK")
+        raise
 
 
 async def deduct_filament(spool_id: int, grams: float) -> None:

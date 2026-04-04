@@ -111,10 +111,10 @@ class GcodeSender:
     def elapsed_seconds(self) -> float:
         if self._start_time is None:
             return 0.0
-        elapsed = time.time() - self._start_time - self._total_pause_duration
+        elapsed = time.monotonic() - self._start_time - self._total_pause_duration
         # Subtract ongoing pause duration if currently paused
         if self._paused and self._pause_time:
-            elapsed -= time.time() - self._pause_time
+            elapsed -= time.monotonic() - self._pause_time
         return max(0.0, elapsed)
 
     @property
@@ -148,6 +148,25 @@ class GcodeSender:
         self._lcd_enabled = enabled
         self._lcd_interval = max(10, interval)
 
+    @staticmethod
+    def _count_lines_and_layers(filepath: Path) -> tuple[int, int]:
+        """Count printable lines and layer changes in a G-code file.
+
+        Runs synchronously — intended to be called via asyncio.to_thread().
+        """
+        total_lines = 0
+        total_layers = 0
+        with open(filepath, "r") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped and not stripped.startswith(";"):
+                    total_lines += 1
+                if (";LAYER:" in stripped or "; LAYER:" in stripped
+                        or stripped == ";LAYER_CHANGE"
+                        or stripped.startswith(";LAYER_CHANGE ")):
+                    total_layers += 1
+        return total_lines, total_layers
+
     async def start_print(self, filepath: Path, start_gcode: str = "") -> None:
         """Start printing a G-code file.
 
@@ -171,22 +190,13 @@ class GcodeSender:
         self._e_relative = False
         self._in_start_gcode = bool(start_gcode.strip())
 
-        # Count printable lines and layers
-        self._total_lines = 0
-        self._total_layers = 0
-        with open(filepath, "r") as f:
-            for line in f:
-                stripped = line.strip()
-                if stripped and not stripped.startswith(";"):
-                    self._total_lines += 1
-                # Count layer changes (slicer comments)
-                # Cura: ;LAYER:N  OrcaSlicer/PrusaSlicer: ;LAYER_CHANGE
-                if (";LAYER:" in stripped or "; LAYER:" in stripped
-                        or stripped == ";LAYER_CHANGE"
-                        or stripped.startswith(";LAYER_CHANGE ")):
-                    self._total_layers += 1
+        # Count printable lines and layers (run in thread to avoid blocking
+        # the event loop on large files — significant on Pi SD cards)
+        self._total_lines, self._total_layers = await asyncio.to_thread(
+            self._count_lines_and_layers, filepath
+        )
 
-        self._start_time = time.time()
+        self._start_time = time.monotonic()
         self._task = asyncio.create_task(self._print_loop(filepath, start_gcode))
         logger.info(
             "Print started: %s (%d lines, %d layers)",
@@ -201,7 +211,7 @@ class GcodeSender:
             # Run start G-code preamble (homing, leveling, heating, purge)
             if start_gcode.strip():
                 logger.info("Running start G-code preamble...")
-                preamble_start = time.time()
+                preamble_start = time.monotonic()
                 consecutive_start_failures = 0
                 max_start_failures = 3
 
@@ -220,12 +230,12 @@ class GcodeSender:
                         line = line[: line.index(";")].strip()
                     if not line:
                         continue
-                    cmd_start = time.time()
+                    cmd_start = time.monotonic()
                     future = await self._queue.enqueue(
                         line, priority=CommandPriority.SYSTEM
                     )
                     result: CommandResult = await future
-                    cmd_elapsed = time.time() - cmd_start
+                    cmd_elapsed = time.monotonic() - cmd_start
 
                     if not result.ok:
                         # Fatal errors (STOP, BLTouch) → abort immediately
@@ -265,7 +275,7 @@ class GcodeSender:
                     # Track filament used in start gcode (purge lines)
                     self._track_filament(line)
 
-                preamble_elapsed = time.time() - preamble_start
+                preamble_elapsed = time.monotonic() - preamble_start
                 self._in_start_gcode = False
                 logger.info(
                     "Start G-code complete (%.1fs), streaming file...",
@@ -275,16 +285,17 @@ class GcodeSender:
             consecutive_failures = 0
             max_consecutive_failures = 10
 
-            # When PrintForge ran its own start gcode, skip ALL commands
-            # embedded in the file by the slicer before the first ;LAYER:
-            # marker. The slicer's start gcode (homing, heating, purge
-            # lines, etc.) is fully redundant since PrintForge already
-            # executed its own start sequence. Sending partial slicer
-            # start gcode (only specific commands skipped) caused motors
-            # to skip when leftover movement commands conflicted with
-            # PrintForge's completed start sequence.
+            # When PrintForge ran its own start gcode, skip redundant
+            # slicer preamble commands (homing, heating, purge moves)
+            # before the first ;LAYER: marker. However, pass through
+            # machine configuration commands that the slicer sets for the
+            # first layer — acceleration, jerk, fan, linear advance, etc.
+            # These are NOT redundant: PrintForge's start gcode doesn't
+            # set them, and skipping them causes the first layer to print
+            # with default firmware values (typically much too fast).
             skip_preamble = bool(start_gcode.strip())
             preamble_skipped = 0
+            preamble_passthrough = 0
 
             with open(filepath, "r") as f:
                 for line in f:
@@ -412,7 +423,7 @@ class GcodeSender:
             if self._lcd_enabled:
                 await self._queue.enqueue("M117 Print Complete", CommandPriority.PRINT)
 
-            elapsed = time.time() - self._start_time if self._start_time else 0
+            elapsed = time.monotonic() - self._start_time if self._start_time else 0
             logger.info(
                 "Print completed: %s (%d/%d lines in %.1fs)",
                 filepath.name,
@@ -434,7 +445,7 @@ class GcodeSender:
         if not self.is_printing or self._paused:
             return
         self._paused = True
-        self._pause_time = time.time()
+        self._pause_time = time.monotonic()
         self._queue.pause()
 
         logger.info(
@@ -487,7 +498,7 @@ class GcodeSender:
         )
 
         if self._pause_time:
-            self._total_pause_duration += time.time() - self._pause_time
+            self._total_pause_duration += time.monotonic() - self._pause_time
         self._paused = False
         self._queue.resume()
         logger.info("Print resumed at line %d", self._current_line)
@@ -516,9 +527,15 @@ class GcodeSender:
         await self._queue.enqueue("G1 Z10 F600", CommandPriority.SYSTEM)
         await self._queue.enqueue("G90", CommandPriority.SYSTEM)
         await self._queue.enqueue("G28 X Y", CommandPriority.SYSTEM)
-        # Turn off heaters
-        await self._queue.enqueue("M104 S0", CommandPriority.SYSTEM)
-        await self._queue.enqueue("M140 S0", CommandPriority.SYSTEM)
+        # Turn off heaters — await to ensure they actually shut off before
+        # the cancel timeout potentially force-cancels the task
+        hotend_off = await self._queue.enqueue("M104 S0", CommandPriority.SYSTEM)
+        bed_off = await self._queue.enqueue("M140 S0", CommandPriority.SYSTEM)
+        try:
+            await asyncio.wait_for(hotend_off, timeout=5.0)
+            await asyncio.wait_for(bed_off, timeout=5.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            logger.warning("Heater shutoff commands did not complete in time")
         # Turn off fan
         await self._queue.enqueue("M106 S0", CommandPriority.SYSTEM)
         # Disable steppers after a delay
@@ -545,8 +562,6 @@ class GcodeSender:
 
     def _track_filament(self, command: str) -> None:
         """Track filament usage from G0/G1 E values."""
-        import re
-
         upper = command.upper()
 
         # Detect relative/absolute extrusion mode

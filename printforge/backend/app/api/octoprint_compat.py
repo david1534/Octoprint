@@ -341,10 +341,12 @@ async def octoprint_upload_file(
     target_dir.mkdir(parents=True, exist_ok=True)
     filepath = target_dir / safe_name
 
-    # Write file to disk
-    with open(filepath, "wb") as f:
+    # Write file to disk (async to avoid blocking event loop on slow SD cards)
+    import aiofiles
+
+    async with aiofiles.open(filepath, "wb") as f:
         while chunk := await file.read(65536):
-            f.write(chunk)
+            await f.write(chunk)
 
     # Parse metadata — always build refs so OrcaSlicer can resolve the file
     rel_path = str(filepath.relative_to(GCODE_DIR)).replace("\\", "/")

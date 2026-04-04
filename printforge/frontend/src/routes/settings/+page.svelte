@@ -106,7 +106,7 @@ M117 Print Complete`;
 	let spoolSortBy = $state<'name' | 'remaining' | 'material'>('name');
 	let spoolSortAsc = $state(true);
 
-	let filteredSpools = $derived(() => {
+	let filteredSpools = $derived.by(() => {
 		let result = spools.filter(s => {
 			if (spoolFilterMaterial !== 'all' && s.material !== spoolFilterMaterial) return false;
 			return true;
@@ -127,7 +127,7 @@ M117 Print Complete`;
 		return result;
 	});
 
-	let spoolMaterialsInUse = $derived(() => {
+	let spoolMaterialsInUse = $derived.by(() => {
 		const mats = new Set(spools.map(s => s.material));
 		return Array.from(mats).sort();
 	});
@@ -989,7 +989,7 @@ M117 Print Complete`;
 					<div class="flex flex-wrap items-center gap-2 mb-3">
 						<select class="input text-xs py-1 px-2 w-auto" bind:value={spoolFilterMaterial}>
 							<option value="all">All Materials</option>
-							{#each spoolMaterialsInUse() as mat}
+							{#each spoolMaterialsInUse as mat}
 								<option value={mat}>{mat}</option>
 							{/each}
 						</select>
@@ -1029,11 +1029,11 @@ M117 Print Complete`;
 						<p class="text-sm text-surface-500">No spools added yet</p>
 						<p class="text-xs text-surface-600 mt-1">Add a spool to start tracking filament usage</p>
 					</div>
-				{:else if filteredSpools().length === 0}
+				{:else if filteredSpools.length === 0}
 					<p class="text-sm text-surface-500 text-center py-4">No spools match the current filter.</p>
 				{:else}
 					<div class="space-y-3">
-						{#each filteredSpools() as spool (spool.id)}
+						{#each filteredSpools as spool (spool.id)}
 							<div class="bg-surface-800/50 rounded-lg p-3 {spool.active ? 'ring-1 ring-accent/40' : ''}">
 								{#if editingSpoolId === spool.id}
 									<!-- Edit mode -->

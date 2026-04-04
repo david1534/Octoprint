@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from pathlib import Path
-
 import os
+from pathlib import Path
 
 import aiosqlite
 
@@ -17,6 +17,15 @@ _data_dir = os.environ.get(
 DB_PATH = Path(_data_dir) / "printforge.db"
 
 _db: aiosqlite.Connection | None = None
+_db_lock: asyncio.Lock | None = None
+
+
+def _get_db_lock() -> asyncio.Lock:
+    """Lazily create the database init lock (must be called inside event loop)."""
+    global _db_lock
+    if _db_lock is None:
+        _db_lock = asyncio.Lock()
+    return _db_lock
 
 
 async def init_db() -> None:
@@ -91,5 +100,8 @@ async def close_db() -> None:
 
 async def get_db() -> aiosqlite.Connection:
     if _db is None:
-        await init_db()
+        async with _get_db_lock():
+            # Double-check after acquiring the lock
+            if _db is None:
+                await init_db()
     return _db

@@ -58,7 +58,7 @@
 	let contextMenu = $state<{ x: number; y: number; file?: GcodeFile; folder?: Folder } | null>(null);
 
 	// Breadcrumbs
-	let breadcrumbs = $derived(() => {
+	let breadcrumbs = $derived.by(() => {
 		const path = $currentPath;
 		if (!path) return [];
 		const parts = path.split('/').filter(Boolean);
@@ -69,7 +69,7 @@
 	});
 
 	// Filtered and sorted files
-	let filteredFiles = $derived(() => {
+	let filteredFiles = $derived.by(() => {
 		let result = $files;
 		if (searchQuery.trim()) {
 			const q = searchQuery.toLowerCase();
@@ -85,7 +85,7 @@
 		return result;
 	});
 
-	let filteredFolders = $derived(() => {
+	let filteredFolders = $derived.by(() => {
 		if (!searchQuery.trim()) return $folders;
 		const q = searchQuery.toLowerCase();
 		return $folders.filter(f => f.name.toLowerCase().includes(q));
@@ -447,9 +447,9 @@
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
 			</svg>
 		</button>
-		{#each breadcrumbs() as crumb, i}
+		{#each breadcrumbs as crumb, i}
 			<span class="text-surface-600 shrink-0">/</span>
-			{#if i === breadcrumbs().length - 1}
+			{#if i === breadcrumbs.length - 1}
 				<span class="text-surface-200 font-medium truncate">{crumb.name}</span>
 			{:else}
 				<button
@@ -717,9 +717,9 @@
 	{/if}
 
 	<!-- Folders -->
-	{#if filteredFolders().length > 0}
+	{#if filteredFolders.length > 0}
 		<div class="space-y-1 mb-3">
-			{#each filteredFolders() as folder}
+			{#each filteredFolders as folder}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					class="flex items-center gap-3 card !py-2.5 group transition-all duration-150
@@ -785,7 +785,7 @@
 	{/if}
 
 	<!-- Files: search empty state -->
-	{#if searchQuery && filteredFiles().length === 0 && filteredFolders().length === 0}
+	{#if searchQuery && filteredFiles.length === 0 && filteredFolders.length === 0}
 		<div class="text-center py-12 text-surface-500">
 			<p class="text-sm">No results for "{searchQuery}"</p>
 			<button class="text-xs text-accent hover:text-accent-hover mt-2" onclick={() => searchQuery = ''}>
@@ -795,7 +795,7 @@
 	{:else if viewMode === 'list'}
 		<!-- List view -->
 		<div class="space-y-2">
-			{#each filteredFiles() as file}
+			{#each filteredFiles as file}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					class="card {expandedFile === file.path ? 'ring-1 ring-accent/30' : ''} {draggedFile?.path === file.path ? 'opacity-40' : ''}"
@@ -914,7 +914,7 @@
 	{:else}
 		<!-- Grid view -->
 		<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-			{#each filteredFiles() as file}
+			{#each filteredFiles as file}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					class="card flex flex-col {draggedFile?.path === file.path ? 'opacity-40' : ''}"

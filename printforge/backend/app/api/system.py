@@ -145,9 +145,24 @@ async def restart_service():
         return {"status": "error", "detail": str(e)}
 
 
+def _reject_if_printing() -> None:
+    """Raise HTTPException if a print is in progress — safety guard."""
+    from ..api import printer as printer_api
+    from fastapi import HTTPException
+
+    ctrl = getattr(printer_api, "_controller", None)
+    if ctrl and ctrl.state.status in ("printing", "paused", "finishing"):
+        raise HTTPException(
+            409,
+            f"Cannot perform this action while printer is {ctrl.state.status}. "
+            "Cancel or finish the print first.",
+        )
+
+
 @router.post("/restart-os")
 async def restart_os():
-    """Restart the operating system."""
+    """Restart the operating system (blocked during active prints)."""
+    _reject_if_printing()
     try:
         subprocess.Popen(
             ["sudo", "shutdown", "-r", "now"],
@@ -161,7 +176,8 @@ async def restart_os():
 
 @router.post("/shutdown-os")
 async def shutdown_os():
-    """Shut down the operating system."""
+    """Shut down the operating system (blocked during active prints)."""
+    _reject_if_printing()
     try:
         subprocess.Popen(
             ["sudo", "shutdown", "-h", "now"],

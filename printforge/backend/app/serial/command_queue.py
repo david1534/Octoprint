@@ -63,6 +63,17 @@ class CommandQueue:
         if self._task:
             self._task.cancel()
 
+    async def wait_for_stop(self, timeout: float = 5.0) -> None:
+        """Wait for the processing task to fully exit after stop().
+
+        Use this instead of accessing _task directly from external code.
+        """
+        if self._task:
+            try:
+                await asyncio.wait_for(self._task, timeout=timeout)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+
     def pause(self) -> None:
         self._paused = True
         self._pause_event.clear()

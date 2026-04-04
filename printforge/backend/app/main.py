@@ -6,6 +6,8 @@ Main FastAPI application entry point.
 
 import asyncio
 import logging
+import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -111,10 +113,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for development (SvelteKit dev server on different port)
+# CORS — restrict origins in production to prevent cross-site printer control.
+# Set PRINTFORGE_CORS_ORIGINS env var to a comma-separated list of allowed
+# origins (e.g. "http://100.108.194.105:8000,http://printforge.local:8000").
+# Defaults to "*" for development convenience.
+_cors_origins_raw = os.environ.get("PRINTFORGE_CORS_ORIGINS", "*")
+_cors_origins = (
+    ["*"] if _cors_origins_raw.strip() == "*"
+    else [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -192,7 +202,7 @@ async def camera_mjpeg_proxy():
             client.build_request("GET", stream_url),
             stream=True,
         )
-    except (httpx.ConnectError, httpx.TimeoutException):
+    except Exception:
         await client.aclose()
         return JSONResponse(content={"error": "Camera unavailable"}, status_code=503)
 
@@ -232,7 +242,6 @@ async def camera_snapshot():
     Multiple frontend requests within the TTL window get the same frame.
     """
     global _frame_cache, _frame_cache_time
-    import time
 
     now = time.monotonic()
 

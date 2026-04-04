@@ -48,7 +48,20 @@ def verify_api_key(provided: str, stored_hash: str) -> bool:
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
-    """Middleware that enforces API key authentication when configured."""
+    """Middleware that enforces API key authentication when configured.
+
+    Caches the API key hash to avoid querying the database on every request.
+    The cache is invalidated when the setting changes (via invalidate_api_key_cache).
+    """
+
+    _cached_hash: str | None = None
+    _cache_loaded: bool = False
+
+    @classmethod
+    def invalidate_api_key_cache(cls) -> None:
+        """Call this when the API key setting is changed."""
+        cls._cached_hash = None
+        cls._cache_loaded = False
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
@@ -68,10 +81,14 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         if not path.startswith("/api/"):
             return await call_next(request)
 
-        # Check if API key auth is enabled
-        from ..storage.models import get_setting
+        # Check if API key auth is enabled (cached to avoid per-request DB hit)
+        if not APIKeyMiddleware._cache_loaded:
+            from ..storage.models import get_setting
 
-        api_key_hash = await get_setting("api_key_hash", "")
+            APIKeyMiddleware._cached_hash = await get_setting("api_key_hash", "")
+            APIKeyMiddleware._cache_loaded = True
+
+        api_key_hash = APIKeyMiddleware._cached_hash or ""
         if not api_key_hash:
             # No key configured = open access
             return await call_next(request)
@@ -91,7 +108,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             from fastapi.responses import JSONResponse
 
             return JSONResponse(
-                status_code= 401,
+                status_code=401,
                 content={"detail": "Invalid or missing API key"},
             )
 

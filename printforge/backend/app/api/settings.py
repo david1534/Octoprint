@@ -28,16 +28,22 @@ async def generate_new_api_key():
 
     The key is stored as a hash; the raw value cannot be retrieved later.
     """
+    from ..middleware.auth import APIKeyMiddleware
+
     raw_key = generate_api_key()
     key_hash = hash_api_key(raw_key)
     await set_setting("api_key_hash", key_hash)
+    APIKeyMiddleware.invalidate_api_key_cache()
     return {"api_key": raw_key, "message": "Save this key — it cannot be shown again."}
 
 
 @router.delete("/api-key")
 async def revoke_api_key():
     """Remove the API key (disables auth, returns to open access)."""
+    from ..middleware.auth import APIKeyMiddleware
+
     await set_setting("api_key_hash", "")
+    APIKeyMiddleware.invalidate_api_key_cache()
     return {"ok": True, "message": "API key revoked. All requests are now allowed."}
 
 

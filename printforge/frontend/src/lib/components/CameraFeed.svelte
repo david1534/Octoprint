@@ -150,19 +150,21 @@
 		if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 		return headers;
 	}
-	const authHeaders = getAuthHeaders();
-
 	let pendingDrawable: (ImageBitmap | HTMLImageElement) | null = null;
 
 	function fetchFrame() {
 		if (!pollActive || paused || fetchInFlight) return;
 		fetchInFlight = true;
 
+		// Refresh auth headers each call so API key changes take effect
+		// without requiring a page reload
+		const headers = getAuthHeaders();
+
 		if (abortController) abortController.abort();
 		abortController = new AbortController();
 		const timeoutId = setTimeout(() => abortController?.abort(), FETCH_TIMEOUT);
 
-		fetch(`${snapshotUrl}?t=${Date.now()}`, { headers: authHeaders, signal: abortController.signal })
+		fetch(`${snapshotUrl}?t=${Date.now()}`, { headers, signal: abortController.signal })
 			.then(r => {
 				clearTimeout(timeoutId);
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);

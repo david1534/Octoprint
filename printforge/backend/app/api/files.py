@@ -146,9 +146,11 @@ async def upload_file(
     target_dir.mkdir(parents=True, exist_ok=True)
     filepath = target_dir / safe_name
 
-    with open(filepath, "wb") as f:
+    import aiofiles
+
+    async with aiofiles.open(filepath, "wb") as f:
         while chunk := await file.read(1024 * 64):
-            f.write(chunk)
+            await f.write(chunk)
 
     try:
         metadata = parse_gcode_file(filepath)
