@@ -48,7 +48,7 @@ async def octoprint_version():
     return {
         "api": "0.1",
         "server": "1.9.0",
-        "text": "PrintForge (OctoPrint compat 0.1)",
+        "text": "OctoPrint 1.9.0",
     }
 
 
