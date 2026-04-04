@@ -1,25 +1,29 @@
 """OctoPrint-compatible API shim.
 
-Implements the subset of the OctoPrint REST API that OrcaSlicer (and other
-slicers using Octo/Klipper host type) consume. Delegates all work to the
-existing PrintForge controller and file-upload logic — no duplicate state.
+Implements the subset of the OctoPrint REST API that OrcaSlicer and Cura
+(and other slicers using OctoPrint host type) consume. Delegates all work
+to the existing PrintForge controller — no duplicate state.
 
 Implemented endpoints:
-    GET  /api/version         — connection test ("Test" button in OrcaSlicer)
-    GET  /api/printer         — printer state (temps + status flags)
-    GET  /api/job             — current job progress
-    POST /api/job             — pause / resume / cancel
-    POST /api/files/local     — upload G-code, optionally start print
+    GET  /api/version           — connection test
+    GET  /api/settings          — minimal settings (webcam URL, features)
+    POST /api/login             — passive auth check
+    GET  /api/printer           — printer state (temps + status flags)
+    GET  /api/printerprofiles   — printer geometry for build plate viz
+    GET  /api/job               — current job progress
+    POST /api/job               — pause / resume / cancel
+    POST /api/files/local       — upload G-code, optionally start print
+    POST /api/printer/command   — send raw G-code commands
+    POST /api/connection        — connect / disconnect printer
 """
 
 from __future__ import annotations
 
-import io
-import re
+import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -28,6 +32,8 @@ from ..printer.gcode_parser import parse_gcode_file
 
 # Reuse the controller accessor already wired up by main.py
 from .printer import get_controller
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["octoprint-compat"])
 
@@ -42,13 +48,61 @@ ALLOWED_EXTENSIONS = {".gcode", ".g", ".gc"}
 async def octoprint_version():
     """Return OctoPrint-compatible version info.
 
-    OrcaSlicer's "Test" button hits this endpoint. Returning a plausible
-    version string makes it show a green checkmark.
+    Both OrcaSlicer and Cura hit this endpoint to verify the connection.
     """
     return {
         "api": "0.1",
         "server": "1.9.0",
         "text": "OctoPrint 1.9.0",
+    }
+
+
+# ── Settings ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/api/settings")
+async def octoprint_settings():
+    """Return minimal OctoPrint settings.
+
+    Cura's OctoPrint plugin reads this on connect to discover webcam URL
+    and feature flags. We return a plausible stub.
+    """
+    return {
+        "api": {"enabled": True, "key": "n/a"},
+        "feature": {
+            "sdSupport": False,
+            "temperatureGraph": True,
+            "modelSizeDetection": False,
+        },
+        "webcam": {
+            "webcamEnabled": True,
+            "streamUrl": "/webcam/?action=stream",
+            "snapshotUrl": "/webcam/?action=snapshot",
+            "flipH": False,
+            "flipV": False,
+            "rotate90": False,
+        },
+        "plugins": {},
+    }
+
+
+# ── Login ────────────────────────────────────────────────────────────────────
+
+
+@router.post("/api/login")
+async def octoprint_login():
+    """Passive auth check.
+
+    Cura's plugin sends the API key and expects a user info response.
+    Since PrintForge has its own auth layer, we just acknowledge.
+    """
+    return {
+        "name": "printforge",
+        "active": True,
+        "admin": True,
+        "user": True,
+        "apikey": "n/a",
+        "_is_external_client": True,
     }
 
 
@@ -109,6 +163,48 @@ async def octoprint_printer_state():
             "text": _status_text(s.status.value),
             "flags": _status_flags(s.status.value),
         },
+    }
+
+
+# ── Printer profiles ─────────────────────────────────────────────────────────
+
+
+@router.get("/api/printerprofiles")
+async def octoprint_printer_profiles():
+    """Return printer profile with bed dimensions.
+
+    Cura queries this to render a build plate visualisation. Values match
+    a typical Ender-3 / 220x220 printer — adjust if your bed differs.
+    """
+    return {
+        "profiles": {
+            "_default": {
+                "id": "_default",
+                "name": "PrintForge Printer",
+                "model": "Generic",
+                "default": True,
+                "current": True,
+                "volume": {
+                    "width": 220,
+                    "depth": 220,
+                    "height": 250,
+                    "formFactor": "rectangular",
+                    "origin": "lowerleft",
+                },
+                "heatedBed": True,
+                "heatedChamber": False,
+                "axes": {
+                    "x": {"speed": 6000, "inverted": False},
+                    "y": {"speed": 6000, "inverted": False},
+                    "z": {"speed": 200, "inverted": False},
+                    "e": {"speed": 300, "inverted": False},
+                },
+                "extruder": {
+                    "count": 1,
+                    "nozzleDiameter": 0.4,
+                },
+            }
+        }
     }
 
 
@@ -200,18 +296,21 @@ async def octoprint_job_command(req: JobCommandRequest):
 
 @router.post("/api/files/local", status_code=201)
 async def octoprint_upload_file(
+    request: Request,
     file: UploadFile,
-    path: str = Query("", description="Subfolder within G-code directory"),
-    print: Optional[str] = Query(None, description="Set to 'true' to start print immediately"),
-    select: Optional[str] = Query(None, description="Set to 'true' to select file after upload"),
 ):
     """Upload a G-code file (OctoPrint-compatible multipart endpoint).
 
-    OrcaSlicer sends the file as a multipart upload to this path. If the
-    ``print`` query param is ``"true"``, the print is started immediately
-    after upload. If ``select`` is ``"true"``, the file is marked as the
-    selected file (no-op here since PrintForge selects at print time).
+    Supports both OrcaSlicer (sends ``print``/``select`` as query params)
+    and Cura (sends them as multipart form fields in the request body).
+    The endpoint checks both sources so either slicer works.
     """
+    # Cura sends path/print/select as multipart form fields.
+    # OrcaSlicer sends them as query params. Support both.
+    form = await request.form()
+    path = str(form.get("path", "") or request.query_params.get("path", ""))
+    print_val = str(form.get("print", "") or request.query_params.get("print", ""))
+    select_val = str(form.get("select", "") or request.query_params.get("select", ""))
     GCODE_DIR.mkdir(parents=True, exist_ok=True)
 
     if not file.filename:
@@ -273,7 +372,7 @@ async def octoprint_upload_file(
         }
 
     # Optionally start the print immediately
-    start_requested = str(print).lower() in ("true", "1", "yes") if print else False
+    start_requested = print_val.lower() in ("true", "1", "yes") if print_val else False
     if start_requested:
         ctrl = get_controller()
         if ctrl.state.status.value not in ("idle",):
@@ -286,3 +385,99 @@ async def octoprint_upload_file(
         "files": {"local": file_resp},
         "done": True,
     }
+
+
+# ── Printer command ──────────────────────────────────────────────────────────
+
+
+class GcodeCommandRequest(BaseModel):
+    commands: Optional[list[str]] = None
+    command: Optional[str] = None
+
+
+@router.post("/api/printer/command")
+async def octoprint_printer_command(req: GcodeCommandRequest):
+    """Send raw G-code commands to the printer.
+
+    Cura uses this for manual jog controls, preheat buttons, and the
+    terminal tab. Accepts either a single ``command`` string or a list
+    of ``commands``.
+    """
+    ctrl = get_controller()
+    if ctrl.state.status.value in ("disconnected", "connecting"):
+        raise HTTPException(409, "Printer is not connected")
+
+    cmds: list[str] = []
+    if req.commands:
+        cmds = req.commands
+    elif req.command:
+        cmds = [req.command]
+    else:
+        raise HTTPException(400, "No command(s) provided")
+
+    for cmd in cmds:
+        await ctrl.send_command(cmd.strip())
+
+    return JSONResponse(status_code=204, content=None)
+
+
+# ── Connection management ────────────────────────────────────────────────────
+
+
+class ConnectionRequest(BaseModel):
+    command: str  # "connect" or "disconnect"
+    port: Optional[str] = None
+    baudrate: Optional[int] = None
+
+
+@router.get("/api/connection")
+async def octoprint_connection_state():
+    """Return current connection state.
+
+    Cura may poll this to check whether the printer is connected.
+    """
+    ctrl = get_controller()
+    status = ctrl.state.status.value
+    connected = status not in ("disconnected", "connecting")
+    return {
+        "current": {
+            "state": _status_text(status),
+            "port": ctrl.state.port if connected else None,
+            "baudrate": ctrl.state.baudrate if connected else None,
+            "printerProfile": "_default",
+        },
+        "options": {
+            "ports": ["/dev/ttyUSB0", "/dev/ttyACM0"],
+            "baudrates": [115200, 250000],
+            "printerProfiles": [{"id": "_default", "name": "PrintForge Printer"}],
+        },
+    }
+
+
+@router.post("/api/connection")
+async def octoprint_connection_command(req: ConnectionRequest):
+    """Connect or disconnect the printer.
+
+    Cura's plugin uses this to manage the serial connection.
+    """
+    ctrl = get_controller()
+    cmd = req.command.lower()
+
+    if cmd == "connect":
+        port = req.port or "/dev/ttyUSB0"
+        baudrate = req.baudrate or 115200
+        if ctrl.state.status.value not in ("disconnected", "error"):
+            raise HTTPException(409, "Already connected")
+        ok = await ctrl.connect(port=port, baudrate=baudrate)
+        if not ok:
+            raise HTTPException(500, f"Failed to connect to {port}")
+
+    elif cmd == "disconnect":
+        if ctrl.state.status.value == "disconnected":
+            raise HTTPException(409, "Already disconnected")
+        await ctrl.disconnect()
+
+    else:
+        raise HTTPException(400, f"Unsupported command: {cmd}")
+
+    return JSONResponse(status_code=204, content=None)

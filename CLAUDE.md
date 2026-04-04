@@ -13,6 +13,7 @@
 | Routes | `printforge/frontend/src/routes/` (file-based) |
 | Components | `printforge/frontend/src/lib/components/` (18 components) |
 | Controller | `printforge/backend/app/printer/controller.py` (846 lines, singleton) |
+| OctoPrint shim | `printforge/backend/app/api/octoprint_compat.py` (OrcaSlicer + Cura) |
 | Serial protocol | `printforge/backend/app/serial/protocol.py` |
 | Skills | `.claude/skills/` (5 skills) |
 
@@ -59,6 +60,14 @@ The frontend uses **bun** for install/dev but `npm run build` in the Makefile/de
 - Fallback chain: direct MJPEG → proxied MJPEG (`/api/camera/mjpeg`) → snapshot polling
 - Snapshot mode uses `<canvas>` for rendering (~10-15 FPS)
 - Snapshots fetched from ustreamer's `/snapshot` endpoint (<50ms)
+
+### Slicer Compatibility (OrcaSlicer + Cura)
+The OctoPrint-compatible API shim (`printforge/backend/app/api/octoprint_compat.py`) supports both OrcaSlicer and Cura. Key differences handled:
+- **File upload**: Cura sends `print`/`select` as multipart form fields; OrcaSlicer sends them as query params. The endpoint checks both.
+- **Temperature parsing**: OrcaSlicer embeds authoritative temps in config comments at EOF (`; nozzle_temperature = 215`). Cura auto-injects M104/M109/M140/M190 at the top of the file. The G-code parser handles both paths.
+- **Layer markers**: Cura uses `;LAYER:N` (numbered), OrcaSlicer uses `;LAYER_CHANGE` (unnumbered). Both are handled in `gcode_sender.py`.
+- **Preamble skipping**: When PrintForge provides start gcode, ALL slicer commands before the first layer marker are skipped. Works for both slicers.
+- **API surface**: Settings, login, printer profiles, raw G-code commands, and connection management endpoints are implemented for Cura's OctoPrint plugin.
 
 ### API Key Auth
 - Stored in `localStorage` as `printforge:apiKey`

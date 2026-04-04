@@ -88,7 +88,9 @@
       "Bash(ssh david1534@100.108.194.105 \"rm -rf /opt/printforge/frontend/build && cp -r /tmp/printforge-frontend-deploy/build /opt/printforge/frontend/build && ls /opt/printforge/frontend/build/\")",
       "Bash(ssh david1534@100.108.194.105 \"sudo systemctl restart printforge.service 2>&1; echo EXIT:$?\")",
       "Bash(ssh david1534@100.108.194.105 \"systemctl is-active printforge.service; systemctl --user is-active printforge.service 2>/dev/null; cat /etc/systemd/system/printforge.service 2>/dev/null | head -20\")",
-      "Bash(ssh david1534@100.108.194.105 \"rm -rf /tmp/printforge-frontend-deploy\")"
+      "Bash(ssh david1534@100.108.194.105 \"rm -rf /tmp/printforge-frontend-deploy\")",
+      "Bash(bun run:*)",
+      "Bash(python -c \"from app.main import app; print\\(''OK''\\)\")"
     ]
   }
 }
