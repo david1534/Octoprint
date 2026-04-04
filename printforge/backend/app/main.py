@@ -22,6 +22,7 @@ from .api import (
     filament,
     files,
     history,
+    octoprint_compat,
     printer,
     settings as settings_api,
     system,
@@ -149,6 +150,7 @@ app.add_middleware(APIKeyMiddleware)
 # Register API routers
 app.include_router(printer.router)
 app.include_router(files.router)
+app.include_router(octoprint_compat.router)
 app.include_router(system.router)
 app.include_router(websocket.router)
 app.include_router(history.router)

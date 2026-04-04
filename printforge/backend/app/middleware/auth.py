@@ -76,11 +76,14 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             # No key configured = open access
             return await call_next(request)
 
-        # Extract key from Authorization header or query param
+        # Extract key from Authorization header, X-Api-Key header (OctoPrint
+        # compat), or query param
         key = None
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
             key = auth_header[7:]
+        if not key:
+            key = request.headers.get("x-api-key", "")
         if not key:
             key = request.query_params.get("apikey", "")
 
