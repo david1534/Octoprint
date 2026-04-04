@@ -33,6 +33,35 @@ _AXIS_Y = re.compile(r"Y([-\d.]+)", re.IGNORECASE)
 _AXIS_Z = re.compile(r"Z([-\d.]+)", re.IGNORECASE)
 _AXIS_F = re.compile(r"F([-\d.]+)", re.IGNORECASE)
 
+# Commands that should pass through the preamble skip because they
+# configure machine behaviour for the first layer. Without these the
+# printer uses default firmware values for acceleration, jerk, fan
+# speed, and linear advance — which are typically far too aggressive
+# for a first layer.
+_PREAMBLE_PASSTHROUGH_PREFIXES = (
+    "M204",  # Print/travel acceleration
+    "M205",  # Jerk / junction deviation limits
+    "M220",  # Speed factor override (feedrate %)
+    "M221",  # Flow rate override (extrusion %)
+    "M106",  # Fan speed (slicers often set fan off for layer 1)
+    "M107",  # Fan off
+    "M900",  # Linear advance K-factor
+    "G92",   # Reset extruder position (needed before first extrude)
+    "M82",   # Absolute extrusion mode
+    "M83",   # Relative extrusion mode
+)
+
+
+def _is_preamble_passthrough(command: str) -> bool:
+    """Return True if a command should be sent even during preamble skip.
+
+    These are machine config commands that set acceleration, jerk, fan,
+    and extrusion mode for the first layer. They are NOT redundant with
+    PrintForge's start gcode (which only handles homing/heating/purge).
+    """
+    cmd_upper = command.split()[0].upper() if command.strip() else ""
+    return cmd_upper in _PREAMBLE_PASSTHROUGH_PREFIXES
+
 
 class GcodeSender:
     """Streams G-code from a file through the command queue."""
@@ -319,12 +348,12 @@ class GcodeSender:
                             or stripped.startswith(";LAYER_CHANGE ")):
                         if skip_preamble:
                             skip_preamble = False
-                            if preamble_skipped > 0:
-                                logger.info(
-                                    "Skipped %d embedded preamble commands "
-                                    "before first layer",
-                                    preamble_skipped,
-                                )
+                            logger.info(
+                                "Preamble complete: skipped %d commands, "
+                                "passed through %d config commands",
+                                preamble_skipped,
+                                preamble_passthrough,
+                            )
                         # Cura embeds the layer number: ;LAYER:N (0-based)
                         # OrcaSlicer just marks the boundary: ;LAYER_CHANGE
                         if ";LAYER:" in stripped or "; LAYER:" in stripped:
@@ -347,13 +376,21 @@ class GcodeSender:
                     if not stripped:
                         continue
 
-                    # Skip ALL slicer-embedded commands before first layer
+                    # Smart preamble skip: pass through machine config
+                    # commands, skip redundant homing/heating/moves.
                     if skip_preamble:
-                        preamble_skipped += 1
-                        logger.debug(
-                            "Skipping preamble command: %s", stripped
-                        )
-                        continue
+                        if _is_preamble_passthrough(stripped):
+                            preamble_passthrough += 1
+                            logger.debug(
+                                "Preamble passthrough: %s", stripped
+                            )
+                            # Fall through to send this command normally
+                        else:
+                            preamble_skipped += 1
+                            logger.debug(
+                                "Skipping preamble command: %s", stripped
+                            )
+                            continue
 
                     # Send through command queue (plain G-code, no
                     # checksums — USB serial has its own CRC layer and
