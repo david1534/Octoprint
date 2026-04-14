@@ -277,12 +277,16 @@ class PrinterController:
                     "Recovery Failed",
                     "Automatic M999 recovery failed. The printer needs a manual power cycle.",
                 )
+                # Null out the queue so send_command raises ConnectionError
+                # immediately instead of hanging forever on dead futures.
+                self._queue = None
                 self.state.status = PrinterStatus.ERROR
                 self.state.error_message = "Printer halted — power cycle required"
                 self._notify_state_change()
 
         except Exception as e:
             logger.exception("Error during kill recovery: %s", e)
+            self._queue = None
             self.state.status = PrinterStatus.ERROR
             self.state.error_message = "Printer halted — power cycle required"
             self._notify_state_change()
