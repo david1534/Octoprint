@@ -4,6 +4,8 @@ import re
 import shutil
 from pathlib import Path
 
+import aiofiles
+
 from fastapi import APIRouter, HTTPException, UploadFile, Query
 
 from ..config import settings
@@ -148,8 +150,6 @@ async def upload_file(
     target_dir = _safe_resolve(path) if path else GCODE_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
     filepath = target_dir / safe_name
-
-    import aiofiles
 
     async with aiofiles.open(filepath, "wb") as f:
         while chunk := await file.read(1024 * 64):
