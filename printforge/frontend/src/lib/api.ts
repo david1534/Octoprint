@@ -98,10 +98,13 @@ export const api = {
 	listFiles: (path = '') => request<any>(`/files/?path=${encodeURIComponent(path)}`),
 	createFolder: (path: string) =>
 		request<any>(`/files/folder?path=${encodeURIComponent(path)}`, { method: 'POST' }),
-	deleteFolder: (path: string) =>
-		request<any>(`/files/folder?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
+	deleteFolder: (path: string, force = false) =>
+		request<any>(`/files/folder?path=${encodeURIComponent(path)}&force=${force}`, { method: 'DELETE' }),
 	moveFile: (src: string, dest: string) =>
 		request<any>(`/files/move?src=${encodeURIComponent(src)}&dest=${encodeURIComponent(dest)}`, { method: 'POST' }),
+	moveFolder: (src: string, dest: string) =>
+		request<any>(`/files/move-folder?src=${encodeURIComponent(src)}&dest=${encodeURIComponent(dest)}`, { method: 'POST' }),
+	listAllFolders: () => request<any>('/files/all-folders'),
 	renameFile: (src: string, name: string) =>
 		request<any>(`/files/rename?src=${encodeURIComponent(src)}&name=${encodeURIComponent(name)}`, { method: 'POST' }),
 	renameFolder: (src: string, name: string) =>

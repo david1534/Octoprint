@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import FileUpload from '$lib/components/FileUpload.svelte';
 	import { files, folders, currentPath, parentPath, refreshFiles, type GcodeFile, type Folder } from '$lib/stores/files';
 	import { api } from '$lib/api';
 	import { printerState } from '$lib/stores/printer';
@@ -15,9 +14,11 @@
 	let isPrinting = $derived($printerState.status === 'printing' || $printerState.status === 'paused');
 	let loading = $state('');
 
-	// Print start dialog state
+	// Print start dialog
 	let printDialogOpen = $state(false);
 	let printDialogFile = $state<GcodeFile | null>(null);
+
+	// Disk usage
 	let diskUsage = $state<{ free: number; total: number } | null>(null);
 	let diskPct = $derived(diskUsage ? ((diskUsage.total - diskUsage.free) / diskUsage.total) * 100 : 0);
 
@@ -36,23 +37,34 @@
 	let showNewFolder = $state(false);
 	let newFolderName = $state('');
 
-	// Upload toggle
-	let showUpload = $state(false);
-
 	// Rename state
 	let renamingFile = $state<string | null>(null);
 	let renameValue = $state('');
 	let renamingFolder = $state<string | null>(null);
 	let renameFolderValue = $state('');
 
-	// Drag and drop state
+	// Drag and drop — file organisation (internal)
 	let draggedFile = $state<GcodeFile | null>(null);
+	let draggedFolder = $state<Folder | null>(null);
 	let dragOverFolder = $state<string | null>(null);
 	let dragOverParent = $state(false);
 
-	// Move-to dialog
-	let moveTargetFile = $state<GcodeFile | null>(null);
-	let moveTargetFolder = $state('');
+	// Upload state (inlined, replaces FileUpload component)
+	let uploading = $state(false);
+	let uploadProgress = $state(0);
+	let uploadFilename = $state('');
+	let uploadedBytes = $state(0);
+	let totalBytes = $state(0);
+	let pageDropActive = $state(false); // OS-file drag over the page
+	let fileInputEl: HTMLInputElement;
+
+	// Move dialog (replaces prompt())
+	let moveDialog = $state<{
+		files?: string[]; // paths of files to move
+		folder?: Folder;  // folder to move
+		dest: string;
+	} | null>(null);
+	let allFolders = $state<Array<{ name: string; path: string; depth: number }>>([]);
 
 	// Context menu
 	let contextMenu = $state<{ x: number; y: number; file?: GcodeFile; folder?: Folder } | null>(null);
@@ -98,8 +110,10 @@
 	onMount(() => {
 		refreshFiles('');
 		loadDiskUsage();
-		// Close context menu on click elsewhere
-		const handler = () => { contextMenu = null; };
+		const handler = (e: MouseEvent) => {
+			// Only close context menu if the click target is outside it
+			contextMenu = null;
+		};
 		document.addEventListener('click', handler);
 		return () => document.removeEventListener('click', handler);
 	});
@@ -107,7 +121,14 @@
 	async function loadDiskUsage() {
 		try {
 			diskUsage = await api.getDiskUsage();
-		} catch { /* Not critical */ }
+		} catch { /* not critical */ }
+	}
+
+	async function loadAllFolders() {
+		try {
+			const res = await api.listAllFolders();
+			allFolders = res.folders ?? [];
+		} catch { allFolders = []; }
 	}
 
 	function navigateToFolder(path: string) {
@@ -128,29 +149,19 @@
 	}
 
 	function toggleSort(field: typeof sortBy) {
-		if (sortBy === field) {
-			sortAsc = !sortAsc;
-		} else {
-			sortBy = field;
-			sortAsc = true;
-		}
+		if (sortBy === field) sortAsc = !sortAsc;
+		else { sortBy = field; sortAsc = true; }
 	}
 
 	function toggleSelectAll() {
-		if (allSelected) {
-			selectedFiles = new Set();
-		} else {
-			selectedFiles = new Set($files.map(f => f.path || f.filename));
-		}
+		if (allSelected) selectedFiles = new Set();
+		else selectedFiles = new Set($files.map(f => f.path || f.filename));
 	}
 
 	function toggleSelect(filePath: string) {
 		const next = new Set(selectedFiles);
-		if (next.has(filePath)) {
-			next.delete(filePath);
-		} else {
-			next.add(filePath);
-		}
+		if (next.has(filePath)) next.delete(filePath);
+		else next.add(filePath);
 		selectedFiles = next;
 	}
 
@@ -219,15 +230,19 @@
 	}
 
 	async function deleteFolder(folder: Folder) {
+		// Check if empty first
+		const hasFiles = folder.fileCount > 0;
 		const ok = await confirmAction({
 			title: 'Delete Folder',
-			message: `Delete folder "${folder.name}"? It must be empty.`,
+			message: hasFiles
+				? `Delete folder "${folder.name}" and all ${folder.fileCount} file${folder.fileCount !== 1 ? 's' : ''} inside? This cannot be undone.`
+				: `Delete folder "${folder.name}"?`,
 			confirmLabel: 'Delete',
 			variant: 'danger'
 		});
 		if (!ok) return;
 		try {
-			await api.deleteFolder(folder.path);
+			await api.deleteFolder(folder.path, hasFiles);
 			toast.success('Deleted folder: ' + folder.name);
 			refreshFiles($currentPath);
 		} catch (e: any) {
@@ -247,9 +262,7 @@
 		if (!ok) return;
 		loading = 'batch-delete';
 		try {
-			for (const path of paths) {
-				await api.deleteFile(path);
-			}
+			for (const path of paths) await api.deleteFile(path);
 			selectedFiles = new Set();
 			selectMode = false;
 			await refreshFiles($currentPath);
@@ -262,27 +275,50 @@
 		}
 	}
 
-	async function batchMove() {
+	function openBatchMoveDialog() {
 		if (selectedFiles.size === 0) return;
-		const paths = Array.from(selectedFiles);
-		// Show a simple prompt for target folder
-		const dest = prompt(`Move ${paths.length} file(s) to folder (path relative to root, empty for root):`);
-		if (dest === null) return;
-		loading = 'batch-move';
-		let moved = 0;
+		moveDialog = { files: Array.from(selectedFiles), dest: '' };
+		loadAllFolders();
+	}
+
+	function openMoveFileDialog(file: GcodeFile) {
+		moveDialog = { files: [file.path], dest: '' };
+		contextMenu = null;
+		loadAllFolders();
+	}
+
+	function openMoveFolderDialog(folder: Folder) {
+		moveDialog = { folder, dest: '' };
+		contextMenu = null;
+		loadAllFolders();
+	}
+
+	async function submitMoveDialog() {
+		if (!moveDialog) return;
+		const dest = moveDialog.dest;
+		loading = 'move';
 		try {
-			for (const src of paths) {
-				try {
-					await api.moveFile(src, dest);
-					moved++;
-				} catch { /* skip conflicts */ }
+			if (moveDialog.folder) {
+				await api.moveFolder(moveDialog.folder.path, dest);
+				toast.success(`Moved folder "${moveDialog.folder.name}" to ${dest || 'root'}`);
+			} else if (moveDialog.files) {
+				let moved = 0;
+				for (const src of moveDialog.files) {
+					try { await api.moveFile(src, dest); moved++; }
+					catch { /* skip conflicts */ }
+				}
+				if (moveDialog.files.length > 1) {
+					toast.success(`Moved ${moved}/${moveDialog.files.length} file(s)`);
+				} else {
+					toast.success(`Moved to ${dest || 'root'}`);
+				}
+				selectedFiles = new Set();
+				selectMode = false;
 			}
-			selectedFiles = new Set();
-			selectMode = false;
+			moveDialog = null;
 			await refreshFiles($currentPath);
-			toast.success(`Moved ${moved}/${paths.length} file(s)`);
 		} catch (e: any) {
-			toast.error('Batch move failed: ' + e.message);
+			toast.error('Move failed: ' + e.message);
 		} finally {
 			loading = '';
 		}
@@ -329,7 +365,11 @@
 		renamingFolder = null;
 	}
 
-	// ─── Drag and Drop ──────────────────────────────────
+	// ─── Internal drag and drop (file & folder organisation) ────────────
+	function isOsFileDrag(e: DragEvent): boolean {
+		return !draggedFile && !draggedFolder && !!e.dataTransfer?.types.includes('Files');
+	}
+
 	function onFileDragStart(e: DragEvent, file: GcodeFile) {
 		draggedFile = file;
 		if (e.dataTransfer) {
@@ -338,15 +378,27 @@
 		}
 	}
 
+	function onFolderDragStart(e: DragEvent, folder: Folder) {
+		draggedFolder = folder;
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', folder.path);
+		}
+	}
+
 	function onFolderDragOver(e: DragEvent, folderPath: string) {
-		if (!draggedFile) return;
+		// Accept both internal file/folder drags and OS file drops
+		const isInternal = draggedFile !== null || draggedFolder !== null;
+		if (!isInternal && !e.dataTransfer?.types.includes('Files')) return;
+		// Don't allow dropping a folder onto itself
+		if (draggedFolder?.path === folderPath) return;
 		e.preventDefault();
 		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 		dragOverFolder = folderPath;
 	}
 
 	function onParentDragOver(e: DragEvent) {
-		if (!draggedFile) return;
+		if (!draggedFile && !draggedFolder) return;
 		e.preventDefault();
 		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 		dragOverParent = true;
@@ -356,60 +408,170 @@
 		e.preventDefault();
 		dragOverFolder = null;
 		dragOverParent = false;
-		if (!draggedFile) return;
+		pageDropActive = false;
 
-		const src = draggedFile.path;
-		draggedFile = null;
-
-		try {
-			await api.moveFile(src, destFolder);
-			toast.success(`Moved to ${destFolder || 'root'}`);
-			await refreshFiles($currentPath);
-		} catch (e: any) {
-			toast.error('Move failed: ' + e.message);
+		if (draggedFile) {
+			const src = draggedFile.path;
+			draggedFile = null;
+			try {
+				await api.moveFile(src, destFolder);
+				toast.success(`Moved to ${destFolder || 'root'}`);
+				await refreshFiles($currentPath);
+			} catch (e: any) {
+				toast.error('Move failed: ' + e.message);
+			}
+		} else if (draggedFolder) {
+			const folder = draggedFolder;
+			draggedFolder = null;
+			if (folder.path === destFolder) return; // dropped on itself
+			try {
+				await api.moveFolder(folder.path, destFolder);
+				toast.success(`Moved "${folder.name}" into folder`);
+				await refreshFiles($currentPath);
+			} catch (e: any) {
+				toast.error('Move failed: ' + e.message);
+			}
+		} else if (e.dataTransfer?.files.length) {
+			// OS files dropped onto a folder — upload into that folder
+			await uploadFiles(e.dataTransfer.files, destFolder);
 		}
 	}
 
 	async function onParentDrop(e: DragEvent) {
 		e.preventDefault();
 		dragOverParent = false;
-		if (!draggedFile) return;
+		if (!draggedFile && !draggedFolder) return;
 
-		const src = draggedFile.path;
-		draggedFile = null;
 		const dest = $parentPath === '.' ? '' : ($parentPath || '');
-
-		try {
-			await api.moveFile(src, dest);
-			toast.success('Moved to parent folder');
-			await refreshFiles($currentPath);
-		} catch (e: any) {
-			toast.error('Move failed: ' + e.message);
+		if (draggedFile) {
+			const src = draggedFile.path;
+			draggedFile = null;
+			try {
+				await api.moveFile(src, dest);
+				toast.success('Moved to parent folder');
+				await refreshFiles($currentPath);
+			} catch (e: any) {
+				toast.error('Move failed: ' + e.message);
+			}
+		} else if (draggedFolder) {
+			const folder = draggedFolder;
+			draggedFolder = null;
+			try {
+				await api.moveFolder(folder.path, dest);
+				toast.success(`Moved "${folder.name}" to parent`);
+				await refreshFiles($currentPath);
+			} catch (e: any) {
+				toast.error('Move failed: ' + e.message);
+			}
 		}
 	}
 
 	function onDragEnd() {
 		draggedFile = null;
+		draggedFolder = null;
 		dragOverFolder = null;
 		dragOverParent = false;
 	}
 
-	// ─── Move-to Dialog ──────────────────────────────────
-	function showMoveDialog(file: GcodeFile) {
-		moveTargetFile = file;
-		moveTargetFolder = '';
-		contextMenu = null;
+	// ─── Upload (inlined from FileUpload component) ──────────────────────
+	async function uploadFiles(fileList: FileList | File[], destPath?: string) {
+		const target = destPath ?? $currentPath;
+		const items = Array.from(fileList).filter(f =>
+			['.gcode', '.g', '.gc'].some(ext => f.name.toLowerCase().endsWith(ext))
+		);
+		if (items.length === 0) {
+			toast.error('No G-code files found. Accepted: .gcode, .g, .gc');
+			return;
+		}
+		uploading = true;
+		uploadProgress = 0;
+		const names: string[] = [];
+		try {
+			for (const file of items) {
+				uploadFilename = file.name;
+				totalBytes = file.size;
+				uploadedBytes = 0;
+				uploadProgress = 0;
+				await uploadWithProgress(file, target);
+				names.push(file.name);
+			}
+			await refreshFiles($currentPath);
+			await loadDiskUsage();
+			toast.success(`Uploaded: ${names.join(', ')}`);
+		} catch (e: any) {
+			toast.error(e.message || 'Upload failed');
+		} finally {
+			uploading = false;
+			uploadProgress = 0;
+			uploadFilename = '';
+		}
 	}
 
-	async function submitMove() {
-		if (!moveTargetFile) return;
-		try {
-			await api.moveFile(moveTargetFile.path, moveTargetFolder);
-			toast.success(`Moved to ${moveTargetFolder || 'root'}`);
-			moveTargetFile = null;
-			await refreshFiles($currentPath);
-		} catch (e: any) {
-			toast.error('Move failed: ' + e.message);
+	function uploadWithProgress(file: File, path: string): Promise<void> {
+		return new Promise((resolve, reject) => {
+			const xhr = new XMLHttpRequest();
+			const formData = new FormData();
+			formData.append('file', file);
+
+			xhr.upload.addEventListener('progress', (e) => {
+				if (e.lengthComputable) {
+					uploadProgress = Math.round((e.loaded / e.total) * 100);
+					uploadedBytes = e.loaded;
+				}
+			});
+			xhr.addEventListener('load', () => {
+				if (xhr.status >= 200 && xhr.status < 300) {
+					resolve();
+				} else {
+					try {
+						const err = JSON.parse(xhr.responseText);
+						reject(new Error(err.detail || `Upload failed: ${xhr.status}`));
+					} catch {
+						reject(new Error(`Upload failed: ${xhr.status}`));
+					}
+				}
+			});
+			xhr.addEventListener('error', () => reject(new Error('Upload failed: network error')));
+			xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+
+			const params = path ? `?path=${encodeURIComponent(path)}` : '';
+			xhr.open('POST', `/api/files/upload${params}`);
+			const apiKey = typeof localStorage !== 'undefined' ? localStorage.getItem('printforge:apiKey') : null;
+			if (apiKey) xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
+			xhr.send(formData);
+		});
+	}
+
+	function onFileInputChange(e: Event) {
+		const input = e.target as HTMLInputElement;
+		if (input.files) uploadFiles(input.files);
+		input.value = '';
+	}
+
+	// Page-level drop zone — fires when user drags OS files over the whole page
+	function onPageDragOver(e: DragEvent) {
+		// Only activate for OS files, not internal drags
+		if (draggedFile || draggedFolder) return;
+		if (e.dataTransfer?.types.includes('Files')) {
+			e.preventDefault();
+			pageDropActive = true;
+		}
+	}
+
+	function onPageDragLeave(e: DragEvent) {
+		// Only deactivate if leaving the page entirely
+		const related = e.relatedTarget as Node | null;
+		if (!related || related === document.documentElement) {
+			pageDropActive = false;
+		}
+	}
+
+	function onPageDrop(e: DragEvent) {
+		e.preventDefault();
+		pageDropActive = false;
+		if (draggedFile || draggedFolder) return; // internal drag, handled by folder drop zones
+		if (e.dataTransfer?.files.length) {
+			uploadFiles(e.dataTransfer.files);
 		}
 	}
 
@@ -419,6 +581,19 @@
 		e.stopPropagation();
 		contextMenu = { x: e.clientX, y: e.clientY, file, folder };
 	}
+
+	// Filtered folders for move dialog (exclude current path and its children, and dragged folder itself)
+	let moveDialogFolders = $derived.by(() => {
+		if (!moveDialog) return [];
+		return allFolders.filter(f => {
+			if (moveDialog?.folder) {
+				// Can't move into itself or its own subdirs
+				const src = moveDialog.folder!.path;
+				return f.path !== src && !f.path.startsWith(src + '/');
+			}
+			return true;
+		});
+	});
 </script>
 
 <svelte:head>
@@ -426,7 +601,42 @@
 </svelte:head>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div onclick={() => contextMenu = null}>
+<div
+	class="relative"
+	onclick={() => contextMenu = null}
+	ondragover={onPageDragOver}
+	ondragleave={onPageDragLeave}
+	ondrop={onPageDrop}
+>
+
+<!-- Page-level upload drop overlay -->
+{#if pageDropActive}
+	<div class="fixed inset-0 z-40 bg-accent/10 border-4 border-dashed border-accent rounded-none pointer-events-none flex items-center justify-center">
+		<div class="bg-surface-900/90 rounded-2xl px-8 py-6 text-center shadow-2xl border border-accent/30">
+			<svg class="w-12 h-12 mx-auto mb-3 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+			</svg>
+			<p class="text-lg font-semibold text-accent">Drop to upload</p>
+			<p class="text-sm text-surface-400 mt-1">G-code files into {$currentPath || 'root'}</p>
+		</div>
+	</div>
+{/if}
+
+<!-- Upload progress overlay -->
+{#if uploading}
+	<div class="fixed bottom-6 right-6 z-50 bg-surface-800 border border-surface-600 rounded-xl px-4 py-3 shadow-xl w-64">
+		<div class="flex items-center gap-2 mb-2">
+			<svg class="w-4 h-4 text-accent shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+			</svg>
+			<p class="text-sm text-surface-200 truncate font-medium">{uploadFilename}</p>
+		</div>
+		<div class="w-full h-1.5 bg-surface-700 rounded-full overflow-hidden mb-1">
+			<div class="h-full rounded-full bg-accent transition-all duration-200" style="width: {uploadProgress}%"></div>
+		</div>
+		<p class="text-xs text-surface-500 tabular-nums text-right">{uploadProgress}% · {formatFileSize(uploadedBytes)} / {formatFileSize(totalBytes)}</p>
+	</div>
+{/if}
 
 <div class="flex items-center justify-between mb-4">
 	<h1 class="text-xl font-bold">G-code Files</h1>
@@ -442,6 +652,7 @@
 		<button
 			class="text-accent hover:text-accent-hover transition-colors shrink-0"
 			onclick={() => navigateToFolder('')}
+			title="Root"
 		>
 			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
@@ -463,13 +674,6 @@
 	</div>
 {/if}
 
-<!-- Upload area (toggled) -->
-{#if showUpload}
-	<div class="mb-4">
-		<FileUpload />
-	</div>
-{/if}
-
 <!-- Disk usage -->
 {#if diskUsage}
 	<div class="mb-4">
@@ -477,7 +681,7 @@
 			<span>Disk Usage</span>
 			<span>{formatFileSize(diskUsage.total - diskUsage.free)} / {formatFileSize(diskUsage.total)}</span>
 		</div>
-		<div class="w-full h-2 bg-surface-800 rounded-full overflow-hidden">
+		<div class="w-full h-1.5 bg-surface-800 rounded-full overflow-hidden">
 			<div
 				class="h-full rounded-full transition-all duration-500 {diskPct > 90 ? 'bg-red-500' : diskPct > 75 ? 'bg-amber-500' : 'bg-accent'}"
 				style="width: {diskPct.toFixed(1)}%"
@@ -488,81 +692,88 @@
 {/if}
 
 <!-- Toolbar -->
-{#if $files.length > 0 || $folders.length > 0}
-	<div class="flex flex-wrap items-center gap-2 mb-4">
-		<!-- Search -->
-		<div class="relative flex-1 min-w-[200px]">
-			<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-			</svg>
-			<input
-				type="text"
-				placeholder="Search files..."
-				class="input w-full pl-9 py-1.5 text-sm"
-				bind:value={searchQuery}
-			/>
-		</div>
+<div class="flex flex-wrap items-center gap-2 mb-4">
+	<!-- Search -->
+	<div class="relative flex-1 min-w-[180px]">
+		<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+		</svg>
+		<input
+			type="text"
+			placeholder="Search files..."
+			class="input w-full pl-9 py-1.5 text-sm"
+			bind:value={searchQuery}
+		/>
+	</div>
 
-		<!-- Sort buttons -->
-		<div class="flex items-center gap-1">
-			{#each [['name', 'Name'], ['size', 'Size'], ['time', 'Time']] as [field, label]}
-				<button
-					class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors
-						   {sortBy === field ? 'bg-accent/10 text-accent' : 'text-surface-400 hover:bg-surface-800 hover:text-surface-200'}"
-					onclick={() => toggleSort(field as typeof sortBy)}
-				>
-					{label} {sortBy === field ? (sortAsc ? '↑' : '↓') : ''}
-				</button>
-			{/each}
-		</div>
-
-		<!-- View mode toggle -->
-		<div class="flex items-center border border-surface-700 rounded-lg overflow-hidden">
+	<!-- Sort buttons -->
+	<div class="flex items-center gap-1">
+		{#each [['name', 'Name'], ['size', 'Size'], ['time', 'Time']] as [field, label]}
 			<button
-				class="p-1.5 transition-colors {viewMode === 'list' ? 'bg-surface-700 text-surface-100' : 'text-surface-500 hover:text-surface-300'}"
-				onclick={() => viewMode = 'list'}
-				title="List view"
+				class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors
+					   {sortBy === field ? 'bg-accent/10 text-accent' : 'text-surface-400 hover:bg-surface-800 hover:text-surface-200'}"
+				onclick={() => toggleSort(field as typeof sortBy)}
 			>
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16" />
-				</svg>
+				{label} {sortBy === field ? (sortAsc ? '↑' : '↓') : ''}
 			</button>
-			<button
-				class="p-1.5 transition-colors {viewMode === 'grid' ? 'bg-surface-700 text-surface-100' : 'text-surface-500 hover:text-surface-300'}"
-				onclick={() => viewMode = 'grid'}
-				title="Grid view"
-			>
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-				</svg>
-			</button>
-		</div>
+		{/each}
+	</div>
 
-		<!-- Upload button -->
+	<!-- View toggle -->
+	<div class="flex items-center border border-surface-700 rounded-lg overflow-hidden">
 		<button
-			class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors {showUpload ? 'bg-accent/10 text-accent' : 'text-surface-400 hover:bg-surface-800 hover:text-surface-200'}"
-			onclick={() => showUpload = !showUpload}
-			title="Upload files"
+			class="p-1.5 transition-colors {viewMode === 'list' ? 'bg-surface-700 text-surface-100' : 'text-surface-500 hover:text-surface-300'}"
+			onclick={() => viewMode = 'list'}
+			title="List view"
 		>
-			<svg class="w-4 h-4 inline-block mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16" />
 			</svg>
-			Upload
 		</button>
-
-		<!-- New folder button -->
 		<button
-			class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors text-surface-400 hover:bg-surface-800 hover:text-surface-200"
-			onclick={() => showNewFolder = !showNewFolder}
-			title="New folder"
+			class="p-1.5 transition-colors {viewMode === 'grid' ? 'bg-surface-700 text-surface-100' : 'text-surface-500 hover:text-surface-300'}"
+			onclick={() => viewMode = 'grid'}
+			title="Grid view"
 		>
-			<svg class="w-4 h-4 inline-block mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
 			</svg>
-			New Folder
 		</button>
+	</div>
 
-		<!-- Batch select -->
+	<!-- Upload button — triggers file picker; drag-and-drop works anywhere on the page -->
+	<label
+		class="px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors text-surface-400 hover:bg-surface-800 hover:text-surface-200 inline-flex items-center gap-1"
+		title="Upload G-code files (or drag & drop anywhere)"
+	>
+		<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+		</svg>
+		Upload
+		<input
+			bind:this={fileInputEl}
+			type="file"
+			class="hidden"
+			accept=".gcode,.g,.gc"
+			multiple
+			onchange={onFileInputChange}
+		/>
+	</label>
+
+	<!-- New folder button -->
+	<button
+		class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors text-surface-400 hover:bg-surface-800 hover:text-surface-200 inline-flex items-center gap-1"
+		onclick={() => showNewFolder = !showNewFolder}
+		title="New folder"
+	>
+		<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+		</svg>
+		New Folder
+	</button>
+
+	<!-- Batch select -->
+	{#if $files.length > 0}
 		<button
 			class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors
 				   {selectMode ? 'bg-accent/10 text-accent' : 'text-surface-400 hover:bg-surface-800 hover:text-surface-200'}"
@@ -570,18 +781,8 @@
 		>
 			{selectMode ? 'Cancel' : 'Select'}
 		</button>
-	</div>
-{/if}
-
-<!-- Drag hint -->
-{#if draggedFile}
-	<div class="mb-3 px-3 py-2 bg-accent/10 border border-accent/30 rounded-lg text-sm text-accent flex items-center gap-2">
-		<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-		</svg>
-		Dragging "{draggedFile.filename}" — drop on a folder to move
-	</div>
-{/if}
+	{/if}
+</div>
 
 <!-- New folder input -->
 {#if showNewFolder}
@@ -593,30 +794,37 @@
 			bind:value={newFolderName}
 			onkeydown={(e) => { if (e.key === 'Enter') createFolder(); if (e.key === 'Escape') { showNewFolder = false; newFolderName = ''; } }}
 		/>
-		<button class="btn-primary text-sm px-3" onclick={createFolder} disabled={!newFolderName.trim()}>
-			Create
-		</button>
-		<button class="btn-secondary text-sm px-3" onclick={() => { showNewFolder = false; newFolderName = ''; }}>
-			Cancel
-		</button>
+		<button class="btn-primary text-sm px-3" onclick={createFolder} disabled={!newFolderName.trim()}>Create</button>
+		<button class="btn-secondary text-sm px-3" onclick={() => { showNewFolder = false; newFolderName = ''; }}>Cancel</button>
+	</div>
+{/if}
+
+<!-- Drag hint -->
+{#if draggedFile || draggedFolder}
+	<div class="mb-3 px-3 py-2 bg-accent/10 border border-accent/30 rounded-lg text-sm text-accent flex items-center gap-2">
+		<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+		</svg>
+		{#if draggedFile}
+			Dragging "{draggedFile.filename}" — drop on a folder to move
+		{:else if draggedFolder}
+			Dragging folder "{draggedFolder.name}" — drop on another folder to nest it
+		{/if}
 	</div>
 {/if}
 
 <!-- Batch actions bar -->
 {#if selectMode && selectedFiles.size > 0}
 	<div class="flex items-center gap-3 mb-4 px-3 py-2 bg-surface-800 rounded-lg">
-		<button
-			class="text-xs text-surface-400 hover:text-surface-200 transition-colors"
-			onclick={toggleSelectAll}
-		>
+		<button class="text-xs text-surface-400 hover:text-surface-200 transition-colors" onclick={toggleSelectAll}>
 			{allSelected ? 'Deselect all' : 'Select all'}
 		</button>
 		<span class="text-xs text-surface-500">{selectedFiles.size} selected</span>
 		<div class="ml-auto flex gap-2">
 			<button
 				class="btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
-				onclick={batchMove}
-				disabled={loading === 'batch-move'}
+				onclick={openBatchMoveDialog}
+				disabled={loading === 'move'}
 			>
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
@@ -641,33 +849,60 @@
 	</div>
 {/if}
 
-<!-- Move-to dialog -->
-{#if moveTargetFile}
+<!-- Move dialog -->
+{#if moveDialog}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onclick={() => moveTargetFile = null}>
+	<div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onclick={() => moveDialog = null}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="bg-surface-900 border border-surface-700 rounded-xl p-5 w-80 shadow-xl" onclick={(e) => e.stopPropagation()}>
-			<h3 class="text-lg font-semibold mb-2">Move File</h3>
-			<p class="text-sm text-surface-400 mb-4">Moving: <span class="text-surface-200">{moveTargetFile.filename}</span></p>
+		<div class="bg-surface-900 border border-surface-700 rounded-xl p-5 w-96 shadow-xl max-h-[80vh] flex flex-col" onclick={(e) => e.stopPropagation()}>
+			<h3 class="text-lg font-semibold mb-1">
+				{moveDialog.folder ? 'Move Folder' : moveDialog.files!.length > 1 ? `Move ${moveDialog.files!.length} Files` : 'Move File'}
+			</h3>
+			{#if moveDialog.folder}
+				<p class="text-sm text-surface-400 mb-4">Moving: <span class="text-surface-200">"{moveDialog.folder.name}"</span></p>
+			{/if}
 
-			<label class="block text-sm text-surface-400 mb-1">Destination folder</label>
-			<select class="input w-full mb-1" bind:value={moveTargetFolder}>
-				<option value="">/ (root)</option>
-				{#each $folders as folder}
-					<option value={folder.path}>{folder.name}</option>
+			<label class="block text-sm text-surface-400 mb-2">Destination</label>
+
+			<!-- Root option -->
+			<button
+				class="w-full text-left px-3 py-2 rounded-lg text-sm mb-1 transition-colors
+					   {moveDialog.dest === '' ? 'bg-accent/10 text-accent border border-accent/30' : 'text-surface-300 hover:bg-surface-800'}"
+				onclick={() => { if (moveDialog) moveDialog.dest = ''; }}
+			>
+				<svg class="w-4 h-4 inline-block mr-1.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+				</svg>
+				/ Root
+			</button>
+
+			<!-- Folder list -->
+			<div class="flex-1 overflow-y-auto space-y-0.5 mb-4 max-h-48">
+				{#each moveDialogFolders as folder}
+					<button
+						class="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors
+							   {moveDialog.dest === folder.path ? 'bg-accent/10 text-accent border border-accent/30' : 'text-surface-300 hover:bg-surface-800'}"
+						onclick={() => { if (moveDialog) moveDialog.dest = folder.path; }}
+						style="padding-left: {(folder.depth + 1) * 1.25 + 0.75}rem"
+					>
+						<svg class="w-4 h-4 inline-block mr-1 -mt-0.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+						</svg>
+						{folder.name}
+					</button>
+				{:else}
+					<p class="text-xs text-surface-500 text-center py-4">No other folders</p>
 				{/each}
-			</select>
-			<p class="text-xs text-surface-500 mb-4">Or type a new path:</p>
-			<input
-				type="text"
-				class="input w-full text-sm mb-4"
-				placeholder="e.g. My Project/subfolder"
-				bind:value={moveTargetFolder}
-			/>
+			</div>
 
 			<div class="flex gap-2 justify-end">
-				<button class="btn-secondary text-sm" onclick={() => moveTargetFile = null}>Cancel</button>
-				<button class="btn-primary text-sm" onclick={submitMove}>Move</button>
+				<button class="btn-secondary text-sm" onclick={() => moveDialog = null}>Cancel</button>
+				<button class="btn-primary text-sm" onclick={submitMoveDialog} disabled={loading === 'move'}>
+					{#if loading === 'move'}
+						<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white/30 border-t-white inline-block mr-1"></span>
+					{/if}
+					Move Here
+				</button>
 			</div>
 		</div>
 	</div>
@@ -676,24 +911,30 @@
 <!-- Content listing -->
 {#if $files.length === 0 && $folders.length === 0 && !$currentPath}
 	<EmptyState
-		title="No Files Uploaded"
-		description="Drop a .gcode file above or click browse to get started"
+		title="No Files Yet"
+		description="Drag .gcode files anywhere on this page, or click Upload to browse"
 	>
 		{#snippet icon()}
 			<svg class="w-8 h-8 text-surface-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
 			</svg>
 		{/snippet}
 	</EmptyState>
 {:else if $files.length === 0 && $folders.length === 0 && $currentPath}
 	<div class="text-center py-12 text-surface-500">
 		<p class="text-sm mb-3">This folder is empty</p>
-		<button class="btn-secondary text-sm" onclick={goUp}>
-			<svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-			</svg>
-			Go back
-		</button>
+		<div class="flex gap-2 justify-center">
+			<button class="btn-secondary text-sm" onclick={goUp}>
+				<svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+				</svg>
+				Go back
+			</button>
+			<label class="btn-primary text-sm cursor-pointer">
+				Upload here
+				<input type="file" class="hidden" accept=".gcode,.g,.gc" multiple onchange={onFileInputChange} />
+			</label>
+		</div>
 	</div>
 {:else}
 	<!-- Back / parent drop zone (when in subfolder) -->
@@ -712,7 +953,7 @@
 			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
 			</svg>
-			..{#if dragOverParent} <span class="text-xs font-medium">(drop here to move to parent)</span>{/if}
+			..{#if dragOverParent}<span class="text-xs font-medium ml-1">(drop to move to parent)</span>{/if}
 		</button>
 	{/if}
 
@@ -725,12 +966,23 @@
 					class="flex items-center gap-3 card !py-2.5 group transition-all duration-150
 						   {dragOverFolder === folder.path
 							? 'ring-2 ring-accent bg-accent/10 scale-[1.01]'
-							: 'cursor-pointer hover:border-accent/30'}"
+							: 'cursor-pointer hover:border-accent/30'}
+						   {draggedFolder?.path === folder.path ? 'opacity-40' : ''}"
+					draggable="true"
+					ondragstart={(e) => onFolderDragStart(e, folder)}
+					ondragend={onDragEnd}
 					ondragover={(e) => onFolderDragOver(e, folder.path)}
 					ondragleave={() => dragOverFolder = null}
 					ondrop={(e) => onFolderDrop(e, folder.path)}
 					oncontextmenu={(e) => onContextMenu(e, undefined, folder)}
 				>
+					<!-- Drag handle for folder -->
+					<div class="cursor-grab active:cursor-grabbing text-surface-600 hover:text-surface-400 shrink-0" title="Drag to move folder">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" />
+						</svg>
+					</div>
+
 					<button
 						class="flex items-center gap-3 flex-1 min-w-0 text-left"
 						onclick={() => navigateToFolder(folder.path)}
@@ -759,6 +1011,7 @@
 							{/if}
 						</div>
 					</button>
+
 					<div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all shrink-0">
 						<button
 							class="btn-icon p-1.5 text-surface-500 hover:text-surface-200"
@@ -770,9 +1023,18 @@
 							</svg>
 						</button>
 						<button
+							class="btn-icon p-1.5 text-surface-500 hover:text-surface-200"
+							onclick={(e) => { e.stopPropagation(); openMoveFolderDialog(folder); }}
+							title="Move folder"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+							</svg>
+						</button>
+						<button
 							class="btn-icon p-1.5 text-red-400/50 hover:text-red-400"
 							onclick={(e) => { e.stopPropagation(); deleteFolder(folder); }}
-							title="Delete folder (must be empty)"
+							title="Delete folder"
 						>
 							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -818,7 +1080,6 @@
 								{/if}
 							</button>
 						{:else}
-							<!-- Drag handle -->
 							<div class="cursor-grab active:cursor-grabbing text-surface-600 hover:text-surface-400 shrink-0" title="Drag to move">
 								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" />
@@ -847,20 +1108,12 @@
 								/>
 							{:else}
 								<p class="text-surface-100 font-medium truncate">{file.filename}</p>
-								<div class="flex gap-3 text-xs text-surface-500 mt-0.5">
+								<div class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-surface-500 mt-0.5">
 									<span>{formatFileSize(file.fileSize)}</span>
-									{#if file.estimatedTime}
-										<span>{formatDuration(file.estimatedTime)}</span>
-									{/if}
-									{#if file.layerCount}
-										<span>{file.layerCount} layers</span>
-									{/if}
-									{#if file.estimatedCost}
-										<span class="text-emerald-400">${file.estimatedCost.toFixed(2)}</span>
-									{/if}
-									{#if file.slicer}
-										<span class="hidden sm:inline">{file.slicer}</span>
-									{/if}
+									{#if file.estimatedTime}<span>{formatDuration(file.estimatedTime)}</span>{/if}
+									{#if file.layerCount}<span>{file.layerCount} layers</span>{/if}
+									{#if file.estimatedCost}<span class="text-emerald-400">${file.estimatedCost.toFixed(2)}</span>{/if}
+									{#if file.slicer}<span class="hidden sm:inline">{file.slicer}</span>{/if}
 								</div>
 							{/if}
 						</div>
@@ -870,7 +1123,7 @@
 								class="btn-primary text-sm px-3 py-1.5 inline-flex items-center gap-1.5"
 								onclick={() => startPrint(file)}
 								disabled={!isConnected || isPrinting || !!loading}
-								title={!isConnected ? 'Printer not connected' : isPrinting ? 'A print is already in progress' : 'Print & monitor'}
+								title={!isConnected ? 'Printer not connected' : isPrinting ? 'Print in progress' : 'Print & monitor'}
 							>
 								{#if loading === 'print:' + file.path}
 									<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white/30 border-t-white"></span>
@@ -903,9 +1156,9 @@
 							{#if file.filamentUsedMm}<div><span class="text-xs text-surface-500">Filament</span><p class="text-surface-300">{(file.filamentUsedMm / 1000).toFixed(1)} m</p></div>{/if}
 							{#if file.estimatedCost}<div><span class="text-xs text-surface-500">Est. Cost</span><p class="text-emerald-400">${file.estimatedCost.toFixed(2)}</p></div>{/if}
 							{#if file.slicer}<div><span class="text-xs text-surface-500">Slicer</span><p class="text-surface-300">{file.slicer}</p></div>{/if}
-							{#if file.nozzleTemp}<div><span class="text-xs text-surface-500">Nozzle Temp</span><p class="text-surface-300 tabular-nums">{file.nozzleTemp}°C</p></div>{/if}
-							{#if file.bedTemp}<div><span class="text-xs text-surface-500">Bed Temp</span><p class="text-surface-300 tabular-nums">{file.bedTemp}°C</p></div>{/if}
-							<div><span class="text-xs text-surface-500">Path</span><p class="text-surface-300 truncate text-xs">{file.path}</p></div>
+							{#if file.nozzleTemp}<div><span class="text-xs text-surface-500">Nozzle</span><p class="text-surface-300 tabular-nums">{file.nozzleTemp}°C</p></div>{/if}
+							{#if file.bedTemp}<div><span class="text-xs text-surface-500">Bed</span><p class="text-surface-300 tabular-nums">{file.bedTemp}°C</p></div>{/if}
+							<div class="col-span-2 sm:col-span-3"><span class="text-xs text-surface-500">Path</span><p class="text-surface-300 text-xs font-mono">{file.path}</p></div>
 						</div>
 					{/if}
 				</div>
@@ -953,9 +1206,7 @@
 							class="btn-primary text-xs px-2.5 py-1.5 flex-1"
 							onclick={() => startPrint(file)}
 							disabled={!isConnected || isPrinting || !!loading}
-						>
-							Print
-						</button>
+						>Print</button>
 						<button
 							class="btn-icon text-surface-500 hover:text-surface-200 hover:bg-surface-700"
 							onclick={(e) => onContextMenu(e, file)}
@@ -979,12 +1230,12 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="fixed z-50 bg-surface-800 border border-surface-600 rounded-lg shadow-xl py-1 min-w-[180px]"
-		style="left: {Math.min(contextMenu.x, window.innerWidth - 200)}px; top: {Math.min(contextMenu.y, window.innerHeight - 250)}px"
+		style="left: {Math.min(contextMenu.x, window.innerWidth - 200)}px; top: {Math.min(contextMenu.y, window.innerHeight - 260)}px"
 		onclick={(e) => e.stopPropagation()}
 	>
 		{#if contextMenu.file}
 			{@const file = contextMenu.file}
-			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
+			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2 disabled:opacity-40"
 				onclick={() => { startPrint(file); contextMenu = null; }}
 				disabled={!isConnected || isPrinting}
 			>
@@ -994,6 +1245,15 @@
 				Print
 			</button>
 			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
+				onclick={() => { toggleExpand(file.path); contextMenu = null; }}
+			>
+				<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+				</svg>
+				Details
+			</button>
+			<div class="border-t border-surface-700 my-1"></div>
+			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
 				onclick={() => startRenameFile(file)}
 			>
 				<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1002,10 +1262,10 @@
 				Rename
 			</button>
 			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
-				onclick={() => showMoveDialog(file)}
+				onclick={() => openMoveFileDialog(file)}
 			>
 				<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
 				</svg>
 				Move to...
 			</button>
@@ -1021,13 +1281,14 @@
 		{:else if contextMenu.folder}
 			{@const folder = contextMenu.folder}
 			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
-				onclick={() => { navigateToFolder(folder.path); }}
+				onclick={() => { navigateToFolder(folder.path); contextMenu = null; }}
 			>
 				<svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
 				</svg>
 				Open
 			</button>
+			<div class="border-t border-surface-700 my-1"></div>
 			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
 				onclick={() => startRenameFolder(folder)}
 			>
@@ -1035,6 +1296,14 @@
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
 				</svg>
 				Rename
+			</button>
+			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2"
+				onclick={() => openMoveFolderDialog(folder)}
+			>
+				<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+				</svg>
+				Move to...
 			</button>
 			<div class="border-t border-surface-700 my-1"></div>
 			<button class="w-full px-3 py-2 text-sm text-left text-red-400 hover:bg-surface-700 flex items-center gap-2"
@@ -1048,7 +1317,6 @@
 		{/if}
 	</div>
 {/if}
-
 
 <PrintStartDialog
 	bind:open={printDialogOpen}

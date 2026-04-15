@@ -102,18 +102,21 @@ async def create_folder(path: str = Query(..., description="Folder path to creat
 
 
 @router.delete("/folder")
-async def delete_folder(path: str = Query(..., description="Folder path to delete")):
-    """Delete an empty folder."""
+async def delete_folder(
+    path: str = Query(..., description="Folder path to delete"),
+    force: bool = Query(False, description="Recursively delete non-empty folder"),
+):
+    """Delete a folder. Use force=true to delete non-empty folders."""
     _ensure_gcode_dir()
     target = _safe_resolve(path)
     if not target.exists() or not target.is_dir():
         raise HTTPException(404, f"Folder not found: {path}")
     if target == GCODE_DIR.resolve():
         raise HTTPException(400, "Cannot delete root folder")
-    # Check if empty (ignoring .metadata.json)
-    contents = [f for f in target.iterdir() if f.name != ".metadata.json"]
-    if contents:
-        raise HTTPException(400, "Folder is not empty")
+    if not force:
+        contents = [f for f in target.iterdir() if f.name != ".metadata.json"]
+        if contents:
+            raise HTTPException(400, "Folder is not empty. Use force=true to delete recursively.")
     shutil.rmtree(target)
     return {"ok": True, "deleted": path}
 
@@ -191,6 +194,59 @@ async def move_file(
         "ok": True,
         "path": str(dest_path.relative_to(GCODE_DIR)).replace("\\", "/"),
     }
+
+
+@router.post("/move-folder")
+async def move_folder(
+    src: str = Query(..., description="Source folder path"),
+    dest: str = Query("", description="Destination folder path (empty = root)"),
+):
+    """Move a folder into another folder."""
+    _ensure_gcode_dir()
+    src_path = _safe_resolve(src)
+    if not src_path.exists() or not src_path.is_dir():
+        raise HTTPException(404, f"Folder not found: {src}")
+
+    dest_dir = _safe_resolve(dest) if dest else GCODE_DIR
+    if not dest_dir.exists() or not dest_dir.is_dir():
+        raise HTTPException(404, f"Destination not found: {dest}")
+
+    # Prevent moving a folder into itself or any of its descendants
+    src_resolved = src_path.resolve()
+    dest_resolved = dest_dir.resolve()
+    if dest_resolved == src_resolved or str(dest_resolved).startswith(str(src_resolved) + "/"):
+        raise HTTPException(400, "Cannot move a folder into itself or its subdirectory")
+
+    dest_path = dest_dir / src_path.name
+    if dest_path.exists():
+        raise HTTPException(409, f"A folder named '{src_path.name}' already exists at the destination")
+
+    shutil.move(str(src_path), str(dest_path))
+    return {
+        "ok": True,
+        "path": str(dest_path.relative_to(GCODE_DIR)).replace("\\", "/"),
+    }
+
+
+@router.get("/all-folders")
+async def list_all_folders():
+    """List all folders recursively (for move/pick dialogs)."""
+    _ensure_gcode_dir()
+    result = []
+
+    def _collect(dir_path: Path) -> None:
+        for entry in sorted(dir_path.iterdir(), key=lambda e: e.name.lower()):
+            if entry.is_dir() and not entry.name.startswith("."):
+                rel = str(entry.relative_to(GCODE_DIR)).replace("\\", "/")
+                result.append({
+                    "name": entry.name,
+                    "path": rel,
+                    "depth": rel.count("/"),
+                })
+                _collect(entry)
+
+    _collect(GCODE_DIR)
+    return {"folders": result}
 
 
 @router.post("/rename")
