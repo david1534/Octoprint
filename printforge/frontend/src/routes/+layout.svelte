@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { fly, fade } from 'svelte/transition';
 	import { page } from '$app/stores';
 	import '../app.css';
 	import { wsManager } from '$lib/websocket';
@@ -32,6 +33,17 @@
 		{ path: '/settings', label: 'Settings', icon: 'M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4' }
 	];
 
+	// Mobile nav splits primary 3 into bottom tabs + "More" sheet for the rest.
+	const mobilePrimaryPaths = ['/', '/files', '/timelapse'];
+	const mobilePrimary = $derived(navItems.filter(n => mobilePrimaryPaths.includes(n.path)));
+	const mobileMore = $derived(navItems.filter(n => !mobilePrimaryPaths.includes(n.path)));
+	const moreIcon = 'M4 6h16M4 12h16M4 18h7';
+	let moreSheetOpen = $state(false);
+	// The "More" tab highlights when the current route is in the more group
+	let isMoreActive = $derived(mobileMore.some(n => currentPath.startsWith(n.path)));
+	function openMoreSheet() { moreSheetOpen = true; }
+	function closeMoreSheet() { moreSheetOpen = false; }
+
 	async function emergencyStop() {
 		try {
 			await api.emergencyStop();
@@ -61,6 +73,11 @@
 			e.preventDefault();
 			paletteOpen = !paletteOpen;
 			return;
+		}
+
+		// Escape closes the mobile More sheet
+		if (key === 'escape' && moreSheetOpen) {
+			moreSheetOpen = false;
 		}
 	}
 
@@ -194,9 +211,9 @@
 		</main>
 	</div>
 
-	<!-- Bottom nav (mobile) -->
+	<!-- Bottom nav (mobile) — 3 primary tabs + More -->
 	<nav class="md:hidden fixed bottom-0 left-0 right-0 bg-surface-900/95 backdrop-blur-lg border-t border-surface-700/80 flex z-50 safe-bottom">
-		{#each navItems as item}
+		{#each mobilePrimary as item}
 			{@const isActive = item.path === '/' ? currentPath === '/' : currentPath.startsWith(item.path)}
 			<a
 				href={item.path}
@@ -211,8 +228,74 @@
 				{item.label}
 			</a>
 		{/each}
+		<button
+			type="button"
+			onclick={openMoreSheet}
+			aria-label="More pages"
+			aria-expanded={moreSheetOpen}
+			class="flex-1 flex flex-col items-center py-2 text-xs transition-all duration-200 relative
+			       {isMoreActive || moreSheetOpen ? 'text-accent' : 'text-surface-500 active:text-surface-300'}
+			       focus-visible:outline-none focus-visible:bg-surface-800/60"
+		>
+			<div class="absolute top-0 left-1/2 -translate-x-1/2 h-0.5 rounded-b bg-accent nav-indicator
+						{isMoreActive || moreSheetOpen ? 'w-5 opacity-100' : 'w-0 opacity-0'}"></div>
+			<svg class="w-5 h-5 mb-0.5 transition-transform duration-200 {isMoreActive || moreSheetOpen ? 'scale-110' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={moreIcon} />
+			</svg>
+			More
+		</button>
 	</nav>
 </div>
+
+<!-- Mobile "More" bottom sheet -->
+{#if moreSheetOpen}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="md:hidden fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm"
+		onclick={closeMoreSheet}
+		transition:fade={{ duration: 150 }}
+	></div>
+	<div
+		class="md:hidden fixed left-0 right-0 bottom-0 z-[70] bg-surface-900 border-t border-surface-700 rounded-t-2xl
+		       shadow-2xl safe-bottom"
+		transition:fly={{ y: 300, duration: 200 }}
+		role="dialog"
+		aria-label="More pages"
+	>
+		<div class="flex items-center justify-between px-4 py-3 border-b border-surface-700">
+			<div class="flex items-center gap-2">
+				<div class="w-8 h-1 bg-surface-700 rounded-full"></div>
+			</div>
+			<span class="text-sm font-medium text-surface-300">More</span>
+			<button
+				class="p-1.5 rounded hover:bg-surface-800 text-surface-400"
+				onclick={closeMoreSheet}
+				aria-label="Close"
+			>
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+				</svg>
+			</button>
+		</div>
+		<div class="grid grid-cols-2 gap-2 p-3">
+			{#each mobileMore as item}
+				{@const isActive = currentPath.startsWith(item.path)}
+				<a
+					href={item.path}
+					onclick={closeMoreSheet}
+					class="flex items-center gap-3 px-4 py-3 rounded-xl transition-colors
+					       {isActive ? 'bg-accent/10 text-accent' : 'bg-surface-800/60 text-surface-200 hover:bg-surface-800'}"
+				>
+					<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon} />
+					</svg>
+					<span class="text-sm font-medium">{item.label}</span>
+				</a>
+			{/each}
+		</div>
+	</div>
+{/if}
 
 <ToastContainer />
 <ConfirmDialog />
