@@ -239,20 +239,17 @@
 		{/if}
 
 		<!-- Two-column layout: monitoring left | controls right -->
-		<!-- On xl+: side-by-side so camera and controls are visible together -->
+		<!-- On lg+: side-by-side so camera and controls are visible together -->
 		<!-- On smaller screens: stacks vertically (camera first, controls below) -->
-		<div class="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4 items-start">
+		<div class="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 items-start">
 
-			<!-- LEFT: monitoring column -->
-			<div class="space-y-4">
+			<!-- LEFT: monitoring column — ordered by immediacy -->
+			<div class="space-y-3">
 				<!-- Camera feed — primary reason for this layout -->
 				<CameraFeed />
 
-				<!-- Temperature history chart -->
-				<TempChart />
-
-				<!-- Live metrics row -->
-				<div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+				<!-- Live metrics row — immediate readings above the chart -->
+				<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
 					<TempGauge label="Hotend" actual={state.hotend.actual} target={state.hotend.target} color="#f97316" />
 					<TempGauge label="Bed" actual={state.bed.actual} target={state.bed.target} maxTemp={120} color="#3b82f6" />
 					<div class="card flex items-center gap-3">
@@ -332,10 +329,13 @@
 						</div>
 					</div>
 				{/if}
+
+				<!-- Temperature history chart — below immediate readings -->
+				<TempChart />
 			</div>
 
 			<!-- RIGHT: controls column — sticky on desktop so controls stay in view while scrolling -->
-			<div class="space-y-4 xl:sticky xl:top-0">
+			<div class="space-y-3 lg:sticky lg:top-0">
 
 				<!-- Quick Print (idle only) -->
 				{#if !printing && !paused && !finishing}
@@ -436,7 +436,7 @@
 
 		<!-- System Info — full-width footer -->
 		{#if health}
-			<div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+			<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
 				<div class="card flex items-center gap-3 py-3">
 					<div class="w-8 h-8 bg-surface-800 rounded-lg flex items-center justify-center shrink-0">
 						<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

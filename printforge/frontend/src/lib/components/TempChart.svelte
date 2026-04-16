@@ -169,7 +169,7 @@
 
 <div class="card h-full">
 	<h3 class="text-sm font-medium text-surface-400 mb-2">Temperature</h3>
-	<div class="h-48">
+	<div class="h-32">
 		<canvas bind:this={canvas}></canvas>
 	</div>
 </div>
