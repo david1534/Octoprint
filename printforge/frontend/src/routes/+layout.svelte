@@ -10,6 +10,7 @@
 	import { api } from '$lib/api';
 	import ToastContainer from '$lib/components/ToastContainer.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import { toast } from '$lib/stores/toast';
 	import { formatTemp, formatDuration } from '$lib/utils';
 
@@ -40,11 +41,26 @@
 		}
 	}
 
+	// Command palette (Ctrl+K / ⌘K)
+	let paletteOpen = $state(false);
+	function closePalette() { paletteOpen = false; }
+
 	function handleKeydown(e: KeyboardEvent) {
-		// Ctrl+E or Ctrl+Shift+E for emergency stop
-		if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
+		const ctrl = e.ctrlKey || e.metaKey;
+		const key = e.key.toLowerCase();
+
+		// Ctrl+E for emergency stop — always wins
+		if (ctrl && key === 'e') {
 			e.preventDefault();
 			emergencyStop();
+			return;
+		}
+
+		// Ctrl+K toggles command palette
+		if (ctrl && key === 'k') {
+			e.preventDefault();
+			paletteOpen = !paletteOpen;
+			return;
 		}
 	}
 
@@ -128,18 +144,15 @@
 					</div>
 				{/if}
 
-				<!-- Print progress (inline, when printing) -->
+				<!-- Compact print progress pill (shown on every page when printing) -->
 				{#if printing || paused}
-					<div class="hidden md:flex items-center gap-2 text-xs text-surface-300 min-w-0">
-						<span class="text-surface-600">|</span>
-						<span class="truncate max-w-[120px] lg:max-w-[200px]" title={state.print.file || ''}>
-							{state.print.file || 'Unknown'}
-						</span>
+					<div
+						class="hidden md:flex items-center gap-1.5 text-xs shrink-0 pl-2 border-l border-surface-700"
+						title={state.print.file || ''}
+					>
 						<span class="text-accent font-medium tabular-nums">{Math.round(state.print.progress)}%</span>
 						{#if state.print.remaining > 0}
-							<span class="text-surface-500 tabular-nums" title="Estimated time remaining">
-								~{formatDuration(state.print.remaining)}
-							</span>
+							<span class="text-surface-500 tabular-nums">· ~{formatDuration(state.print.remaining)}</span>
 						{/if}
 					</div>
 				{/if}
@@ -203,3 +216,4 @@
 
 <ToastContainer />
 <ConfirmDialog />
+<CommandPalette bind:open={paletteOpen} onclose={closePalette} {navItems} />
