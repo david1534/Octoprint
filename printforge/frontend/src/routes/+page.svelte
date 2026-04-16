@@ -83,6 +83,17 @@
 		}
 	}
 
+	// Controls panel ref for scroll-on-click from stat tiles (mobile where panel stacks below)
+	let controlsPanelEl = $state<HTMLElement | null>(null);
+	function focusControlTab(tab: ControlTab) {
+		activeControlTab = tab;
+		// Only scroll when the panel is actually below the fold (small screens).
+		// On lg+ the panel is sticky beside the camera — scrolling would be disruptive.
+		if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches) {
+			controlsPanelEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		}
+	}
+
 	// Track status changes to refresh spool data after print ends
 	let lastStatus = $state('');
 
@@ -302,11 +313,33 @@
 				<!-- Camera feed — primary reason for this layout -->
 				<CameraFeed />
 
-				<!-- Live metrics row — immediate readings above the chart -->
+				<!-- Live metrics row — immediate readings above the chart. Tiles jump to matching control tab. -->
 				<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-					<TempGauge label="Hotend" actual={state.hotend.actual} target={state.hotend.target} color="#f97316" />
-					<TempGauge label="Bed" actual={state.bed.actual} target={state.bed.target} maxTemp={120} color="#3b82f6" />
-					<div class="card flex items-center gap-3">
+					<TempGauge
+						label="Hotend"
+						actual={state.hotend.actual}
+						target={state.hotend.target}
+						color="#f97316"
+						title="Adjust hotend temperature"
+						onclick={() => focusControlTab('temperature')}
+					/>
+					<TempGauge
+						label="Bed"
+						actual={state.bed.actual}
+						target={state.bed.target}
+						maxTemp={120}
+						color="#3b82f6"
+						title="Adjust bed temperature"
+						onclick={() => focusControlTab('temperature')}
+					/>
+					<button
+						type="button"
+						class="card flex items-center gap-3 text-left w-full transition-colors
+						       hover:bg-surface-800/60 hover:border-surface-600
+						       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+						title="Adjust fan speed"
+						onclick={() => focusControlTab('extrusion')}
+					>
 						<div class="w-8 h-8 bg-surface-800 rounded-lg flex items-center justify-center shrink-0">
 							<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
@@ -316,8 +349,15 @@
 							<span class="text-xs text-surface-500">Fan</span>
 							<p class="text-sm font-medium tabular-nums text-surface-200">{Math.round(state.fan_speed / 2.55)}%</p>
 						</div>
-					</div>
-					<div class="card flex items-center gap-3">
+					</button>
+					<button
+						type="button"
+						class="card flex items-center gap-3 text-left w-full transition-colors
+						       hover:bg-surface-800/60 hover:border-surface-600
+						       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+						title="Jog and home"
+						onclick={() => focusControlTab('movement')}
+					>
 						<div class="w-8 h-8 bg-surface-800 rounded-lg flex items-center justify-center shrink-0">
 							<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
@@ -330,7 +370,7 @@
 								X:{state.position.x.toFixed(1)} Y:{state.position.y.toFixed(1)} Z:{state.position.z.toFixed(1)}
 							</p>
 						</div>
-					</div>
+					</button>
 				</div>
 
 				<!-- Active Spool -->
@@ -389,7 +429,7 @@
 			</div>
 
 			<!-- RIGHT: controls column — sticky on desktop so controls stay in view while scrolling -->
-			<div class="space-y-3 lg:sticky lg:top-0">
+			<div bind:this={controlsPanelEl} class="space-y-3 lg:sticky lg:top-0">
 
 				<!-- Files quick-access card (idle only) -->
 				{#if !printing && !paused && !finishing}

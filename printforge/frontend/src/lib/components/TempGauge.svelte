@@ -5,16 +5,18 @@
 		target: number;
 		maxTemp?: number;
 		color?: string;
+		onclick?: () => void;
+		title?: string;
 	}
 
-	let { label, actual, target, maxTemp = 300, color = '#3b82f6' }: Props = $props();
+	let { label, actual, target, maxTemp = 300, color = '#3b82f6', onclick, title }: Props = $props();
 
 	let percentage = $derived(Math.min(100, (actual / maxTemp) * 100));
 	let isHeating = $derived(target > 0 && actual < target - 2);
 	let isAtTarget = $derived(target > 0 && Math.abs(actual - target) <= 2);
 </script>
 
-<div class="card flex flex-col gap-2">
+{#snippet content()}
 	<div class="flex items-center justify-between">
 		<span class="text-sm font-medium text-surface-400">{label}</span>
 		{#if isHeating}
@@ -42,4 +44,21 @@
 			style="width: {percentage}%; background-color: {color}"
 		></div>
 	</div>
-</div>
+{/snippet}
+
+{#if onclick}
+	<button
+		type="button"
+		{onclick}
+		{title}
+		class="card flex flex-col gap-2 text-left w-full transition-colors
+		       hover:bg-surface-800/60 hover:border-surface-600
+		       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+	>
+		{@render content()}
+	</button>
+{:else}
+	<div class="card flex flex-col gap-2">
+		{@render content()}
+	</div>
+{/if}
