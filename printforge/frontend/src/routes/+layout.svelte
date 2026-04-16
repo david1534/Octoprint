@@ -62,25 +62,17 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="flex h-screen overflow-hidden">
-	<!-- Sidebar (desktop) -->
-	<nav class="hidden md:flex flex-col w-16 lg:w-48 bg-surface-900 border-r border-surface-700 shrink-0">
-		<!-- Logo -->
-		<div class="p-3 lg:p-4 border-b border-surface-700">
-			<div class="flex items-center gap-2">
-				<div class="w-8 h-8 bg-accent rounded-lg flex items-center justify-center">
-					<span class="text-white font-bold text-sm">PF</span>
-				</div>
-				<span class="hidden lg:block font-semibold text-surface-100">PrintForge</span>
-			</div>
-		</div>
-
+	<!-- Sidebar (desktop) — icon-only rail -->
+	<nav class="hidden md:flex flex-col w-14 bg-surface-900 border-r border-surface-700 shrink-0">
 		<!-- Nav items -->
 		<div class="flex-1 py-2 space-y-0.5">
 			{#each navItems as item}
 				{@const isActive = item.path === '/' ? currentPath === '/' : currentPath.startsWith(item.path)}
 				<a
 					href={item.path}
-					class="flex items-center gap-3 px-3 py-2.5 mx-2 rounded-lg transition-all duration-200 relative group
+					title={item.label}
+					aria-label={item.label}
+					class="flex items-center justify-center py-2.5 mx-2 rounded-lg transition-all duration-200 relative group
 						   {isActive
 							? 'bg-accent/10 text-accent'
 							: 'text-surface-400 hover:bg-surface-800 hover:text-surface-200'}"
@@ -90,19 +82,8 @@
 					<svg class="w-5 h-5 shrink-0 transition-transform duration-200 {isActive ? '' : 'group-hover:scale-110'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon} />
 					</svg>
-					<span class="hidden lg:block text-sm">{item.label}</span>
 				</a>
 			{/each}
-		</div>
-
-		<!-- Connection status -->
-		<div class="p-3 border-t border-surface-700">
-			<div class="flex items-center gap-2">
-				<div class="w-2 h-2 rounded-full transition-all duration-500 {connected ? 'bg-emerald-400 glow-green' : 'bg-red-400 glow-red animate-pulse'}"></div>
-				<span class="hidden lg:block text-xs transition-colors duration-300 {connected ? 'text-surface-500' : 'text-red-400/70'}">
-					{connected ? 'Connected' : 'Reconnecting...'}
-				</span>
-			</div>
 		</div>
 	</nav>
 
@@ -111,15 +92,23 @@
 		<!-- Top bar -->
 		<header class="h-14 bg-surface-900 border-b border-surface-700 flex items-center justify-between px-4 shrink-0">
 			<div class="flex items-center gap-3 min-w-0">
-				<!-- Mobile logo -->
-				<div class="md:hidden flex items-center gap-2 shrink-0">
+				<!-- Logo -->
+				<div class="flex items-center gap-2 shrink-0">
 					<div class="w-7 h-7 bg-accent rounded-lg flex items-center justify-center">
 						<span class="text-white font-bold text-xs">PF</span>
 					</div>
+					<span class="hidden sm:block font-semibold text-surface-100 text-sm">PrintForge</span>
 				</div>
 
-				<!-- Status badge -->
-				<span class="transition-colors duration-300 {$statusBadge} shrink-0">{state.status}</span>
+				<!-- Connection dot + status badge -->
+				<div class="flex items-center gap-2 shrink-0">
+					<div
+						class="w-2 h-2 rounded-full transition-all duration-500 {connected ? 'bg-emerald-400 glow-green' : 'bg-red-400 glow-red animate-pulse'}"
+						title={connected ? 'Connected' : 'Reconnecting...'}
+						aria-label={connected ? 'Connected' : 'Reconnecting'}
+					></div>
+					<span class="transition-colors duration-300 {$statusBadge}">{state.status}</span>
+				</div>
 
 				<!-- Live temps (when connected) -->
 				{#if state.status !== 'disconnected'}
