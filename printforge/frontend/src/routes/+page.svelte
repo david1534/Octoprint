@@ -5,6 +5,7 @@
 	import TempGauge from '$lib/components/TempGauge.svelte';
 	import PrintProgress from '$lib/components/PrintProgress.svelte';
 	import PrintStartDialog from '$lib/components/PrintStartDialog.svelte';
+	import FilesDrawer from '$lib/components/FilesDrawer.svelte';
 	import AlertPanel from '$lib/components/AlertPanel.svelte';
 	import JogControls from '$lib/components/JogControls.svelte';
 	import TemperatureControls from '$lib/components/TemperatureControls.svelte';
@@ -37,6 +38,51 @@
 	// Recent files for quick print
 	let recentFiles = $derived($files.slice(0, 3));
 
+	// Files drawer — persisted open/closed preference
+	let drawerOpen = $state(false);
+	let wasOpenBeforePrint = $state(false);
+
+	$effect(() => {
+		// Auto-close drawer when print starts; restore when back to idle
+		if (printing || paused || finishing) {
+			if (drawerOpen) {
+				wasOpenBeforePrint = true;
+				drawerOpen = false;
+			}
+		} else if (wasOpenBeforePrint) {
+			drawerOpen = true;
+			wasOpenBeforePrint = false;
+		}
+	});
+
+	$effect(() => {
+		// Persist preference — but don't write during a print (auto-close)
+		if (printing || paused || finishing) return;
+		try {
+			localStorage.setItem('printforge:filesDrawerOpen', drawerOpen ? '1' : '0');
+		} catch { /* storage disabled */ }
+	});
+
+	function toggleDrawer() {
+		if (printing || paused || finishing) return; // disabled during print
+		drawerOpen = !drawerOpen;
+	}
+
+	function closeDrawer() {
+		drawerOpen = false;
+	}
+
+	function onDashboardKeydown(e: KeyboardEvent) {
+		if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+			// Don't fire if an input/textarea has focus
+			const t = e.target as HTMLElement | null;
+			const tag = t?.tagName?.toLowerCase();
+			if (tag === 'input' || tag === 'textarea' || t?.isContentEditable) return;
+			e.preventDefault();
+			toggleDrawer();
+		}
+	}
+
 	// Track status changes to refresh spool data after print ends
 	let lastStatus = $state('');
 
@@ -47,6 +93,12 @@
 		loadHealth();
 		loadActiveSpool();
 		loadFilamentWarnings();
+
+		// Restore drawer preference (only honored when idle)
+		try {
+			const saved = localStorage.getItem('printforge:filesDrawerOpen');
+			if (saved === '1') drawerOpen = true;
+		} catch { /* storage disabled */ }
 	});
 
 	// Refresh spool data when print finishes (filament deducted)
@@ -155,6 +207,8 @@
 <svelte:head>
 	<title>PrintForge - Dashboard</title>
 </svelte:head>
+
+<svelte:window onkeydown={onDashboardKeydown} />
 
 {#if !connected}
 	<!-- Disconnected state -->
@@ -337,17 +391,34 @@
 			<!-- RIGHT: controls column — sticky on desktop so controls stay in view while scrolling -->
 			<div class="space-y-3 lg:sticky lg:top-0">
 
-				<!-- Quick Print (idle only) -->
+				<!-- Files quick-access card (idle only) -->
 				{#if !printing && !paused && !finishing}
 					<div class="card">
-						<h3 class="text-sm font-semibold text-surface-300 mb-3 flex items-center gap-2">
-							<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-							</svg>
-							Quick Print
-						</h3>
+						<div class="flex items-center justify-between gap-2">
+							<h3 class="text-sm font-semibold text-surface-300 flex items-center gap-2">
+								<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+								</svg>
+								Files
+							</h3>
+							<button
+								class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors
+								       {drawerOpen
+								         ? 'bg-accent/15 text-accent hover:bg-accent/20'
+								         : 'bg-surface-800 text-surface-300 hover:bg-surface-700 hover:text-surface-100'}
+								       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+								onclick={toggleDrawer}
+								title="Toggle files drawer (Ctrl+O)"
+							>
+								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" />
+								</svg>
+								{drawerOpen ? 'Hide' : 'Browse'}
+								<span class="hidden lg:inline text-surface-500 font-normal">⌃O</span>
+							</button>
+						</div>
 						{#if recentFiles.length > 0}
+							<p class="text-[10px] text-surface-500 uppercase tracking-wider mt-3 mb-1.5">Recent</p>
 							<div class="space-y-1.5">
 								{#each recentFiles as file}
 									<button
@@ -369,7 +440,7 @@
 								{/each}
 							</div>
 						{:else}
-							<p class="text-xs text-surface-500">No files uploaded yet</p>
+							<p class="text-xs text-surface-500 mt-3">No files uploaded yet</p>
 							<a href="/files" class="text-xs text-accent hover:text-accent-hover mt-1 inline-block">Upload files</a>
 						{/if}
 					</div>
@@ -494,3 +565,5 @@
 	onconfirm={onPrintConfirm}
 	oncancel={onPrintCancel}
 />
+
+<FilesDrawer bind:open={drawerOpen} onclose={closeDrawer} disabled={printing || paused || finishing} />
