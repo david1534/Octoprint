@@ -84,7 +84,8 @@ All are optional with sensible defaults. Set via systemd unit (`/etc/systemd/sys
 - `PRINTFORGE_CAMERA_URL` — ustreamer base URL (default: `http://localhost:8080`)
 - `PRINTFORGE_LOG_LEVEL` — Logging level (default: `INFO`)
 - `PRINTFORGE_CORS_ORIGINS` — Comma-separated allowed CORS origins (default: `*`). Set to the Pi's actual address(es) in production to prevent cross-site printer control, e.g. `http://100.108.194.105:8000,http://printforge.local:8000`
-- `PRINTFORGE_MOCK_SERIAL` — When `1`, the backend uses an in-process Marlin simulator instead of opening a real serial port. For local dev and full-stack testing without the Pi/printer. Auto-connect in mock mode connects to the sim on boot. Example: `PRINTFORGE_MOCK_SERIAL=1 uvicorn app.main:app --reload` (backend) + `bun dev` (frontend) = full app end-to-end.
+- `PRINTFORGE_MOCK_SERIAL` — When `1`, the backend uses an in-process Marlin simulator instead of opening a real serial port. Set on the staging service (`printforge-staging.service`) so staging never touches the real printer. Auto-connect in mock mode connects to the sim on boot.
+- `PRINTFORGE_ENVIRONMENT` — Deployment environment name surfaced via `/api/system/health`. Set to `staging` on the staging service so the UI shows an amber "Staging environment" banner. Default `production`.
 
 ### Camera System
 - ustreamer runs as a separate service at `localhost:8080`
@@ -161,32 +162,9 @@ cd printforge/backend && python -m pytest tests/
 ssh -o ConnectTimeout=5 david1534@100.108.194.105 "echo OK"
 ```
 
-## Isolated Dev Environment (laptop, no Pi/printer required)
+## Dev Workflow — Staging is the primary dev target
 
-One-time setup:
-```bash
-# From repo root
-bun install                                    # installs concurrently + cross-env
-cd printforge/backend && pip install -e ".[dev]" && cd ../..   # backend deps
-cd printforge/frontend && bun install && cd ../..              # frontend deps
-```
-
-Every day:
-```bash
-bun run dev          # starts backend (mock mode) + frontend together
-# Ctrl+C kills both. Open http://localhost:5173
-```
-
-The backend runs against `MockMarlinPrinter` (in-process Marlin simulator — homing, temps, jog, print all work). Dev data lives in `./.dev-data/` (gitignored), so your laptop's gcode library stays separate from the Pi's. The Pi is completely untouched and keeps printing undisturbed.
-
-Other scripts in [package.json](package.json):
-- `bun run dev:backend` — just the backend in mock mode
-- `bun run dev:frontend` — just the frontend
-- `bun run dev:real` — backend *without* mock mode (talks to whatever serial port it finds locally — rarely useful on Windows)
-
-## Pi Staging Environment (port 8001)
-
-A second, always-available test instance on the Pi alongside production:
+There are only two environments. Local dev (laptop uvicorn + vite) has been removed — Claude does all development, and the `deploy → curl` loop on staging is the same cost as running it locally, with more realism (real Pi, Python 3.9, armhf).
 
 | | Production | Staging |
 |---|---|---|
@@ -197,17 +175,21 @@ A second, always-available test instance on the Pi alongside production:
 | systemd unit | `printforge.service` | `printforge-staging.service` |
 | Restart behavior | Interrupts print | Safe anytime |
 
-**One-time setup (on the Pi):**
+**Typical feature cycle:**
+1. Claude edits code on the laptop → commits to git.
+2. `bash printforge/scripts/deploy-staging.sh` — ships code to staging. Safe during active prints (mock-serial mode, separate data dir, separate service).
+3. User opens `http://100.108.194.105:8001` to verify — amber "Staging environment · simulated printer" banner confirms you're on staging.
+4. Happy? `bash printforge/scripts/promote-staging.sh` — rsyncs staging → production on the Pi and restarts :8000. Refuses if a print is active (use `--force` to override).
+
+**Claude shortcuts:**
+- *"deploy to staging"* → `deploy-pi-staging` skill → runs `deploy-staging.sh`
+- *"promote to production"* / *"apply to production"* → runs `promote-staging.sh`
+- *"deploy"* (unqualified) → `deploy-pi` skill → straight-to-production path (still available for trivial changes)
+
+**UI banner:** when `PRINTFORGE_ENVIRONMENT=staging` or `PRINTFORGE_MOCK_SERIAL=1`, the frontend shows an amber strip above the top bar — you can't mistake staging for production.
+
+**One-time staging setup** (already done on the current Pi — only relevant if you re-provision):
 ```bash
 scp printforge/scripts/{install-staging.sh,printforge-staging.service} david1534@100.108.194.105:/tmp/
 ssh david1534@100.108.194.105 "bash /tmp/install-staging.sh"
 ```
-
-**Typical day:**
-1. Edit code on laptop → test with `npm run dev` (fully local)
-2. Want to preview on the Pi? `bash printforge/scripts/deploy-staging.sh` — ships code to staging, safe during prints
-3. Verified it works? `bash printforge/scripts/promote-staging.sh` — rsyncs staging → production and restarts production (refuses if a print is active, unless `--force`)
-
-**UI banner:** when `PRINTFORGE_ENVIRONMENT=staging` or `PRINTFORGE_MOCK_SERIAL=1`, the frontend shows an amber "Staging environment · simulated printer" strip above the top bar. You can never mistake one for the other.
-
-Skill: `deploy-pi-staging` (vs `deploy-pi` for production).
