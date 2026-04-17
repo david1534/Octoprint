@@ -69,6 +69,8 @@ async def health():
         "memory": _read_memory_info(),
         "platform": platform.machine(),
         "python": platform.python_version(),
+        "environment": settings.environment,
+        "mockSerial": settings.mock_serial,
     }
 
 

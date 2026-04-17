@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Deployment environment name. "production" on the main Pi service,
+    # "staging" on the test instance (:8001). Surfaced to the frontend so
+    # the UI can show a banner when you're not on production.
+    environment: str = "production"
+
     model_config = {"env_prefix": "PRINTFORGE_"}
 
 

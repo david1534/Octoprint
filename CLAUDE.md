@@ -183,3 +183,31 @@ Other scripts in [package.json](package.json):
 - `bun run dev:backend` — just the backend in mock mode
 - `bun run dev:frontend` — just the frontend
 - `bun run dev:real` — backend *without* mock mode (talks to whatever serial port it finds locally — rarely useful on Windows)
+
+## Pi Staging Environment (port 8001)
+
+A second, always-available test instance on the Pi alongside production:
+
+| | Production | Staging |
+|---|---|---|
+| Port | 8000 | 8001 |
+| URL | `http://100.108.194.105:8000` | `http://100.108.194.105:8001` |
+| Real printer? | Yes | No — `PRINTFORGE_MOCK_SERIAL=1` |
+| Data dir | `~/printforge/` | `~/printforge-staging/` |
+| systemd unit | `printforge.service` | `printforge-staging.service` |
+| Restart behavior | Interrupts print | Safe anytime |
+
+**One-time setup (on the Pi):**
+```bash
+scp printforge/scripts/{install-staging.sh,printforge-staging.service} david1534@100.108.194.105:/tmp/
+ssh david1534@100.108.194.105 "bash /tmp/install-staging.sh"
+```
+
+**Typical day:**
+1. Edit code on laptop → test with `npm run dev` (fully local)
+2. Want to preview on the Pi? `bash printforge/scripts/deploy-staging.sh` — ships code to staging, safe during prints
+3. Verified it works? `bash printforge/scripts/promote-staging.sh` — rsyncs staging → production and restarts production (refuses if a print is active, unless `--force`)
+
+**UI banner:** when `PRINTFORGE_ENVIRONMENT=staging` or `PRINTFORGE_MOCK_SERIAL=1`, the frontend shows an amber "Staging environment · simulated printer" strip above the top bar. You can never mistake one for the other.
+
+Skill: `deploy-pi-staging` (vs `deploy-pi` for production).

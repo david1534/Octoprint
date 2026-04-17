@@ -1,0 +1,36 @@
+# PrintForge STAGING systemd service (runs on port 8001 in mock-serial mode).
+# Generated/installed by install-staging.sh. The staging instance:
+#   - never touches the real serial port (PRINTFORGE_MOCK_SERIAL=1)
+#   - has its own data dir (~/printforge-staging/) so its state is isolated
+#   - exposes PRINTFORGE_ENVIRONMENT=staging so the UI can show a banner
+#
+# Control:
+#   sudo systemctl start  printforge-staging
+#   sudo systemctl stop   printforge-staging
+#   sudo systemctl status printforge-staging
+#   journalctl -u printforge-staging -f
+
+[Unit]
+Description=PrintForge (staging / mock-serial test environment)
+After=network.target
+# Explicitly NOT bound to printforge.service — staging is fully independent
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/printforge-staging
+# Shares production's venv — deps drift together (rare changes, keeps it simple)
+ExecStart=/opt/printforge/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001 --app-dir /opt/printforge-staging
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PRINTFORGE_MOCK_SERIAL=1
+Environment=PRINTFORGE_ENVIRONMENT=staging
+Environment=PRINTFORGE_GCODE_DIR=/home/pi/printforge-staging/gcodes
+Environment=PRINTFORGE_DATA_DIR=/home/pi/printforge-staging/data
+Environment=PRINTFORGE_LOG_LEVEL=INFO
+
+[Install]
+WantedBy=multi-user.target

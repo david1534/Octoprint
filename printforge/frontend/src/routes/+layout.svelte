@@ -81,12 +81,28 @@
 		}
 	}
 
+	// Environment banner — shown when running on staging or in mock-serial mode
+	// so you can never mistake the test environment for the real one.
+	let envBadge = $state<{ environment: string; mockSerial: boolean } | null>(null);
+	const isNonProduction = $derived(
+		!!envBadge && (envBadge.environment !== 'production' || envBadge.mockSerial)
+	);
+
 	onMount(() => {
 		initPrinterStore();
 		initTempHistory();
 		initTerminalStore();
 		initErrorStore();
 		wsManager.connect();
+
+		// Best-effort health fetch — a 401/network error just means no banner
+		api.getHealth()
+			.then((h: any) => {
+				if (h && typeof h === 'object') {
+					envBadge = { environment: h.environment ?? 'production', mockSerial: !!h.mockSerial };
+				}
+			})
+			.catch(() => { /* no banner */ });
 
 		return () => wsManager.disconnect();
 	});
@@ -122,6 +138,19 @@
 
 	<!-- Main content -->
 	<div class="flex-1 flex flex-col overflow-hidden">
+		<!-- Environment banner — staging or mock-serial mode -->
+		{#if isNonProduction && envBadge}
+			<div class="bg-amber-500/15 border-b-2 border-amber-500/60 px-4 py-1.5 flex items-center justify-center gap-3 text-xs font-semibold text-amber-300 shrink-0 tracking-wide uppercase">
+				<svg class="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+					<path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+				</svg>
+				<span>
+					{envBadge.environment === 'staging' ? 'Staging environment' : envBadge.environment}
+					{#if envBadge.mockSerial}· simulated printer (no real hardware connected){/if}
+				</span>
+			</div>
+		{/if}
+
 		<!-- Top bar -->
 		<header class="h-14 bg-surface-900 border-b border-surface-700 flex items-center justify-between px-4 shrink-0">
 			<div class="flex items-center gap-3 min-w-0">
