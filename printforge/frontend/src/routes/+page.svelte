@@ -324,25 +324,30 @@
 				     Fan % and position have moved to the top status bar; removing those tiles here gives the
 				     chart a wider canvas. Stacks on small screens so nothing gets cramped. -->
 				<div class="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-3 items-stretch">
-					<!-- Left: Hotend on top, Bed underneath. -->
+					<!-- Left: Hotend on top, Bed underneath. Each gauge fills half the stretched column height
+					     so the left column matches the right column (spool card + temp chart) with no gap. -->
 					<div class="flex flex-col gap-3">
-						<TempGauge
-							label="Hotend"
-							actual={state.hotend.actual}
-							target={state.hotend.target}
-							color="#f97316"
-							title="Adjust hotend temperature"
-							onclick={() => focusControlTab('temperature')}
-						/>
-						<TempGauge
-							label="Bed"
-							actual={state.bed.actual}
-							target={state.bed.target}
-							maxTemp={120}
-							color="#3b82f6"
-							title="Adjust bed temperature"
-							onclick={() => focusControlTab('temperature')}
-						/>
+						<div class="flex-1 min-h-0">
+							<TempGauge
+								label="Hotend"
+								actual={state.hotend.actual}
+								target={state.hotend.target}
+								color="#f97316"
+								title="Adjust hotend temperature"
+								onclick={() => focusControlTab('temperature')}
+							/>
+						</div>
+						<div class="flex-1 min-h-0">
+							<TempGauge
+								label="Bed"
+								actual={state.bed.actual}
+								target={state.bed.target}
+								maxTemp={120}
+								color="#3b82f6"
+								title="Adjust bed temperature"
+								onclick={() => focusControlTab('temperature')}
+							/>
+						</div>
 					</div>
 
 					<!-- Right: spool context + temperature history, stacked. -->

@@ -51,14 +51,14 @@
 		type="button"
 		{onclick}
 		{title}
-		class="card flex flex-col gap-2 text-left w-full transition-colors
+		class="card flex flex-col gap-2 text-left w-full h-full transition-colors
 		       hover:bg-surface-800/60 hover:border-surface-600
 		       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 	>
 		{@render content()}
 	</button>
 {:else}
-	<div class="card flex flex-col gap-2">
+	<div class="card flex flex-col gap-2 h-full">
 		{@render content()}
 	</div>
 {/if}
