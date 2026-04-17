@@ -171,6 +171,10 @@ export const api = {
 	restartOS: () => post<any>('/system/restart-os'),
 	shutdownOS: () => post<any>('/system/shutdown-os'),
 
+	// Staging → production promote (only works on staging instance)
+	promoteStagingToProduction: (force = false) =>
+		post<any>(`/system/promote${force ? '?force=true' : ''}`),
+
 	// Filament spools
 	getSpools: () => request<any>('/filament/'),
 	createSpool: (data: { name: string; material: string; color: string; total_weight_g: number; cost_per_kg: number; notes?: string }) =>

@@ -1,5 +1,9 @@
 """System information REST API endpoints."""
 
+from __future__ import annotations
+
+import asyncio
+import logging
 import os
 import platform
 import shutil
@@ -7,9 +11,12 @@ import subprocess
 import time
 from pathlib import Path
 
-from fastapi import APIRouter
+import httpx
+from fastapi import APIRouter, HTTPException
 
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -189,3 +196,92 @@ async def shutdown_os():
         return {"status": "shutting_down"}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+
+
+async def _run(cmd: list[str]) -> tuple[int, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await proc.communicate()
+    return proc.returncode or 0, out.decode("utf-8", errors="replace").strip()
+
+
+@router.post("/promote")
+async def promote_staging_to_production(force: bool = False):
+    """Copy /opt/printforge-staging/ onto production and restart.
+
+    Only callable on the staging instance. Refuses if production is currently
+    printing unless force=true. If production status can't be verified, also
+    requires force=true — we won't blindly restart the printer service.
+    """
+    if settings.environment != "staging":
+        raise HTTPException(403, "Promote is only available on staging.")
+
+    log: list[str] = []
+
+    # Check production's printer state
+    prod_status = "unknown"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get("http://127.0.0.1:8000/api/printer/state")
+            if r.status_code == 200:
+                data = r.json()
+                prod_status = str(data.get("status", "unknown"))
+            else:
+                prod_status = f"http_{r.status_code}"
+    except Exception as e:
+        prod_status = f"unreachable ({e.__class__.__name__})"
+
+    log.append(f"production status: {prod_status}")
+
+    unsafe_states = {"printing", "paused", "finishing"}
+    if prod_status in unsafe_states and not force:
+        raise HTTPException(
+            409,
+            f"Production is {prod_status}. Promotion would interrupt the print. "
+            "Re-run with force=true to proceed anyway.",
+        )
+    if prod_status.startswith(("unreachable", "http_")) and not force:
+        raise HTTPException(
+            409,
+            f"Can't verify production state ({prod_status}). "
+            "Re-run with force=true to proceed anyway.",
+        )
+
+    # rsync staging app → production app
+    rc, out = await _run([
+        "rsync", "-a", "--delete",
+        "/opt/printforge-staging/app/",
+        "/opt/printforge/app/",
+    ])
+    log.append(f"rsync app rc={rc}")
+    if out:
+        log.append(out)
+    if rc != 0:
+        raise HTTPException(500, "\n".join(log))
+
+    # rsync frontend build if present on staging
+    if Path("/opt/printforge-staging/frontend/build").is_dir():
+        await _run(["mkdir", "-p", "/opt/printforge/frontend"])
+        rc, out = await _run([
+            "rsync", "-a", "--delete",
+            "/opt/printforge-staging/frontend/build/",
+            "/opt/printforge/frontend/build/",
+        ])
+        log.append(f"rsync frontend rc={rc}")
+        if out:
+            log.append(out)
+        if rc != 0:
+            raise HTTPException(500, "\n".join(log))
+
+    # Restart production
+    rc, out = await _run(["sudo", "systemctl", "restart", "printforge"])
+    log.append(f"restart rc={rc}")
+    if out:
+        log.append(out)
+    if rc != 0:
+        raise HTTPException(500, "\n".join(log))
+
+    return {"status": "promoted", "productionStatusBefore": prod_status, "log": log}

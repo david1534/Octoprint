@@ -13,6 +13,7 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import { toast } from '$lib/stores/toast';
+	import { confirmAction } from '$lib/stores/confirm';
 	import { formatTemp, formatDuration } from '$lib/utils';
 
 	let { children } = $props();
@@ -87,6 +88,37 @@
 	const isNonProduction = $derived(
 		!!envBadge && (envBadge.environment !== 'production' || envBadge.mockSerial)
 	);
+	const isStaging = $derived(!!envBadge && envBadge.environment === 'staging');
+	let promoting = $state(false);
+
+	async function promoteToProduction(force = false) {
+		const ok = await confirmAction({
+			title: force ? 'Force promote to production?' : 'Promote staging to production?',
+			message: force
+				? "Production state couldn't be verified or a print is in progress. Promoting now will RESTART the printer service and interrupt any active print. Continue anyway?"
+				: "This copies staging's code onto production and restarts the printer service. It's blocked automatically if a print is in progress.",
+			confirmLabel: force ? 'Force promote' : 'Promote',
+			variant: force ? 'danger' : 'primary'
+		});
+		if (!ok) return;
+
+		promoting = true;
+		try {
+			const res = await api.promoteStagingToProduction(force);
+			toast.success(`Promoted to production (was: ${res?.productionStatusBefore ?? 'unknown'})`);
+		} catch (e: any) {
+			const msg = String(e?.message ?? e ?? 'unknown');
+			// 409 from backend = print in progress or unverifiable state — offer force
+			if (msg.includes('force=true') || msg.includes('409')) {
+				promoting = false;
+				await promoteToProduction(true);
+				return;
+			}
+			toast.error(`Promote failed: ${msg}`);
+		} finally {
+			promoting = false;
+		}
+	}
 
 	onMount(() => {
 		initPrinterStore();
@@ -148,6 +180,15 @@
 					{envBadge.environment === 'staging' ? 'Staging environment' : envBadge.environment}
 					{#if envBadge.mockSerial}· simulated printer (no real hardware connected){/if}
 				</span>
+				{#if isStaging}
+					<button
+						onclick={() => promoteToProduction(false)}
+						disabled={promoting}
+						class="ml-2 px-2.5 py-0.5 rounded-md bg-amber-500/30 hover:bg-amber-500/50 disabled:opacity-50 disabled:cursor-not-allowed text-amber-100 border border-amber-400/50 transition-colors normal-case tracking-normal font-medium"
+					>
+						{promoting ? 'Promoting…' : 'Promote to production →'}
+					</button>
+				{/if}
 			</div>
 		{/if}
 
