@@ -13,10 +13,12 @@ import time as _time
 from pathlib import Path
 from typing import Callable, Optional
 
+from ..config import settings
 from ..serial.bed_mesh import BedMeshParser
 from ..serial.command_queue import CommandPriority, CommandQueue
 from ..serial.connection import SerialConnection
 from ..serial.gcode_sender import GcodeSender
+from ..serial.mock_connection import MockSerialConnection
 from ..serial.protocol import CommandResult, MarlinProtocol
 from ..serial.safety import SafetyAction, SafetyAlert, SafetyMonitor
 from ..serial.temperature import TemperatureMonitor, TemperatureSnapshot
@@ -297,6 +299,11 @@ class PrinterController:
         """Auto-connect to the printer on startup if enabled in settings."""
         from ..storage.models import get_setting, set_setting
 
+        if settings.mock_serial:
+            logger.info("Auto-connect: mock serial — connecting to simulator")
+            await self.connect("mock", 115200)
+            return
+
         enabled = await get_setting("auto_connect_enabled", "false")
         if enabled != "true":
             logger.info("Auto-connect disabled, skipping")
@@ -341,7 +348,11 @@ class PrinterController:
         self.state.baudrate = baudrate
         self._notify_state_change()
 
-        self._connection = SerialConnection(port=port, baudrate=baudrate)
+        if settings.mock_serial:
+            logger.info("PRINTFORGE_MOCK_SERIAL=1 — using in-process Marlin simulator")
+            self._connection = MockSerialConnection(port=port, baudrate=baudrate)
+        else:
+            self._connection = SerialConnection(port=port, baudrate=baudrate)
         if not await self._connection.connect():
             self.state.status = PrinterStatus.ERROR
             self.state.error_message = f"Failed to connect to {port}"

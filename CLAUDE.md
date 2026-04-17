@@ -1,5 +1,25 @@
 # CLAUDE.md — PrintForge Working Memory
 
+## Deployment Workflow
+- Always deploy to Raspberry Pi after PrintForge changes are committed
+- Verify service restart succeeds and check logs for Python syntax errors before declaring done
+- Target Python 3.9 compatibility: use `from __future__ import annotations` for union syntax (X | None)
+
+## Git & Commits
+- Auto-commit and push changes after completing features (user has asked for this repeatedly)
+- Verify you're in the main repo, not a worktree, before committing
+- Use direct push to main when gh CLI is unavailable rather than attempting PR creation
+
+## Debugging Principles
+- Before deploying a code fix for hardware/sensor issues, first verify the hardware is actually responsive (e.g., power cycle check for printer issues)
+- Avoid introducing syntax errors: re-read the full function after edits involving `global` declarations or import changes
+- When a fix fails repeatedly (3+ iterations), stop and reassess the approach rather than continuing to patch
+
+## PrintForge Project Rules
+- Save permissions and auto-commit rules to project memory (user explicitly requested this)
+- Guard jog/extrude/home API endpoints against execution during active prints
+- Track G90/G91 state carefully around pause/resume operations
+
 ## Quick Reference
 
 | What | Where |
@@ -64,6 +84,7 @@ All are optional with sensible defaults. Set via systemd unit (`/etc/systemd/sys
 - `PRINTFORGE_CAMERA_URL` — ustreamer base URL (default: `http://localhost:8080`)
 - `PRINTFORGE_LOG_LEVEL` — Logging level (default: `INFO`)
 - `PRINTFORGE_CORS_ORIGINS` — Comma-separated allowed CORS origins (default: `*`). Set to the Pi's actual address(es) in production to prevent cross-site printer control, e.g. `http://100.108.194.105:8000,http://printforge.local:8000`
+- `PRINTFORGE_MOCK_SERIAL` — When `1`, the backend uses an in-process Marlin simulator instead of opening a real serial port. For local dev and full-stack testing without the Pi/printer. Auto-connect in mock mode connects to the sim on boot. Example: `PRINTFORGE_MOCK_SERIAL=1 uvicorn app.main:app --reload` (backend) + `bun dev` (frontend) = full app end-to-end.
 
 ### Camera System
 - ustreamer runs as a separate service at `localhost:8080`
@@ -139,3 +160,26 @@ cd printforge/backend && python -m pytest tests/
 # Check Pi is reachable
 ssh -o ConnectTimeout=5 david1534@100.108.194.105 "echo OK"
 ```
+
+## Isolated Dev Environment (laptop, no Pi/printer required)
+
+One-time setup:
+```bash
+# From repo root
+bun install                                    # installs concurrently + cross-env
+cd printforge/backend && pip install -e ".[dev]" && cd ../..   # backend deps
+cd printforge/frontend && bun install && cd ../..              # frontend deps
+```
+
+Every day:
+```bash
+bun run dev          # starts backend (mock mode) + frontend together
+# Ctrl+C kills both. Open http://localhost:5173
+```
+
+The backend runs against `MockMarlinPrinter` (in-process Marlin simulator — homing, temps, jog, print all work). Dev data lives in `./.dev-data/` (gitignored), so your laptop's gcode library stays separate from the Pi's. The Pi is completely untouched and keeps printing undisturbed.
+
+Other scripts in [package.json](package.json):
+- `bun run dev:backend` — just the backend in mock mode
+- `bun run dev:frontend` — just the frontend
+- `bun run dev:real` — backend *without* mock mode (talks to whatever serial port it finds locally — rarely useful on Windows)
