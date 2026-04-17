@@ -91,6 +91,15 @@
 	const isStaging = $derived(!!envBadge && envBadge.environment === 'staging');
 	let promoting = $state(false);
 
+	// Build the other-environment URL on the same host (prod:8000 ↔ staging:8001),
+	// preserving the current path so "Open production" on /settings lands on /settings.
+	// Same-host assumption matches our deploy topology and avoids a backend round-trip.
+	const otherEnvUrl = $derived.by(() => {
+		if (typeof window === 'undefined') return '';
+		const targetPort = isStaging ? '8000' : '8001';
+		return `${window.location.protocol}//${window.location.hostname}:${targetPort}${window.location.pathname}${window.location.search}`;
+	});
+
 	async function promoteToProduction(force = false) {
 		const ok = await confirmAction({
 			title: force ? 'Force promote to production?' : 'Promote staging to production?',
@@ -181,6 +190,15 @@
 					{#if envBadge.mockSerial}· simulated printer (no real hardware connected){/if}
 				</span>
 				{#if isStaging}
+					<a
+						href={otherEnvUrl}
+						target="_blank"
+						rel="noopener"
+						class="ml-2 px-2.5 py-0.5 rounded-md bg-amber-500/10 hover:bg-amber-500/25 text-amber-200 border border-amber-400/30 transition-colors normal-case tracking-normal font-medium"
+						title="Open the live production UI in a new tab — this is a read/write-safe preview, your print continues as normal"
+					>
+						Open production ↗
+					</a>
 					<button
 						onclick={() => promoteToProduction(false)}
 						disabled={promoting}
@@ -262,18 +280,34 @@
 				{/if}
 			</div>
 
-		<!-- Right side: E-STOP -->
-		<button
-			class="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-1.5 rounded-lg
-				   transition-all duration-200 uppercase text-sm tracking-wide shrink-0
-				   ring-2 ring-red-500/30 hover:ring-red-500/50 hover:shadow-lg hover:shadow-red-500/20
-				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400
-				   active:scale-95"
-			onclick={emergencyStop}
-			title="Emergency Stop (Ctrl+E)"
-		>
-			E-STOP
-		</button>
+		<!-- Right side: staging link (prod only) + E-STOP -->
+		<div class="flex items-center gap-3 shrink-0">
+			{#if envBadge && !isNonProduction}
+				<a
+					href={otherEnvUrl}
+					target="_blank"
+					rel="noopener"
+					class="hidden md:inline-flex items-center gap-1 text-xs text-surface-500 hover:text-amber-400 transition-colors px-2 py-1 rounded-md hover:bg-surface-800/60"
+					title="Open the staging environment in a new tab (mock-serial sandbox — safe to poke at while prints run here)"
+				>
+					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+					</svg>
+					Staging ↗
+				</a>
+			{/if}
+			<button
+				class="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-1.5 rounded-lg
+					   transition-all duration-200 uppercase text-sm tracking-wide shrink-0
+					   ring-2 ring-red-500/30 hover:ring-red-500/50 hover:shadow-lg hover:shadow-red-500/20
+					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400
+					   active:scale-95"
+				onclick={emergencyStop}
+				title="Emergency Stop (Ctrl+E)"
+			>
+				E-STOP
+			</button>
+		</div>
 		</header>
 
 		<!-- WebSocket disconnection banner -->
