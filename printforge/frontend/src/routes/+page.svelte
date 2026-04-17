@@ -251,53 +251,60 @@
 						</div>
 					</div>
 				{:else}
-					<PrintProgress />
-					<div class="flex gap-2 mt-4">
-						{#if printing}
-							<button
-								class="btn-secondary flex-1 inline-flex items-center justify-center gap-2"
-								onclick={pausePrint}
-								disabled={!!loading}
-							>
-								{#if loading === 'pause'}
-									<span class="animate-spin rounded-full h-4 w-4 border-2 border-surface-400 border-t-white"></span>
-								{:else}
-									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-									</svg>
-								{/if}
-								Pause
-							</button>
-						{:else}
-							<button
-								class="btn-success flex-1 inline-flex items-center justify-center gap-2"
-								onclick={resumePrint}
-								disabled={!!loading}
-							>
-								{#if loading === 'resume'}
-									<span class="animate-spin rounded-full h-4 w-4 border-2 border-emerald-800 border-t-white"></span>
-								{:else}
-									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-									</svg>
-								{/if}
-								Resume
-							</button>
-						{/if}
-						<button
-							class="btn-danger flex-1 inline-flex items-center justify-center gap-2"
-							onclick={cancelPrint}
-							disabled={!!loading}
-						>
-							{#if loading === 'cancel'}
-								<span class="animate-spin rounded-full h-4 w-4 border-2 border-red-800 border-t-white"></span>
+					<!-- Progress info on the left, action column on the right (stacks on mobile).
+					     Pushing the actions into a narrow column gave us room below for a secondary
+					     telemetry strip in PrintProgress (Started / Avg layer / lines/s). -->
+					<div class="flex flex-col sm:flex-row sm:items-center gap-4">
+						<div class="flex-1 min-w-0">
+							<PrintProgress />
+						</div>
+						<div class="flex flex-row sm:flex-col gap-2 shrink-0 sm:w-36">
+							{#if printing}
+								<button
+									class="btn-secondary flex-1 sm:flex-none inline-flex items-center justify-center gap-2 py-2.5"
+									onclick={pausePrint}
+									disabled={!!loading}
+								>
+									{#if loading === 'pause'}
+										<span class="animate-spin rounded-full h-4 w-4 border-2 border-surface-400 border-t-white"></span>
+									{:else}
+										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+										</svg>
+									{/if}
+									Pause
+								</button>
 							{:else}
-								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-								</svg>
+								<button
+									class="btn-success flex-1 sm:flex-none inline-flex items-center justify-center gap-2 py-2.5"
+									onclick={resumePrint}
+									disabled={!!loading}
+								>
+									{#if loading === 'resume'}
+										<span class="animate-spin rounded-full h-4 w-4 border-2 border-emerald-800 border-t-white"></span>
+									{:else}
+										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+										</svg>
+									{/if}
+									Resume
+								</button>
 							{/if}
-							Cancel
-						</button>
+							<button
+								class="btn-danger flex-1 sm:flex-none inline-flex items-center justify-center gap-2 py-2.5"
+								onclick={cancelPrint}
+								disabled={!!loading}
+							>
+								{#if loading === 'cancel'}
+									<span class="animate-spin rounded-full h-4 w-4 border-2 border-red-800 border-t-white"></span>
+								{:else}
+									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+									</svg>
+								{/if}
+								Cancel
+							</button>
+						</div>
 					</div>
 				{/if}
 			</div>
