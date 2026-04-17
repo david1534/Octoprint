@@ -166,6 +166,9 @@ export const api = {
 	generateApiKey: () => post<any>('/settings/api-key/generate'),
 	revokeApiKey: () => request<any>('/settings/api-key', { method: 'DELETE' }),
 
+	// Push notifications (ntfy)
+	testNotification: () => post<any>('/notifications/test'),
+
 	// System power controls
 	restartService: () => post<any>('/system/restart-service'),
 	restartOS: () => post<any>('/system/restart-os'),

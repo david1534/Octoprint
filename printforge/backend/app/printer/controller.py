@@ -22,6 +22,7 @@ from ..serial.mock_connection import MockSerialConnection
 from ..serial.protocol import CommandResult, MarlinProtocol
 from ..serial.safety import SafetyAction, SafetyAlert, SafetyMonitor
 from ..serial.temperature import TemperatureMonitor, TemperatureSnapshot
+from ..services import notifier
 from ..services.camera import CameraService
 from ..services.timelapse import TimelapseRecorder
 from .error_log import ErrorLog
@@ -673,6 +674,21 @@ M117 Print Complete"""
                 # Stash ref so we can remove it later
                 self._timelapse_layer_cb = _on_layer
 
+        # Notification milestone callback — fires ntfy push on user-configured
+        # layer boundaries. The sender reports the NEW current layer, so the
+        # layer that just finished is (layer - 1).
+        def _on_layer_for_notifier(layer: int) -> None:
+            just_completed = layer - 1
+            if just_completed < 1:
+                return
+            fname = filepath.name
+            total = self._sender.total_layers if self._sender else 0
+            asyncio.create_task(
+                notifier.notify_layer_completed(just_completed, fname, total)
+            )
+
+        self._sender.add_layer_callback(_on_layer_for_notifier)
+
         # Pass start gcode to sender — it runs asynchronously in the print
         # task so this method returns immediately without blocking the API.
         await self._sender.start_print(filepath, start_gcode=start_gcode)
@@ -744,6 +760,11 @@ M117 Print Complete"""
 
             await self._sender.cancel()
             self._sender.reset()
+            # Notify before clearing current_file so we have the filename
+            try:
+                await notifier.notify_print_cancelled(self.state.current_file or "Unknown")
+            except Exception:
+                logger.exception("Error sending print-cancelled notification")
             self.state.status = PrinterStatus.IDLE
             self.state.current_file = None
             self._notify_state_change()
@@ -899,6 +920,13 @@ M117 Print Complete"""
         except Exception:
             logger.exception("Error recording print completion in history")
 
+        # 5. Fire ntfy push notification (best-effort, never raises)
+        try:
+            fname = self.state.current_file or "Unknown"
+            await notifier.notify_print_complete(fname, elapsed_seconds)
+        except Exception:
+            logger.exception("Error sending print-complete notification")
+
         self._notify_terminal("[SYSTEM] Print complete", "system")
 
     async def _safety_loop(self) -> None:
@@ -1023,6 +1051,13 @@ M117 Print Complete"""
                             )
                         self.state.status = PrinterStatus.ERROR
                         self.state.error_message = error_msg
+
+                        # Fire ntfy push on print failure (best-effort)
+                        try:
+                            fname = self.state.current_file or "Unknown"
+                            await notifier.notify_print_failed(fname, error_msg)
+                        except Exception:
+                            logger.exception("Error sending print-failed notification")
 
                     # Clear print state in both cases
                     self.state.current_file = None

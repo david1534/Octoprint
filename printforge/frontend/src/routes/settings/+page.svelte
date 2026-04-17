@@ -70,6 +70,14 @@ M117 Print Complete`;
 	let lcdProgressEnabled = $state(false);
 	let lcdProgressInterval = $state(50);
 
+	// ntfy push notification settings
+	let ntfyEnabled = $state(false);
+	let ntfyTopic = $state('');
+	let ntfyServer = $state('https://ntfy.sh');
+	let ntfyMilestones = $state('1,3');
+	let ntfyShowAdvanced = $state(false);
+	let ntfyTestLoading = $state(false);
+
 	// Filament cost settings
 	let filamentCostPerKg = $state(18);
 	let filamentDensity = $state(1.24);
@@ -200,6 +208,10 @@ M117 Print Complete`;
 			if (serverSettings.end_gcode !== undefined) endGcode = serverSettings.end_gcode;
 			lcdProgressEnabled = serverSettings.lcd_progress_enabled === 'true';
 			lcdProgressInterval = parseInt(serverSettings.lcd_progress_interval || '50');
+			ntfyEnabled = serverSettings.ntfy_enabled === 'true';
+			ntfyTopic = serverSettings.ntfy_topic || '';
+			ntfyServer = serverSettings.ntfy_server || 'https://ntfy.sh';
+			ntfyMilestones = serverSettings.ntfy_layer_milestones || '1,3';
 			filamentCostPerKg = parseFloat(serverSettings.filament_cost_per_kg || '18');
 			filamentDensity = parseFloat(serverSettings.filament_density || '1.24');
 			lowFilamentThreshold = parseFloat(serverSettings.low_filament_threshold_g || '50');
@@ -346,6 +358,55 @@ M117 Print Complete`;
 				icon: '/favicon.png'
 			});
 		}
+	}
+
+	function randomNtfyTopic(): string {
+		// Generate a ~80-bit random topic so it's effectively unguessable.
+		// ntfy topics ARE the auth — anyone who knows the topic can publish/read,
+		// so a long random string is the right default for a private channel.
+		const bytes = new Uint8Array(10);
+		crypto.getRandomValues(bytes);
+		return 'printforge-' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+	}
+
+	function generateNtfyTopic() {
+		ntfyTopic = randomNtfyTopic();
+		saveSetting('ntfy_topic', ntfyTopic);
+		toast.info('Topic generated — subscribe to it in the ntfy app');
+	}
+
+	async function toggleNtfy() {
+		if (!ntfyEnabled && !ntfyTopic.trim()) {
+			// Auto-generate a topic if enabling without one set
+			ntfyTopic = randomNtfyTopic();
+			await saveSetting('ntfy_topic', ntfyTopic);
+		}
+		ntfyEnabled = !ntfyEnabled;
+		await saveSetting('ntfy_enabled', String(ntfyEnabled));
+		toast.info(ntfyEnabled ? 'Phone notifications enabled' : 'Phone notifications disabled');
+	}
+
+	async function testNtfy() {
+		ntfyTestLoading = true;
+		try {
+			await api.testNotification();
+			toast.success(`Test sent to topic "${ntfyTopic}" — check your phone`);
+		} catch (e: any) {
+			toast.error('Test failed: ' + (e.message || 'Unknown error'));
+		} finally {
+			ntfyTestLoading = false;
+		}
+	}
+
+	function copyNtfyTopic() {
+		navigator.clipboard.writeText(ntfyTopic);
+		toast.success('Topic copied to clipboard');
+	}
+
+	function copyNtfyUrl() {
+		const url = `${ntfyServer.replace(/\/$/, '')}/${ntfyTopic}`;
+		navigator.clipboard.writeText(url);
+		toast.success('Subscribe URL copied');
 	}
 
 	function saveJogDistance() {
@@ -1186,9 +1247,136 @@ M117 Print Complete`;
 
 		<!-- Notifications Tab -->
 		{#if activeTab === 'notifications'}
+			<!-- Phone (ntfy) -->
+			<div class="card">
+				<div class="flex items-center justify-between mb-2">
+					<h2 class="text-lg font-semibold">Phone Notifications (ntfy)</h2>
+					<a href="https://ntfy.sh" target="_blank" rel="noopener" class="text-xs text-accent hover:underline">What's ntfy?</a>
+				</div>
+				<p class="text-sm text-surface-400 mb-4">
+					Get push notifications on your phone for layer milestones, print completion, and failures — even when the PrintForge app is closed.
+					Install the free <span class="text-surface-200">ntfy</span> app from the Play/App Store and subscribe to your topic below.
+				</p>
+
+				<!-- Enable toggle -->
+				<div class="flex items-center justify-between mb-4 pb-4 border-b border-surface-700/50">
+					<div class="flex items-center gap-3">
+						<button
+							class="relative w-11 h-6 rounded-full transition-colors duration-200 {ntfyEnabled ? 'bg-accent' : 'bg-surface-700'}
+								   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+							onclick={toggleNtfy}
+						>
+							<div class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 {ntfyEnabled ? 'translate-x-5' : ''}"></div>
+						</button>
+						<span class="text-sm text-surface-300">Enable phone notifications</span>
+					</div>
+					<button
+						class="btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
+						onclick={testNtfy}
+						disabled={!ntfyEnabled || !ntfyTopic.trim() || ntfyTestLoading}
+					>
+						{#if ntfyTestLoading}
+							<span class="animate-spin rounded-full h-3 w-3 border-2 border-surface-500 border-t-white"></span>
+						{/if}
+						{ntfyTestLoading ? 'Sending...' : 'Send test'}
+					</button>
+				</div>
+
+				<!-- Topic -->
+				<div class="mb-4">
+					<label class="block text-sm text-surface-400 mb-1">
+						Topic
+						<span class="text-xs text-surface-500">(this is your private channel — keep it secret)</span>
+					</label>
+					<div class="flex items-stretch gap-2">
+						<input
+							type="text"
+							class="input flex-1 font-mono text-sm"
+							placeholder="e.g. printforge-a1b2c3..."
+							bind:value={ntfyTopic}
+							onchange={() => saveSetting('ntfy_topic', ntfyTopic.trim())}
+						/>
+						<button
+							class="btn-secondary text-xs px-3 shrink-0"
+							onclick={generateNtfyTopic}
+							title="Generate a random, hard-to-guess topic"
+						>
+							Generate
+						</button>
+						{#if ntfyTopic.trim()}
+							<button
+								class="btn-secondary text-xs px-3 shrink-0"
+								onclick={copyNtfyTopic}
+								title="Copy topic to clipboard"
+							>
+								Copy
+							</button>
+						{/if}
+					</div>
+					{#if ntfyTopic.trim()}
+						<div class="mt-2 flex items-center gap-2 text-xs text-surface-500">
+							<span>Subscribe at:</span>
+							<code class="text-accent/80">{ntfyServer.replace(/\/$/, '')}/{ntfyTopic}</code>
+							<button class="text-surface-500 hover:text-surface-300 transition-colors" onclick={copyNtfyUrl} title="Copy subscribe URL">
+								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+								</svg>
+							</button>
+						</div>
+					{/if}
+				</div>
+
+				<!-- Layer milestones -->
+				<div class="mb-4">
+					<label class="block text-sm text-surface-400 mb-1">
+						Notify after layers
+						<span class="text-xs text-surface-500">(comma-separated layer numbers)</span>
+					</label>
+					<input
+						type="text"
+						class="input w-full font-mono text-sm"
+						placeholder="1, 3"
+						bind:value={ntfyMilestones}
+						onchange={() => saveSetting('ntfy_layer_milestones', ntfyMilestones.replace(/\s/g, ''))}
+					/>
+					<p class="text-xs text-surface-500 mt-1">
+						Defaults to <code class="text-surface-300">1, 3</code> — notifies when layers 1 and 3 complete. Print completion always notifies regardless.
+					</p>
+				</div>
+
+				<!-- Advanced (self-hosted ntfy server) -->
+				<div>
+					<button
+						class="text-xs text-surface-500 hover:text-surface-300 transition-colors inline-flex items-center gap-1"
+						onclick={() => ntfyShowAdvanced = !ntfyShowAdvanced}
+					>
+						<svg class="w-3 h-3 transition-transform {ntfyShowAdvanced ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+						</svg>
+						Advanced
+					</button>
+					{#if ntfyShowAdvanced}
+						<div class="mt-2">
+							<label class="block text-xs text-surface-400 mb-1">ntfy Server</label>
+							<input
+								type="text"
+								class="input w-full font-mono text-sm"
+								placeholder="https://ntfy.sh"
+								bind:value={ntfyServer}
+								onchange={() => saveSetting('ntfy_server', ntfyServer.trim())}
+							/>
+							<p class="text-xs text-surface-500 mt-1">
+								Use the public <code class="text-surface-300">ntfy.sh</code> (default) or point to your self-hosted ntfy instance.
+							</p>
+						</div>
+					{/if}
+				</div>
+			</div>
+
+			<!-- Browser notifications -->
 			<div class="card">
 				<h2 class="text-lg font-semibold mb-4">Browser Notifications</h2>
-				<p class="text-sm text-surface-400 mb-4">Get notified when a print completes, even if the tab is in the background.</p>
+				<p class="text-sm text-surface-400 mb-4">Laptop-only: fires a desktop toast when a print completes. Requires this tab to stay open.</p>
 
 				<div class="flex items-center justify-between">
 					<div class="flex items-center gap-3">

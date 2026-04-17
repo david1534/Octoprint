@@ -24,6 +24,7 @@ from .api import (
     filament,
     files,
     history,
+    notifications,
     octoprint_compat,
     printer,
     settings as settings_api,
@@ -168,6 +169,7 @@ app.include_router(timelapse.router)
 app.include_router(settings_api.router)
 app.include_router(filament.router)
 app.include_router(errors_api.router)
+app.include_router(notifications.router)
 
 
 # ── Camera endpoints ─────────────────────────────────────────────
