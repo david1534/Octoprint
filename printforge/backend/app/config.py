@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     camera_url: str = "http://localhost:8080"
 
     # Safety limits
-    max_hotend_temp: float = 260.0
+    max_hotend_temp: float = 290.0
     max_bed_temp: float = 110.0
 
     # Logging

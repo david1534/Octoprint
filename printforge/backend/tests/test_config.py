@@ -20,7 +20,7 @@ class TestSettingsDefaults:
 
     def test_safety_limits(self):
         s = Settings()
-        assert s.max_hotend_temp == 260.0
+        assert s.max_hotend_temp == 290.0
         assert s.max_bed_temp == 110.0
 
     def test_camera_default(self):
