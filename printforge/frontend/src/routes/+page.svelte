@@ -313,94 +313,66 @@
 				<!-- Camera feed — primary reason for this layout -->
 				<CameraFeed />
 
-				<!-- Live metrics row — immediate readings above the chart. Tiles jump to matching control tab. -->
-				<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-					<TempGauge
-						label="Hotend"
-						actual={state.hotend.actual}
-						target={state.hotend.target}
-						color="#f97316"
-						title="Adjust hotend temperature"
-						onclick={() => focusControlTab('temperature')}
-					/>
-					<TempGauge
-						label="Bed"
-						actual={state.bed.actual}
-						target={state.bed.target}
-						maxTemp={120}
-						color="#3b82f6"
-						title="Adjust bed temperature"
-						onclick={() => focusControlTab('temperature')}
-					/>
-					<button
-						type="button"
-						class="card flex items-center gap-3 text-left w-full transition-colors
-						       hover:bg-surface-800/60 hover:border-surface-600
-						       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-						title="Adjust fan speed"
-						onclick={() => focusControlTab('extrusion')}
-					>
-						<div class="w-8 h-8 bg-surface-800 rounded-lg flex items-center justify-center shrink-0">
-							<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-							</svg>
-						</div>
-						<div>
-							<span class="text-xs text-surface-500">Fan</span>
-							<p class="text-sm font-medium tabular-nums text-surface-200">{Math.round(state.fan_speed / 2.55)}%</p>
-						</div>
-					</button>
-					<button
-						type="button"
-						class="card flex items-center gap-3 text-left w-full transition-colors
-						       hover:bg-surface-800/60 hover:border-surface-600
-						       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-						title="Jog and home"
-						onclick={() => focusControlTab('movement')}
-					>
-						<div class="w-8 h-8 bg-surface-800 rounded-lg flex items-center justify-center shrink-0">
-							<svg class="w-4 h-4 text-surface-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-							</svg>
-						</div>
-						<div>
-							<span class="text-xs text-surface-500">Position</span>
-							<p class="text-xs font-medium tabular-nums text-surface-200">
-								X:{state.position.x.toFixed(1)} Y:{state.position.y.toFixed(1)} Z:{state.position.z.toFixed(1)}
-							</p>
-						</div>
-					</button>
-				</div>
+				<!-- Live metrics: Hotend over Bed in a narrow left column, spool + temperature history on the right.
+				     Fan % and position have moved to the top status bar; removing those tiles here gives the
+				     chart a wider canvas. Stacks on small screens so nothing gets cramped. -->
+				<div class="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-3 items-stretch">
+					<!-- Left: Hotend on top, Bed underneath. -->
+					<div class="flex flex-col gap-3">
+						<TempGauge
+							label="Hotend"
+							actual={state.hotend.actual}
+							target={state.hotend.target}
+							color="#f97316"
+							title="Adjust hotend temperature"
+							onclick={() => focusControlTab('temperature')}
+						/>
+						<TempGauge
+							label="Bed"
+							actual={state.bed.actual}
+							target={state.bed.target}
+							maxTemp={120}
+							color="#3b82f6"
+							title="Adjust bed temperature"
+							onclick={() => focusControlTab('temperature')}
+						/>
+					</div>
 
-				<!-- Active Spool -->
-				{#if activeSpool}
-					{@const remaining = Math.max(0, activeSpool.total_weight_g - activeSpool.used_weight_g)}
-					{@const pct = activeSpool.total_weight_g > 0 ? (remaining / activeSpool.total_weight_g) * 100 : 0}
-					<div class="card flex items-center gap-3 py-3">
-						<div class="w-8 h-8 rounded-full shrink-0 border border-surface-600" style="background-color: {activeSpool.color}"></div>
-						<div class="flex-1 min-w-0">
-							<div class="flex items-center gap-2">
-								<span class="text-xs text-surface-500">Active Spool</span>
-								<span class="text-xs px-1.5 py-0.5 rounded bg-surface-700 text-surface-400">{activeSpool.material}</span>
+					<!-- Right: spool context + temperature history, stacked. -->
+					<div class="flex flex-col gap-3">
+						{#if activeSpool}
+							{@const remaining = Math.max(0, activeSpool.total_weight_g - activeSpool.used_weight_g)}
+							{@const pct = activeSpool.total_weight_g > 0 ? (remaining / activeSpool.total_weight_g) * 100 : 0}
+							<div class="card flex items-center gap-3 py-3">
+								<div class="w-8 h-8 rounded-full shrink-0 border border-surface-600" style="background-color: {activeSpool.color}"></div>
+								<div class="flex-1 min-w-0">
+									<div class="flex items-center gap-2">
+										<span class="text-xs text-surface-500">Active Spool</span>
+										<span class="text-xs px-1.5 py-0.5 rounded bg-surface-700 text-surface-400">{activeSpool.material}</span>
+									</div>
+									<p class="text-sm font-medium text-surface-200 truncate">{activeSpool.name}</p>
+								</div>
+								<div class="text-right shrink-0">
+									<p class="text-sm font-medium tabular-nums {pct > 20 ? 'text-surface-200' : pct > 5 ? 'text-amber-400' : 'text-red-400'}">
+										{remaining.toFixed(0)}g
+									</p>
+									<div class="w-16 h-1.5 bg-surface-700 rounded-full mt-1 overflow-hidden">
+										<div
+											class="h-full rounded-full {pct > 20 ? 'bg-accent' : pct > 5 ? 'bg-amber-500' : 'bg-red-500'}"
+											style="width: {Math.min(100, pct)}%"
+										></div>
+									</div>
+								</div>
 							</div>
-							<p class="text-sm font-medium text-surface-200 truncate">{activeSpool.name}</p>
-						</div>
-						<div class="text-right shrink-0">
-							<p class="text-sm font-medium tabular-nums {pct > 20 ? 'text-surface-200' : pct > 5 ? 'text-amber-400' : 'text-red-400'}">
-								{remaining.toFixed(0)}g
-							</p>
-							<div class="w-16 h-1.5 bg-surface-700 rounded-full mt-1 overflow-hidden">
-								<div
-									class="h-full rounded-full {pct > 20 ? 'bg-accent' : pct > 5 ? 'bg-amber-500' : 'bg-red-500'}"
-									style="width: {Math.min(100, pct)}%"
-								></div>
-							</div>
+						{/if}
+
+						<div class="flex-1 min-h-0">
+							<TempChart />
 						</div>
 					</div>
-				{/if}
+				</div>
 
-				<!-- Low Filament Warnings -->
+				<!-- Low Filament Warnings — full-width alert below the metrics subgrid -->
 				{#if filamentWarnings.length > 0}
 					<div class="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
 						<div class="flex items-start gap-2">
@@ -423,9 +395,6 @@
 						</div>
 					</div>
 				{/if}
-
-				<!-- Temperature history chart — below immediate readings -->
-				<TempChart />
 			</div>
 
 			<!-- RIGHT: controls column — sticky on desktop so controls stay in view while scrolling -->

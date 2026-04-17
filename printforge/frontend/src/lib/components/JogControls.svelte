@@ -4,17 +4,13 @@
 	import { toast } from '../stores/toast';
 
 	let stepSize = $state(10);
-	let feedrate = $state(3000);
 	let loading = $state('');
 	let isConnected = $derived($printerState.status !== 'disconnected');
 	let pos = $derived($printerState.position);
 
 	const steps = [0.1, 1, 10, 100];
-	const feedrates = [
-		{ label: 'Slow', value: 1000 },
-		{ label: 'Normal', value: 3000 },
-		{ label: 'Fast', value: 6000 }
-	];
+	// Fixed at Normal; speed selector removed from UI to keep the panel compact.
+	const feedrate = 3000;
 
 	async function jog(axis: string, direction: number) {
 		if (loading) return;
@@ -80,82 +76,97 @@
 		</div>
 	</div>
 
-	<!-- Feedrate selector -->
+	<!-- Home axis buttons (moved up from bottom; occupies the slot the Speed selector used to) -->
 	<div class="mb-4">
-		<span class="text-xs text-surface-500 mb-1 block">Speed</span>
+		<span class="text-xs text-surface-500 mb-1 block">Home Axis</span>
 		<div class="flex gap-1">
-			{#each feedrates as fr}
-				<button
-					class="flex-1 py-2 min-h-[36px] rounded-lg text-xs font-medium transition-colors
-						   {feedrate === fr.value ? 'bg-surface-700 text-surface-100' : 'bg-surface-800/50 text-surface-500 hover:bg-surface-800 hover:text-surface-300'}
-						   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-					onclick={() => feedrate = fr.value}
-				>
-					{fr.label}
-				</button>
-			{/each}
+			<button
+				class="btn-secondary flex-1 text-xs py-2 min-h-[36px]
+					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+				onclick={() => homeAxis('X')}
+				disabled={!isConnected || !!loading}
+			>
+				Home X
+			</button>
+			<button
+				class="btn-secondary flex-1 text-xs py-2 min-h-[36px]
+					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+				onclick={() => homeAxis('Y')}
+				disabled={!isConnected || !!loading}
+			>
+				Home Y
+			</button>
+			<button
+				class="btn-secondary flex-1 text-xs py-2 min-h-[36px]
+					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+				onclick={() => homeAxis('Z')}
+				disabled={!isConnected || !!loading}
+			>
+				Home Z
+			</button>
 		</div>
 	</div>
 
-	<!-- XY Jog Pad -->
-	<div class="grid grid-cols-3 gap-1.5 mb-3 max-w-[260px] mx-auto">
+	<!-- XY Jog Pad (compact) -->
+	<div class="grid grid-cols-3 gap-1.5 mb-3 max-w-[220px] mx-auto">
 		<div></div>
 		<button
-			class="btn-secondary py-4 min-h-[48px] text-center font-medium
+			class="btn-secondary py-3 min-h-[40px] text-center font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('Y', 1)}
 			disabled={!isConnected || !!loading}
 		>
-			<svg class="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
 			</svg>
 			<span class="text-xs mt-0.5 block">Y+</span>
 		</button>
 		<div></div>
 		<button
-			class="btn-secondary py-4 min-h-[48px] text-center font-medium
+			class="btn-secondary py-3 min-h-[40px] text-center font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('X', -1)}
 			disabled={!isConnected || !!loading}
 		>
-			<svg class="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
 			</svg>
 			<span class="text-xs mt-0.5 block">X-</span>
 		</button>
 		<button
-			class="btn-secondary py-4 min-h-[48px] text-center text-sm inline-flex items-center justify-center
+			class="btn-secondary py-3 min-h-[40px] text-center text-sm inline-flex items-center justify-center
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={homeAll}
 			disabled={!isConnected || !!loading}
+			title="Home all axes"
 		>
 			{#if loading === 'home'}
 				<span class="animate-spin rounded-full h-4 w-4 border-2 border-surface-400 border-t-white"></span>
 			{:else}
-				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
 				</svg>
 			{/if}
 		</button>
 		<button
-			class="btn-secondary py-4 min-h-[48px] text-center font-medium
+			class="btn-secondary py-3 min-h-[40px] text-center font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('X', 1)}
 			disabled={!isConnected || !!loading}
 		>
-			<svg class="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
 			</svg>
 			<span class="text-xs mt-0.5 block">X+</span>
 		</button>
 		<div></div>
 		<button
-			class="btn-secondary py-4 min-h-[48px] text-center font-medium
+			class="btn-secondary py-3 min-h-[40px] text-center font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('Y', -1)}
 			disabled={!isConnected || !!loading}
 		>
-			<svg class="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 			</svg>
 			<span class="text-xs mt-0.5 block">Y-</span>
@@ -163,10 +174,10 @@
 		<div></div>
 	</div>
 
-	<!-- Z controls -->
-	<div class="flex gap-2 justify-center mb-4">
+	<!-- Z controls (compact) -->
+	<div class="flex gap-2 justify-center max-w-[220px] mx-auto">
 		<button
-			class="btn-secondary px-6 py-3 min-h-[48px] inline-flex items-center gap-1.5 font-medium
+			class="btn-secondary flex-1 px-3 py-2 min-h-[40px] inline-flex items-center justify-center gap-1.5 font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('Z', 1)}
 			disabled={!isConnected || !!loading}
@@ -177,7 +188,7 @@
 			Z+
 		</button>
 		<button
-			class="btn-secondary px-6 py-3 min-h-[48px] inline-flex items-center gap-1.5 font-medium
+			class="btn-secondary flex-1 px-3 py-2 min-h-[40px] inline-flex items-center justify-center gap-1.5 font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('Z', -1)}
 			disabled={!isConnected || !!loading}
@@ -186,34 +197,6 @@
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 			</svg>
 			Z-
-		</button>
-	</div>
-
-	<!-- Home axis buttons -->
-	<div class="flex gap-1">
-		<button
-			class="btn-secondary flex-1 text-xs py-2.5 min-h-[40px]
-				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-			onclick={() => homeAxis('X')}
-			disabled={!isConnected || !!loading}
-		>
-			Home X
-		</button>
-		<button
-			class="btn-secondary flex-1 text-xs py-2.5 min-h-[40px]
-				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-			onclick={() => homeAxis('Y')}
-			disabled={!isConnected || !!loading}
-		>
-			Home Y
-		</button>
-		<button
-			class="btn-secondary flex-1 text-xs py-2.5 min-h-[40px]
-				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-			onclick={() => homeAxis('Z')}
-			disabled={!isConnected || !!loading}
-		>
-			Home Z
 		</button>
 	</div>
 </div>

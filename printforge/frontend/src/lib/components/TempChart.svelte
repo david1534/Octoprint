@@ -167,9 +167,11 @@
 	});
 </script>
 
-<div class="card h-full">
-	<h3 class="text-sm font-medium text-surface-400 mb-2">Temperature</h3>
-	<div class="h-32">
+<div class="card h-full flex flex-col">
+	<h3 class="text-sm font-medium text-surface-400 mb-2 shrink-0">Temperature</h3>
+	<!-- Canvas fills the remaining card height so the chart scales with its container
+	     (previously hardcoded h-32 left empty space when the card stretched alongside the 2×2 tile grid). -->
+	<div class="flex-1 min-h-[160px] relative">
 		<canvas bind:this={canvas}></canvas>
 	</div>
 </div>
