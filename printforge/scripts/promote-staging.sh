@@ -31,9 +31,11 @@ if ! ssh -o ConnectTimeout=5 "$TARGET" "echo OK" > /dev/null 2>&1; then
     exit 1
 fi
 
-# Print-in-progress guard
-STATUS_JSON=$(curl -s --max-time 5 "http://$PI_HOST:8000/api/printer/status" || echo '{}')
-if echo "$STATUS_JSON" | grep -q '"status"[[:space:]]*:[[:space:]]*"printing"'; then
+# Print-in-progress guard. Uses the public /api/system/health (which
+# includes printerStatus) so this works even when production has API-key
+# auth turned on — /api/printer/state would 401.
+STATUS_JSON=$(curl -s --max-time 5 "http://$PI_HOST:8000/api/system/health" || echo '{}')
+if echo "$STATUS_JSON" | grep -q '"printerStatus"[[:space:]]*:[[:space:]]*"printing"'; then
     if [ "$FORCE" != "--force" ]; then
         echo "✗ A print is in progress on production. Aborting."
         echo "  Wait for it to finish, or re-run with --force to proceed anyway."

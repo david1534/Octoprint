@@ -67,7 +67,25 @@ def _read_cpu_usage() -> float:
 
 @router.get("/health")
 async def health():
-    """System health check."""
+    """System health check.
+
+    Public (no API key required). Includes printerStatus so the staging
+    instance can check whether production is mid-print before promoting,
+    without needing production's API key.
+    """
+    # Read printer status from the controller singleton. Kept defensive
+    # because health is called during startup before the controller wires
+    # everything up.
+    printer_status = "unknown"
+    try:
+        from ..api import printer as printer_api
+
+        ctrl = getattr(printer_api, "_controller", None)
+        if ctrl is not None:
+            printer_status = ctrl.state.status.value
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "uptime": round(time.time() - _start_time),
@@ -78,6 +96,7 @@ async def health():
         "python": platform.python_version(),
         "environment": settings.environment,
         "mockSerial": settings.mock_serial,
+        "printerStatus": printer_status,
     }
 
 
@@ -221,14 +240,16 @@ async def promote_staging_to_production(force: bool = False):
 
     log: list[str] = []
 
-    # Check production's printer state
+    # Check production's printer state via the public health endpoint.
+    # Using /api/printer/state would 401 when production has API-key auth
+    # configured — that used to force every promote to require --force.
     prod_status = "unknown"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get("http://127.0.0.1:8000/api/printer/state")
+            r = await client.get("http://127.0.0.1:8000/api/system/health")
             if r.status_code == 200:
                 data = r.json()
-                prod_status = str(data.get("status", "unknown"))
+                prod_status = str(data.get("printerStatus", "unknown"))
             else:
                 prod_status = f"http_{r.status_code}"
     except Exception as e:
