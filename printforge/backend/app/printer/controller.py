@@ -33,6 +33,26 @@ logger = logging.getLogger(__name__)
 # Pre-compiled regex for position parsing (called on every M114 response)
 _POSITION_RE = re.compile(r"X:([\d.-]+)\s*Y:([\d.-]+)\s*Z:([\d.-]+)")
 
+# Patterns that mean "Marlin is blocked waiting for physical input at the
+# LCD and has stopped processing serial commands." When we see one of these,
+# set state.attention so the UI can tell the user to press the knob. Match
+# in priority order: filament_runout > prompt > user_input (generic), so
+# later signals don't clobber a more specific earlier one.
+_ATTN_FILAMENT_RE = re.compile(
+    r"(action:out_of_filament|action:filament_runout|action:filament_change)",
+    re.IGNORECASE,
+)
+_ATTN_PROMPT_BEGIN_RE = re.compile(r"action:prompt_begin\s+(.+)", re.IGNORECASE)
+# "paused for user" (M0/M1 click-to-continue, manual filament swap) and
+# "paused for input" (M108-style input wait) both mean "stuck at LCD."
+_ATTN_USER_INPUT_RE = re.compile(
+    r"(echo:)?busy:\s*paused\s+for\s+(user|input)",
+    re.IGNORECASE,
+)
+# Signals that the printer is no longer blocked.
+_ATTN_RESUMED_RE = re.compile(r"action:(resumed|prompt_end)", re.IGNORECASE)
+_ATTN_PROCESSING_RE = re.compile(r"busy:\s*processing", re.IGNORECASE)
+
 
 class PrinterCommandError(RuntimeError):
     """Raised when a printer command fails (timeout, error response, no ack).
@@ -161,6 +181,74 @@ class PrinterController:
                 self._handle_safety_alert(alert)
             self._notify_state_change()
 
+    # Priority ranking so a more specific attention signal won't be
+    # overwritten by a generic one arriving later (e.g. filament_runout
+    # then a generic "busy: paused for user").
+    _ATTENTION_PRIORITY = {"user_input": 1, "prompt": 2, "filament_runout": 3}
+
+    def _set_attention(self, kind: str, message: str) -> None:
+        """Record that the printer is waiting for physical LCD input.
+
+        No-ops if we're already showing a higher-priority signal or the
+        same signal is already active (avoids spamming WebSocket updates
+        as Marlin repeats `echo:busy: paused for user` every ~2s).
+        """
+        current = self.state.attention
+        if current:
+            if current.get("type") == kind:
+                return
+            cur_prio = self._ATTENTION_PRIORITY.get(current.get("type", ""), 0)
+            new_prio = self._ATTENTION_PRIORITY.get(kind, 0)
+            if new_prio < cur_prio:
+                return
+        self.state.attention = {
+            "type": kind,
+            "message": message,
+            "since": _time.time(),
+        }
+        logger.warning("Printer needs attention: %s — %s", kind, message)
+        self._notify_state_change()
+
+    def _clear_attention(self) -> None:
+        if self.state.attention is not None:
+            logger.info("Attention cleared (printer resumed processing)")
+            self.state.attention = None
+            self._notify_state_change()
+
+    def _check_attention_signal(self, line: str) -> None:
+        """Map a received serial line to attention set/clear transitions."""
+        if _ATTN_FILAMENT_RE.search(line):
+            self._set_attention(
+                "filament_runout",
+                "Filament runout detected. Load new filament and press the "
+                "knob on the printer to resume.",
+            )
+            return
+        m = _ATTN_PROMPT_BEGIN_RE.search(line)
+        if m:
+            msg = m.group(1).strip() or "Printer is waiting for input."
+            self._set_attention(
+                "prompt",
+                f"Printer prompt: {msg}. Press the knob on the printer to continue.",
+            )
+            return
+        if _ATTN_USER_INPUT_RE.search(line):
+            self._set_attention(
+                "user_input",
+                "Printer is waiting for input at the LCD. Press the knob on "
+                "the printer to continue.",
+            )
+            return
+        # Clear signals: explicit resumption, busy-processing (Marlin back to
+        # executing commands), or any "ok" response (Marlin only acks commands
+        # when not blocked — M155 auto-reports don't include "ok").
+        if self.state.attention is not None and (
+            _ATTN_RESUMED_RE.search(line)
+            or _ATTN_PROCESSING_RE.search(line)
+            or line.startswith("ok")
+        ):
+            self._clear_attention()
+
     def _on_terminal_line(self, line: str, direction: str) -> None:
         """Called for every terminal line (sent or received)."""
         # Record serial activity for both send and recv — sending proves the
@@ -168,6 +256,12 @@ class PrinterController:
         # printer hasn't responded yet (G28, G29, M109, M190).
         self._safety.record_serial_activity()
         self._notify_terminal(line, direction)
+
+        # Watch received lines for LCD-modal / runout signals. Do this before
+        # the error-log branch below so runout won't get logged as a generic
+        # firmware error.
+        if direction == "recv":
+            self._check_attention_signal(line)
 
         # Capture firmware error lines into the error log
         if direction == "recv" and line.startswith("Error:"):

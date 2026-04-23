@@ -69,6 +69,15 @@ class PrinterState:
     # Bed mesh data (populated by G29 / M420 V response parsing)
     bed_mesh: Optional[dict] = None
 
+    # Printer is blocked waiting for physical input at the LCD (filament
+    # runout prompt, M600 filament change, M0/M1 click-to-continue, newer
+    # Marlin prompt dialogs). While set, Marlin stops ACKing serial
+    # commands — surface this to the UI so users press the knob instead
+    # of assuming the backend is broken.
+    #
+    # Shape: {"type": "user_input"|"filament_runout"|"prompt", "message": str, "since": float} | None
+    attention: Optional[dict] = None
+
     def to_dict(self) -> dict:
         """Serialize state for WebSocket transmission."""
         return {
@@ -107,6 +116,7 @@ class PrinterState:
                 "assembling": self.timelapse_assembling,
             },
             "bed_mesh": self.bed_mesh,
+            "attention": self.attention,
         }
 
     def update_temperatures(

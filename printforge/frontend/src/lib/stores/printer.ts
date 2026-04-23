@@ -42,6 +42,11 @@ export interface PrinterState {
 		active: boolean;
 		timestamp: number;
 	} | null;
+	attention: {
+		type: 'user_input' | 'filament_runout' | 'prompt';
+		message: string;
+		since: number;
+	} | null;
 }
 
 const defaultState: PrinterState = {
@@ -69,7 +74,8 @@ const defaultState: PrinterState = {
 		frameCount: 0,
 		assembling: false,
 	},
-	bed_mesh: null
+	bed_mesh: null,
+	attention: null
 };
 
 export const printerState = writable<PrinterState>({ ...defaultState });

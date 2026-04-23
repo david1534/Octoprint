@@ -210,6 +210,27 @@
 			</div>
 		{/if}
 
+		<!-- Attention banner — printer is blocked on an LCD modal (filament
+		     runout, M600 filament change, M0/M1 click-to-continue, prompt
+		     dialogs). While this shows, Marlin is ignoring serial commands
+		     until someone presses the knob on the physical printer. -->
+		{#if state.attention}
+			<div class="bg-red-500/15 border-b-2 border-red-500/60 px-4 py-2 flex items-center justify-center gap-3 text-sm font-semibold text-red-200 shrink-0">
+				<svg class="w-5 h-5 shrink-0 animate-pulse text-red-400" fill="currentColor" viewBox="0 0 20 20">
+					<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+				</svg>
+				<span class="flex-1 text-center">
+					<span class="uppercase tracking-wide text-red-300 mr-2">
+						{state.attention.type === 'filament_runout' ? 'Filament runout' : state.attention.type === 'prompt' ? 'Printer prompt' : 'Printer needs attention'}
+					</span>
+					{state.attention.message}
+					<span class="block text-xs text-red-300/80 font-normal mt-0.5">
+						Press the knob on the printer's LCD to continue — serial commands are paused until then.
+					</span>
+				</span>
+			</div>
+		{/if}
+
 		<!-- Top bar -->
 		<header class="h-14 bg-surface-900 border-b border-surface-700 flex items-center justify-between px-4 shrink-0">
 			<div class="flex items-center gap-3 min-w-0">
