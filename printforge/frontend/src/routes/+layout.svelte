@@ -84,12 +84,29 @@
 
 	// Environment banner — shown when running on staging or in mock-serial mode
 	// so you can never mistake the test environment for the real one.
-	let envBadge = $state<{ environment: string; mockSerial: boolean } | null>(null);
+	let envBadge = $state<{ environment: string; mockSerial: boolean; version?: string } | null>(null);
 	const isNonProduction = $derived(
 		!!envBadge && (envBadge.environment !== 'production' || envBadge.mockSerial)
 	);
 	const isStaging = $derived(!!envBadge && envBadge.environment === 'staging');
 	let promoting = $state(false);
+
+	// Production's build version, looked up via staging's /api/system/peer-version
+	// (which proxies 127.0.0.1:8000 internally — no CORS/auth complication).
+	// When it matches staging's version, there's nothing to promote.
+	let peerInfo = $state<{ version: string | null; reachable: boolean } | null>(null);
+	const inSync = $derived(
+		!!envBadge?.version &&
+		!!peerInfo?.version &&
+		peerInfo.reachable &&
+		peerInfo.version === envBadge.version
+	);
+	const promoteDisabledReason = $derived.by(() => {
+		if (promoting) return 'Promoting…';
+		if (inSync) return 'Production already matches staging — nothing to promote';
+		if (peerInfo && !peerInfo.reachable) return "Can't reach production — promote will require confirmation";
+		return '';
+	});
 
 	// Build the other-environment URL on the same host (prod:8000 ↔ staging:8001),
 	// preserving the current path so "Open production" on /settings lands on /settings.
@@ -140,7 +157,18 @@
 		api.getHealth()
 			.then((h: any) => {
 				if (h && typeof h === 'object') {
-					envBadge = { environment: h.environment ?? 'production', mockSerial: !!h.mockSerial };
+					envBadge = {
+						environment: h.environment ?? 'production',
+						mockSerial: !!h.mockSerial,
+						version: h.version
+					};
+					// On staging, also look up production's version so we can
+					// tell whether there's actually something to promote.
+					if (envBadge.environment === 'staging') {
+						api.getPeerVersion()
+							.then((p) => { peerInfo = { version: p.version, reachable: p.reachable }; })
+							.catch(() => { peerInfo = { version: null, reachable: false }; });
+					}
 				}
 			})
 			.catch(() => { /* no banner */ });
@@ -201,10 +229,17 @@
 					</a>
 					<button
 						onclick={() => promoteToProduction(false)}
-						disabled={promoting}
-						class="ml-2 px-2.5 py-0.5 rounded-md bg-amber-500/30 hover:bg-amber-500/50 disabled:opacity-50 disabled:cursor-not-allowed text-amber-100 border border-amber-400/50 transition-colors normal-case tracking-normal font-medium"
+						disabled={promoting || inSync}
+						title={promoteDisabledReason}
+						class="ml-2 px-2.5 py-0.5 rounded-md bg-amber-500/30 hover:bg-amber-500/50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-amber-500/30 text-amber-100 border border-amber-400/50 transition-colors normal-case tracking-normal font-medium"
 					>
-						{promoting ? 'Promoting…' : 'Promote to production →'}
+						{#if promoting}
+							Promoting…
+						{:else if inSync}
+							✓ In sync with production
+						{:else}
+							Promote to production →
+						{/if}
 					</button>
 				{/if}
 			</div>

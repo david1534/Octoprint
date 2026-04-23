@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import platform
@@ -21,6 +22,49 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/system", tags=["system"])
 
 _start_time = time.time()
+
+
+def _compute_build_version() -> str:
+    """Content-hash of the deployed backend + frontend build.
+
+    Used by the UI to know whether staging's code differs from production's.
+    Hashed once at import; the service restarts on every deploy/promote, so
+    the value is always current. 12 hex chars is plenty for spotting a
+    difference between two environments on the same host.
+
+    Includes:
+    - all .py files under the app/ directory (content-hashed)
+    - the sorted list of relative paths under frontend/build/ (SvelteKit uses
+      content-hashed filenames, so the filename set is itself a content hash —
+      far cheaper than reading every JS chunk)
+    """
+    h = hashlib.sha256()
+    app_dir = Path(__file__).parent.parent  # .../app
+
+    for p in sorted(app_dir.rglob("*.py")):
+        try:
+            rel = p.relative_to(app_dir).as_posix()
+            h.update(rel.encode() + b"\n")
+            h.update(p.read_bytes())
+            h.update(b"\n")
+        except Exception:
+            pass
+
+    # Frontend build lives alongside app/ in deployed layouts (/opt/printforge/)
+    # but may be missing in dev — skip silently if so.
+    frontend_build = app_dir.parent / "frontend" / "build"
+    if frontend_build.is_dir():
+        for p in sorted(frontend_build.rglob("*")):
+            if p.is_file():
+                try:
+                    rel = p.relative_to(frontend_build).as_posix()
+                    h.update(rel.encode() + b"\n")
+                except Exception:
+                    pass
+    return h.hexdigest()[:12]
+
+
+_build_version = _compute_build_version()
 
 
 def _read_pi_cpu_temp() -> float:
@@ -97,6 +141,7 @@ async def health():
         "environment": settings.environment,
         "mockSerial": settings.mock_serial,
         "printerStatus": printer_status,
+        "version": _build_version,
     }
 
 
@@ -225,6 +270,33 @@ async def _run(cmd: list[str]) -> tuple[int, str]:
     )
     out, _ = await proc.communicate()
     return proc.returncode or 0, out.decode("utf-8", errors="replace").strip()
+
+
+@router.get("/peer-version")
+async def peer_version():
+    """Return the build version of the OTHER environment on this host.
+
+    Only meaningful on staging — used by the UI to decide whether there's
+    anything to promote. Fetched via 127.0.0.1 so we don't need to deal
+    with the user's CORS config or production's API-key auth.
+    """
+    if settings.environment != "staging":
+        # On production, there's no "peer" concept — just return our own.
+        return {"peerEnvironment": "production", "version": None, "reachable": False}
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get("http://127.0.0.1:8000/api/system/health")
+            if r.status_code == 200:
+                data = r.json()
+                return {
+                    "peerEnvironment": "production",
+                    "version": data.get("version"),
+                    "reachable": True,
+                }
+            return {"peerEnvironment": "production", "version": None, "reachable": False}
+    except Exception:
+        return {"peerEnvironment": "production", "version": None, "reachable": False}
 
 
 @router.post("/promote")
