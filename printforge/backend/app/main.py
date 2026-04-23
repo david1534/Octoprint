@@ -34,7 +34,7 @@ from .api import (
 )
 from .config import settings
 from .middleware.auth import APIKeyMiddleware
-from .printer.controller import PrinterController
+from .printer.controller import PrinterCommandError, PrinterController
 from .printer.state import PrinterState
 from .storage.database import close_db, init_db
 
@@ -157,6 +157,18 @@ app.add_middleware(SelectiveGZipMiddleware, minimum_size=500)
 
 # API key auth middleware (enforces auth when a key is configured)
 app.add_middleware(APIKeyMiddleware)
+
+# Surface silently-failing printer commands (timeout, no ack) to the UI as
+# HTTP 502 instead of 200 OK — otherwise a hung printer looks responsive
+# and the user gets a "command sent" toast while nothing happened.
+@app.exception_handler(PrinterCommandError)
+async def _printer_command_error_handler(request: Request, exc: PrinterCommandError):
+    logger.warning("Printer command failed: %s", exc)
+    return JSONResponse(
+        status_code=502,
+        content={"detail": str(exc), "command": exc.command},
+    )
+
 
 # Register API routers
 app.include_router(printer.router)

@@ -34,6 +34,20 @@ logger = logging.getLogger(__name__)
 _POSITION_RE = re.compile(r"X:([\d.-]+)\s*Y:([\d.-]+)\s*Z:([\d.-]+)")
 
 
+class PrinterCommandError(RuntimeError):
+    """Raised when a printer command fails (timeout, error response, no ack).
+
+    Why: silently-dropped commands previously returned 200 OK to the UI,
+    which made the printer look responsive while actually hung. The API
+    layer maps this to HTTP 502 so the frontend can show a real error.
+    """
+
+    def __init__(self, command: str, detail: str):
+        self.command = command
+        self.detail = detail
+        super().__init__(f"{command}: {detail}")
+
+
 class PrinterController:
     """High-level printer control interface."""
 
@@ -418,6 +432,18 @@ class PrinterController:
         future = await self._queue.enqueue(command, CommandPriority.USER)
         return await future
 
+    async def _send_checked(self, command: str) -> CommandResult:
+        """Send a command and raise PrinterCommandError if it didn't ack.
+
+        Used by user-triggered actions (temp/jog/extrude/fan/motors_off) so
+        a silently-dropped command surfaces as an HTTP error rather than
+        a bogus 200 OK.
+        """
+        result = await self.send_command(command)
+        if not result.ok:
+            raise PrinterCommandError(command, result.error or "no ack from printer")
+        return result
+
     async def home(self, axes: str = "XYZ") -> CommandResult:
         """Home specified axes. Must not be called during printing."""
         if self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED):
@@ -437,10 +463,10 @@ class PrinterController:
         """Set target temperatures."""
         if hotend is not None:
             cmd = f"M109 S{hotend}" if wait else f"M104 S{hotend}"
-            await self.send_command(cmd)
+            await self._send_checked(cmd)
         if bed is not None:
             cmd = f"M190 S{bed}" if wait else f"M140 S{bed}"
-            await self.send_command(cmd)
+            await self._send_checked(cmd)
 
     async def jog(
         self, x: float = 0, y: float = 0, z: float = 0, feedrate: int = 3000
@@ -448,7 +474,7 @@ class PrinterController:
         """Relative move. Must not be called during printing."""
         if self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED):
             raise RuntimeError("Cannot jog while printing")
-        await self.send_command("G91")  # Relative mode
+        await self._send_checked("G91")  # Relative mode
         parts = ["G1"]
         if x:
             parts.append(f"X{x}")
@@ -457,13 +483,17 @@ class PrinterController:
         if z:
             parts.append(f"Z{z}")
         parts.append(f"F{feedrate}")
-        await self.send_command(" ".join(parts))
-        await self.send_command("G90")  # Back to absolute
+        try:
+            await self._send_checked(" ".join(parts))
+        finally:
+            # Always restore absolute mode even if the G1 failed, so a later
+            # jog/print doesn't inherit G91 from this aborted attempt.
+            await self.send_command("G90")
 
     async def set_fan_speed(self, speed: int) -> None:
         """Set fan speed (0-255)."""
         speed = max(0, min(255, speed))
-        await self.send_command(f"M106 S{speed}")
+        await self._send_checked(f"M106 S{speed}")
         self.state.fan_speed = speed
         self._notify_state_change()
 
@@ -471,9 +501,11 @@ class PrinterController:
         """Extrude or retract filament. Must not be called during printing."""
         if self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED):
             raise RuntimeError("Cannot extrude while printing")
-        await self.send_command("G91")
-        await self.send_command(f"G1 E{length} F{feedrate}")
-        await self.send_command("G90")
+        await self._send_checked("G91")
+        try:
+            await self._send_checked(f"G1 E{length} F{feedrate}")
+        finally:
+            await self.send_command("G90")
 
     async def probe_bed_mesh(self) -> dict:
         """Run G29 bed-leveling probe and return the parsed mesh.
@@ -656,8 +688,18 @@ M117 Print Complete"""
 
         # Reset line numbers on both sides to prevent "Resend: N" errors
         # after E-Stop/power cycle sequences where counters desync.
+        # Await the future (not just enqueue) so a hung printer fails fast
+        # here instead of letting the whole print silently stall on the
+        # first checksummed line.
         self._protocol.reset_line_number()
-        await self._queue.enqueue("M110 N0", CommandPriority.SYSTEM)
+        m110_future = await self._queue.enqueue("M110 N0", CommandPriority.SYSTEM)
+        m110_result = await m110_future
+        if not m110_result.ok:
+            raise PrinterCommandError(
+                "M110 N0",
+                f"printer did not acknowledge line-number reset ({m110_result.error or 'no ack'}); "
+                "print aborted — check printer power/USB",
+            )
         self._safety.record_serial_activity()
 
         # Start timelapse recording
@@ -790,7 +832,7 @@ M117 Print Complete"""
 
     async def disable_motors(self) -> None:
         """Disable stepper motors."""
-        await self.send_command("M84")
+        await self._send_checked("M84")
 
     async def _deduct_filament(self, filament_used_mm: float) -> None:
         """Deduct filament from the selected spool (or active spool fallback).
