@@ -123,8 +123,14 @@ class SerialConnection:
         except asyncio.TimeoutError:
             raise
         except Exception as e:
+            # Don't tear down the connection here. A transient read error
+            # (e.g. a concurrency race from two coroutines reading at once)
+            # used to set _connected=False, which permanently poisoned the
+            # connection and made every subsequent command fail with
+            # "Not connected to printer" until a manual reconnect. Real
+            # USB disconnects surface through send() failures and the
+            # safety-monitor's serial-activity watchdog.
             logger.error("Serial read error: %s", e)
-            self._connected = False
             raise ConnectionError(f"Serial read failed: {e}")
 
     @staticmethod

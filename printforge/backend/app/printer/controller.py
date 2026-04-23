@@ -379,13 +379,17 @@ class PrinterController:
         self._protocol.add_terminal_callback(self._on_terminal_line)
         self._protocol.add_position_callback(self._on_position_line)
 
+        # Detect firmware BEFORE starting the queue. The queue's idle-drain
+        # loop also reads from the serial stream, and StreamReader forbids
+        # two concurrent readers — the race would raise
+        # "readuntil() called while another coroutine is already waiting"
+        # and leave the connection in a permanently broken state.
+        self.state.firmware_name = await self._protocol.query_firmware()
+
         self._queue = CommandQueue(self._protocol)
         self._queue.start()
 
         self._sender = GcodeSender(self._queue)
-
-        # Detect firmware
-        self.state.firmware_name = await self._protocol.query_firmware()
 
         # Enable temperature auto-reporting every 2 seconds
         await self._queue.enqueue("M155 S2", CommandPriority.SYSTEM)
