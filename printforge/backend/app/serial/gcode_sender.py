@@ -95,6 +95,10 @@ class GcodeSender:
         self._filament_used_mm: float = 0.0
         self._last_e_position: float = 0.0
         self._e_relative: bool = False
+        # XYZ positioning mode (G90 absolute / G91 relative) as last seen in the
+        # stream. Restored on resume so a paused relative-mode print doesn't come
+        # back in absolute mode. Almost all slicers use G90, hence the default.
+        self._absolute_positioning: bool = True
         # LCD progress display
         self._lcd_enabled: bool = False
         self._lcd_interval: int = 50  # lines between updates
@@ -223,6 +227,7 @@ class GcodeSender:
         self._filament_used_mm = 0.0
         self._last_e_position = 0.0
         self._e_relative = False
+        self._absolute_positioning = True
         self._in_start_gcode = bool(start_gcode.strip())
 
         # Count printable lines and layers (run in thread to avoid blocking
@@ -309,6 +314,7 @@ class GcodeSender:
 
                     # Track filament used in start gcode (purge lines)
                     self._track_filament(line)
+                    self._track_positioning_mode(line)
 
                 preamble_elapsed = time.monotonic() - preamble_start
                 self._in_start_gcode = False
@@ -446,6 +452,7 @@ class GcodeSender:
                     # Track position and filament usage
                     self._track_position(stripped)
                     self._track_filament(stripped)
+                    self._track_positioning_mode(stripped)
 
                     # Send LCD progress update (M117)
                     if self._lcd_enabled and (
@@ -534,7 +541,13 @@ class GcodeSender:
         # Prime filament (push back what we retracted)
         await self._queue.enqueue("G91", CommandPriority.SYSTEM)
         await self._queue.enqueue("G1 E2 F1800", CommandPriority.SYSTEM)
-        await self._queue.enqueue("G90", CommandPriority.SYSTEM)
+        # Restore the positioning mode the file was actually using. Forcing G90
+        # unconditionally would break a print streaming in relative mode (G91):
+        # every subsequent move would be reinterpreted as absolute.
+        await self._queue.enqueue(
+            "G90" if self._absolute_positioning else "G91",
+            CommandPriority.SYSTEM,
+        )
         # Restore feedrate so the next print line doesn't inherit park speed
         await self._queue.enqueue(
             f"G1 F{self._saved_feedrate}", CommandPriority.SYSTEM
@@ -602,6 +615,14 @@ class GcodeSender:
         m = _AXIS_F.search(command)
         if m:
             self._saved_feedrate = int(float(m.group(1)))
+
+    def _track_positioning_mode(self, command: str) -> None:
+        """Track G90/G91 (absolute/relative XYZ) so resume can restore it."""
+        upper = command.upper()
+        if upper == "G90" or upper.startswith("G90 "):
+            self._absolute_positioning = True
+        elif upper == "G91" or upper.startswith("G91 "):
+            self._absolute_positioning = False
 
     def _track_filament(self, command: str) -> None:
         """Track filament usage from G0/G1 E values."""

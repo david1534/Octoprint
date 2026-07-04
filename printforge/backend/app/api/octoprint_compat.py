@@ -28,7 +28,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..config import settings
+from ..printer.command_guard import (
+    is_dangerous_during_print,
+    temperature_command_error,
+)
 from ..printer.gcode_parser import parse_gcode_file
+from ..utils.paths import is_within
 
 # Reuse the controller accessor already wired up by main.py
 from .printer import get_controller
@@ -330,10 +335,10 @@ async def octoprint_upload_file(
     if not safe_name:
         raise HTTPException(400, "Invalid filename after sanitisation")
 
-    # Resolve target directory safely
+    # Resolve target directory safely (component-based containment)
     if path:
         target_dir = (GCODE_DIR / path).resolve()
-        if not str(target_dir).startswith(str(GCODE_DIR.resolve())):
+        if not is_within(GCODE_DIR, target_dir):
             raise HTTPException(400, "Invalid path")
     else:
         target_dir = GCODE_DIR
@@ -416,6 +421,25 @@ async def octoprint_printer_command(req: GcodeCommandRequest):
         cmds = [req.command]
     else:
         raise HTTPException(400, "No command(s) provided")
+
+    # Apply the SAME guards as the native /api/printer/command endpoint. Without
+    # these a slicer (or any client) could home the printer, disable motors, or
+    # drive a heater past its ceiling mid-print by routing through this shim.
+    printing = ctrl.state.status.value in ("printing", "paused")
+    for cmd in cmds:
+        if printing and is_dangerous_during_print(cmd):
+            base = cmd.strip().split()[0].upper()
+            raise HTTPException(
+                409,
+                f"Cannot send {base} while printing — would corrupt print position",
+            )
+        temp_err = temperature_command_error(
+            cmd,
+            ctrl.safety_monitor.max_hotend_temp,
+            ctrl.safety_monitor.max_bed_temp,
+        )
+        if temp_err:
+            raise HTTPException(400, temp_err)
 
     for cmd in cmds:
         await ctrl.send_command(cmd.strip())

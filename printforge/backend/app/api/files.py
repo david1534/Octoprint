@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, Query
 from ..config import settings
 from ..printer.gcode_parser import calculate_filament_cost, parse_gcode_file
 from ..storage.models import get_setting
+from ..utils.paths import is_within
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
@@ -23,9 +24,13 @@ def _ensure_gcode_dir() -> None:
 
 
 def _safe_resolve(subpath: str) -> Path:
-    """Resolve a subpath within GCODE_DIR, preventing path traversal."""
+    """Resolve a subpath within GCODE_DIR, preventing path traversal.
+
+    Uses path-component containment rather than a string-prefix check, which
+    would otherwise let a sibling dir like ``gcodes_backup`` slip through.
+    """
     resolved = (GCODE_DIR / subpath).resolve()
-    if not str(resolved).startswith(str(GCODE_DIR.resolve())):
+    if not is_within(GCODE_DIR, resolved):
         raise HTTPException(400, "Invalid path")
     return resolved
 
@@ -212,9 +217,7 @@ async def move_folder(
         raise HTTPException(404, f"Destination not found: {dest}")
 
     # Prevent moving a folder into itself or any of its descendants
-    src_resolved = src_path.resolve()
-    dest_resolved = dest_dir.resolve()
-    if dest_resolved == src_resolved or str(dest_resolved).startswith(str(src_resolved) + "/"):
+    if is_within(src_path, dest_dir):
         raise HTTPException(400, "Cannot move a folder into itself or its subdirectory")
 
     dest_path = dest_dir / src_path.name

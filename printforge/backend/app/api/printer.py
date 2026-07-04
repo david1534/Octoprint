@@ -7,7 +7,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..config import settings
+from ..printer.command_guard import (
+    is_dangerous_during_print,
+    temperature_command_error,
+)
 from ..printer.controller import PrinterController
+from ..utils.paths import is_within
 
 router = APIRouter(prefix="/api/printer", tags=["printer"])
 
@@ -136,21 +141,27 @@ async def set_fan(req: FanRequest):
     return {"ok": True}
 
 
-_DANGEROUS_DURING_PRINT = {"G28", "G29", "G91", "G92", "M84", "M18"}
-
-
 @router.post("/command")
 async def send_command(req: CommandRequest):
     """Send a raw G-code command."""
     ctrl = get_controller()
     # Block commands that would corrupt position or disable motors mid-print
     if ctrl.state.status.value in ("printing", "paused"):
-        cmd_base = req.command.strip().split()[0].upper() if req.command.strip() else ""
-        if cmd_base in _DANGEROUS_DURING_PRINT:
+        if is_dangerous_during_print(req.command):
+            cmd_base = req.command.strip().split()[0].upper()
             raise HTTPException(
                 409,
                 f"Cannot send {cmd_base} while printing — would corrupt print position",
             )
+    # Enforce the heater ceiling on raw M104/M109/M140/M190 (the structured
+    # temperature endpoint enforces it too, but raw commands bypass that path).
+    temp_err = temperature_command_error(
+        req.command,
+        ctrl.safety_monitor.max_hotend_temp,
+        ctrl.safety_monitor.max_bed_temp,
+    )
+    if temp_err:
+        raise HTTPException(400, temp_err)
     result = await ctrl.send_command(req.command)
     return {
         "ok": result.ok,
@@ -164,10 +175,18 @@ async def send_command(req: CommandRequest):
 async def start_print(req: PrintRequest):
     """Start printing a file."""
     ctrl = get_controller()
+    # Reject a second start cleanly (409) instead of letting the controller
+    # fire side effects and then fail. Matches the compat upload path's guard.
+    if ctrl.state.status.value not in ("idle",):
+        raise HTTPException(
+            409,
+            f"Cannot start a print while {ctrl.state.status.value}. "
+            "Printer must be idle.",
+        )
     gcode_dir = Path(settings.gcode_dir)
     filepath = (gcode_dir / req.filename).resolve()
-    # Prevent path traversal
-    if not str(filepath).startswith(str(gcode_dir.resolve())):
+    # Prevent path traversal (component-based containment, not string prefix)
+    if not is_within(gcode_dir, filepath):
         raise HTTPException(400, "Invalid path")
     if not filepath.exists():
         raise HTTPException(404, f"File not found: {req.filename}")

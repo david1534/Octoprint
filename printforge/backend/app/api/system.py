@@ -206,7 +206,10 @@ async def disk_usage():
 
 @router.post("/restart-service")
 async def restart_service():
-    """Restart the PrintForge service."""
+    """Restart the PrintForge service (blocked during active prints)."""
+    # Restarting tears down the serial connection and the print task, aborting
+    # the job — same hazard the OS restart/shutdown endpoints already guard.
+    _reject_if_printing()
     try:
         subprocess.Popen(
             ["sudo", "systemctl", "restart", "printforge"],

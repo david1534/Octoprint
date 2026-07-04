@@ -7,6 +7,7 @@ Main FastAPI application entry point.
 import asyncio
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -34,7 +35,11 @@ from .api import (
 )
 from .config import settings
 from .middleware.auth import APIKeyMiddleware
-from .printer.controller import PrinterCommandError, PrinterController
+from .printer.controller import (
+    PrinterCommandError,
+    PrinterController,
+    TemperatureLimitError,
+)
 from .printer.state import PrinterState
 from .storage.database import close_db, init_db
 
@@ -45,6 +50,28 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+class _RedactApiKeyLogFilter(logging.Filter):
+    """Scrub ``apikey=...`` query values out of access-log lines.
+
+    Browsers can't set custom headers on a WebSocket handshake, so the client
+    passes the API key as ``?apikey=`` — which otherwise lands in uvicorn's
+    access log in plaintext. This redacts it wherever it appears in a log arg.
+    """
+
+    _RE = re.compile(r"(apikey=)[^&\s\"']+", re.IGNORECASE)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                self._RE.sub(r"\1[REDACTED]", a) if isinstance(a, str) else a
+                for a in record.args
+            )
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_RedactApiKeyLogFilter())
 
 # Shared state
 state = PrinterState()
@@ -119,14 +146,27 @@ app = FastAPI(
 # origins (e.g. "http://100.108.194.105:8000,http://printforge.local:8000").
 # Defaults to "*" for development convenience.
 _cors_origins_raw = os.environ.get("PRINTFORGE_CORS_ORIGINS", "*")
+_cors_allow_all = _cors_origins_raw.strip() == "*"
 _cors_origins = (
-    ["*"] if _cors_origins_raw.strip() == "*"
+    ["*"] if _cors_allow_all
     else [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 )
+# NEVER combine wildcard origins with credentials: that tells browsers to honor
+# credentialed cross-site requests from ANY origin, which is the cross-site
+# printer-control hole. With a wildcard we disable credentials (the same-origin
+# UI is unaffected — it doesn't need CORS); credentials are only enabled when an
+# explicit origin allowlist is configured.
+_cors_allow_credentials = not _cors_allow_all
+if _cors_allow_all:
+    logger.warning(
+        "CORS is wide open (PRINTFORGE_CORS_ORIGINS=*). Any website your browser "
+        "visits can send requests to this printer. Set PRINTFORGE_CORS_ORIGINS to "
+        "your Pi's address(es) and configure an API key to lock this down."
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=True,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -168,6 +208,14 @@ async def _printer_command_error_handler(request: Request, exc: PrinterCommandEr
         status_code=502,
         content={"detail": str(exc), "command": exc.command},
     )
+
+
+# A requested temperature above the configured ceiling is a rejected client
+# request (400), not a printer-side failure (502).
+@app.exception_handler(TemperatureLimitError)
+async def _temperature_limit_error_handler(request: Request, exc: TemperatureLimitError):
+    logger.warning("Temperature target rejected: %s", exc)
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 # Register API routers

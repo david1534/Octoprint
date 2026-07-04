@@ -29,6 +29,12 @@ class SerialConnection:
         self._writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
         self._lock = asyncio.Lock()
+        # Serializes concurrent writers so bytes from two sources can't
+        # interleave on the wire. Normally every command flows through the
+        # single command-queue consumer, but emergency stop (M112) writes
+        # directly to guarantee immediacy — this lock keeps that write atomic
+        # relative to whatever the queue is sending.
+        self._write_lock = asyncio.Lock()
 
     @property
     def connected(self) -> bool:
@@ -104,8 +110,9 @@ class SerialConnection:
         if not self._connected or not self._writer:
             raise ConnectionError("Not connected to printer")
         line = command.strip() + "\n"
-        self._writer.write(line.encode("ascii", errors="replace"))
-        await self._writer.drain()
+        async with self._write_lock:
+            self._writer.write(line.encode("ascii", errors="replace"))
+            await self._writer.drain()
         logger.debug("TX: %s", command.strip())
 
     async def read_line(self, timeout: float = 10.0) -> str:

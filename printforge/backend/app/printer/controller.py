@@ -25,6 +25,7 @@ from ..serial.temperature import TemperatureMonitor, TemperatureSnapshot
 from ..services import notifier
 from ..services.camera import CameraService
 from ..services.timelapse import TimelapseRecorder
+from .command_guard import temperature_value_error
 from .error_log import ErrorLog
 from .state import PrinterState, PrinterStatus
 
@@ -68,6 +69,16 @@ class PrinterCommandError(RuntimeError):
         super().__init__(f"{command}: {detail}")
 
 
+class TemperatureLimitError(ValueError):
+    """Raised when a requested heater target exceeds the safety ceiling.
+
+    The API layer maps this to HTTP 400 — it's a rejected client request, not
+    a printer-side failure, so it must not be confused with PrinterCommandError
+    (502). Enforcing the ceiling here means every structured temperature set
+    honors the limit regardless of which endpoint called it.
+    """
+
+
 class PrinterController:
     """High-level printer control interface."""
 
@@ -78,7 +89,13 @@ class PrinterController:
         self._queue: Optional[CommandQueue] = None
         self._sender: Optional[GcodeSender] = None
         self._temp_monitor = TemperatureMonitor()
-        self._safety = SafetyMonitor()
+        # Honor the configured temperature ceilings (previously the monitor was
+        # built with hard-coded defaults, so PRINTFORGE_MAX_*_TEMP had no
+        # effect). These same limits gate every target-setting path below.
+        self._safety = SafetyMonitor(
+            max_hotend_temp=settings.max_hotend_temp,
+            max_bed_temp=settings.max_bed_temp,
+        )
         self._safety_task: Optional[asyncio.Task] = None
         self._error_log = ErrorLog()
         self._state_callbacks: list[Callable[[], None]] = []
@@ -97,6 +114,11 @@ class PrinterController:
         self._bed_mesh_parser = BedMeshParser()
         # Kill recovery state (instance variable, not class variable)
         self._kill_recovery_in_progress: bool = False
+        # Serializes the multi-command jog/extrude sequences (G91 → move → G90)
+        # so two concurrent manual moves can't interleave and leave a G1
+        # executing in the wrong positioning mode. Created lazily on first use
+        # because the controller is constructed at import time (no running loop).
+        self._motion_lock: Optional[asyncio.Lock] = None
 
     @property
     def temp_monitor(self) -> TemperatureMonitor:
@@ -518,6 +540,17 @@ class PrinterController:
         if self._connection:
             await self._connection.disconnect()
 
+        # Drop the now-dead references. The queue's consumer task was cancelled
+        # by stop(), so leaving _queue set meant send_command's `if not
+        # self._queue` guard passed, the command was enqueued into a queue with
+        # no consumer, and `await future` hung forever. Nulling these makes
+        # post-disconnect commands fail fast with "Not connected".
+        self._safety_task = None
+        self._sender = None
+        self._queue = None
+        self._protocol = None
+        self._connection = None
+
         self.state.status = PrinterStatus.DISCONNECTED
         self._notify_state_change()
         logger.info("Printer disconnected")
@@ -552,13 +585,30 @@ class PrinterController:
                 cmd += f" {axis}"
         return await self.send_command(cmd)
 
+    def _get_motion_lock(self) -> asyncio.Lock:
+        """Return the jog/extrude serialization lock, creating it on first use."""
+        if self._motion_lock is None:
+            self._motion_lock = asyncio.Lock()
+        return self._motion_lock
+
     async def set_temperature(
         self,
         hotend: Optional[float] = None,
         bed: Optional[float] = None,
         wait: bool = False,
     ) -> None:
-        """Set target temperatures."""
+        """Set target temperatures.
+
+        Rejects any target above the configured ceiling so a bad request (or a
+        client that skipped its own validation) can never drive a heater past
+        the safety limit. Firmware is still the primary thermal safety, but the
+        app must not be the thing that asks for 500 C.
+        """
+        err = temperature_value_error(
+            hotend, bed, self._safety.max_hotend_temp, self._safety.max_bed_temp
+        )
+        if err:
+            raise TemperatureLimitError(err)
         if hotend is not None:
             cmd = f"M109 S{hotend}" if wait else f"M104 S{hotend}"
             await self._send_checked(cmd)
@@ -572,21 +622,25 @@ class PrinterController:
         """Relative move. Must not be called during printing."""
         if self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED):
             raise RuntimeError("Cannot jog while printing")
-        await self._send_checked("G91")  # Relative mode
-        parts = ["G1"]
-        if x:
-            parts.append(f"X{x}")
-        if y:
-            parts.append(f"Y{y}")
-        if z:
-            parts.append(f"Z{z}")
-        parts.append(f"F{feedrate}")
-        try:
-            await self._send_checked(" ".join(parts))
-        finally:
-            # Always restore absolute mode even if the G1 failed, so a later
-            # jog/print doesn't inherit G91 from this aborted attempt.
-            await self.send_command("G90")
+        # Hold the motion lock for the whole G91 → move → G90 sequence so a
+        # concurrent jog/extrude can't slip its G90 between our G91 and G1
+        # (which would run the move in absolute mode and fling the toolhead).
+        async with self._get_motion_lock():
+            await self._send_checked("G91")  # Relative mode
+            parts = ["G1"]
+            if x:
+                parts.append(f"X{x}")
+            if y:
+                parts.append(f"Y{y}")
+            if z:
+                parts.append(f"Z{z}")
+            parts.append(f"F{feedrate}")
+            try:
+                await self._send_checked(" ".join(parts))
+            finally:
+                # Always restore absolute mode even if the G1 failed, so a later
+                # jog/print doesn't inherit G91 from this aborted attempt.
+                await self.send_command("G90")
 
     async def set_fan_speed(self, speed: int) -> None:
         """Set fan speed (0-255)."""
@@ -599,11 +653,12 @@ class PrinterController:
         """Extrude or retract filament. Must not be called during printing."""
         if self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED):
             raise RuntimeError("Cannot extrude while printing")
-        await self._send_checked("G91")
-        try:
-            await self._send_checked(f"G1 E{length} F{feedrate}")
-        finally:
-            await self.send_command("G90")
+        async with self._get_motion_lock():
+            await self._send_checked("G91")
+            try:
+                await self._send_checked(f"G1 E{length} F{feedrate}")
+            finally:
+                await self.send_command("G90")
 
     async def probe_bed_mesh(self) -> dict:
         """Run G29 bed-leveling probe and return the parsed mesh.
@@ -710,6 +765,17 @@ M117 Print Complete"""
         """Start printing a G-code file."""
         if not self._sender:
             raise ConnectionError("Not connected")
+
+        # Reject a second start BEFORE any side effects. Without this the method
+        # would reset line numbers (M110), restart the timelapse, and overwrite
+        # the history job id — all while a print is live — only to fail later
+        # when the sender raises "already in progress". Bail out first.
+        if self._sender.is_printing or self.state.status in (
+            PrinterStatus.PRINTING,
+            PrinterStatus.PAUSED,
+            PrinterStatus.FINISHING,
+        ):
+            raise RuntimeError("A print is already in progress")
 
         # Configure LCD progress from settings
         from ..storage.models import get_setting
@@ -912,10 +978,16 @@ M117 Print Complete"""
     async def emergency_stop(self) -> None:
         """Send M112 emergency stop. Printer must be power-cycled after."""
         logger.critical("EMERGENCY STOP triggered")
-        # Send M112 directly through protocol (bypass queue for speed)
-        if self._protocol:
+        # Write M112 straight to the wire (write-only, no response read). Going
+        # through protocol.send_command would start a SECOND reader concurrent
+        # with the queue's in-flight read — two readline()s on one StreamReader
+        # raise RuntimeError and one loses the race. A bare write can't race the
+        # reader, and the connection's write lock keeps it atomic. Marlin acts
+        # on M112 immediately on receipt, so we don't need the ack.
+        if self._connection and self._connection.connected:
+            self._notify_terminal("M112", "send")
             try:
-                await self._protocol.send_command("M112")
+                await self._connection.send("M112")
             except Exception:
                 pass
         if self._sender and self._sender.is_printing:
