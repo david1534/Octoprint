@@ -65,7 +65,12 @@ class FanRequest(BaseModel):
 
 
 class CommandRequest(BaseModel):
-    command: str
+    # Single-command form (native UI) and list form (OctoPrint clients — Cura
+    # and OrcaSlicer POST {"commands": [...]} to this same path). Both shapes
+    # are handled here because this route shadows the OctoPrint-compat router's
+    # identical path anyway (first registration wins in FastAPI).
+    command: Optional[str] = None
+    commands: Optional[list] = None
 
 
 class PrintRequest(BaseModel):
@@ -141,34 +146,60 @@ async def set_fan(req: FanRequest):
     return {"ok": True}
 
 
-@router.post("/command")
-async def send_command(req: CommandRequest):
-    """Send a raw G-code command."""
-    ctrl = get_controller()
-    # Block commands that would corrupt position or disable motors mid-print
-    if ctrl.state.status.value in ("printing", "paused"):
-        if is_dangerous_during_print(req.command):
-            cmd_base = req.command.strip().split()[0].upper()
+def guard_raw_commands(ctrl: PrinterController, cmds: list) -> None:
+    """Apply the during-print block list and temperature ceiling to raw G-code.
+
+    Raises HTTPException; guards the WHOLE batch before anything is sent so a
+    rejected command can't land after earlier ones already executed. Shared by
+    both request shapes (and importable by any future raw-gcode producer).
+    """
+    printing = ctrl.state.status.value in ("printing", "paused")
+    for cmd in cmds:
+        if printing and is_dangerous_during_print(cmd):
+            cmd_base = cmd.strip().split()[0].upper()
             raise HTTPException(
                 409,
                 f"Cannot send {cmd_base} while printing — would corrupt print position",
             )
-    # Enforce the heater ceiling on raw M104/M109/M140/M190 (the structured
-    # temperature endpoint enforces it too, but raw commands bypass that path).
-    temp_err = temperature_command_error(
-        req.command,
-        ctrl.safety_monitor.max_hotend_temp,
-        ctrl.safety_monitor.max_bed_temp,
-    )
-    if temp_err:
-        raise HTTPException(400, temp_err)
-    result = await ctrl.send_command(req.command)
-    return {
-        "ok": result.ok,
-        "command": result.command,
-        "response": result.response_lines,
-        "error": result.error,
-    }
+        temp_err = temperature_command_error(
+            cmd,
+            ctrl.safety_monitor.max_hotend_temp,
+            ctrl.safety_monitor.max_bed_temp,
+        )
+        if temp_err:
+            raise HTTPException(400, temp_err)
+
+
+@router.post("/command")
+async def send_command(req: CommandRequest):
+    """Send raw G-code — single ``command`` (native UI, returns the printer's
+    response) or a ``commands`` list (OctoPrint clients, returns 204)."""
+    ctrl = get_controller()
+
+    if req.commands:
+        cmds = [str(c) for c in req.commands]
+    elif req.command:
+        cmds = [req.command]
+    else:
+        raise HTTPException(400, "No command(s) provided")
+
+    guard_raw_commands(ctrl, cmds)
+
+    if req.command and not req.commands:
+        result = await ctrl.send_command(req.command)
+        return {
+            "ok": result.ok,
+            "command": result.command,
+            "response": result.response_lines,
+            "error": result.error,
+        }
+
+    # List form — OctoPrint clients only check the status code
+    for cmd in cmds:
+        await ctrl.send_command(cmd.strip())
+    from fastapi.responses import Response
+
+    return Response(status_code=204)
 
 
 @router.post("/print")

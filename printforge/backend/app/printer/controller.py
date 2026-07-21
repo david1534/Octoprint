@@ -25,7 +25,11 @@ from ..serial.temperature import TemperatureMonitor, TemperatureSnapshot
 from ..services import notifier
 from ..services.camera import CameraService
 from ..services.timelapse import TimelapseRecorder
-from .command_guard import temperature_value_error
+from .command_guard import (
+    is_dangerous_during_print,
+    temperature_command_error,
+    temperature_value_error,
+)
 from .error_log import ErrorLog
 from .state import PrinterState, PrinterStatus
 
@@ -556,9 +560,27 @@ class PrinterController:
         logger.info("Printer disconnected")
 
     async def send_command(self, command: str) -> CommandResult:
-        """Send a manual G-code command."""
+        """Send a manual G-code command.
+
+        Backstop guards live HERE, not only in the API layer, because this is
+        the choke point every raw-command producer shares (REST, the WebSocket
+        terminal, the OctoPrint shim). The WS terminal in particular used to
+        reach the wire with no during-print or temperature checks at all.
+        Internal sequences (start/end gcode, pause parking) enqueue directly
+        and are unaffected.
+        """
         if not self._queue:
             raise ConnectionError("Not connected")
+        if self._is_printing() and is_dangerous_during_print(command):
+            base = command.strip().split()[0].upper() if command.strip() else ""
+            raise RuntimeError(
+                f"Cannot send {base} while printing — would corrupt print position"
+            )
+        temp_err = temperature_command_error(
+            command, self._safety.max_hotend_temp, self._safety.max_bed_temp
+        )
+        if temp_err:
+            raise TemperatureLimitError(temp_err)
         self._notify_terminal(command, "send")
         future = await self._queue.enqueue(command, CommandPriority.USER)
         return await future
@@ -590,6 +612,22 @@ class PrinterController:
         if self._motion_lock is None:
             self._motion_lock = asyncio.Lock()
         return self._motion_lock
+
+    async def _enqueue_mode_restore(self) -> None:
+        """Restore G90 by enqueueing directly, bypassing send_command's guards.
+
+        Used only by jog/extrude cleanup. Must not raise on a dead queue —
+        the restore is best-effort teardown, and the original error (if any)
+        from the failed move is the one the caller should see.
+        """
+        if not self._queue:
+            return
+        try:
+            self._notify_terminal("G90", "send")
+            future = await self._queue.enqueue("G90", CommandPriority.USER)
+            await future
+        except Exception:
+            logger.exception("Failed to restore G90 after jog/extrude")
 
     async def set_temperature(
         self,
@@ -640,7 +678,10 @@ class PrinterController:
             finally:
                 # Always restore absolute mode even if the G1 failed, so a later
                 # jog/print doesn't inherit G91 from this aborted attempt.
-                await self.send_command("G90")
+                # Enqueue directly: send_command's during-print backstop must
+                # never be able to block this restore (a print starting mid-jog
+                # would otherwise leave the machine stuck in relative mode).
+                await self._enqueue_mode_restore()
 
     async def set_fan_speed(self, speed: int) -> None:
         """Set fan speed (0-255)."""
@@ -658,7 +699,7 @@ class PrinterController:
             try:
                 await self._send_checked(f"G1 E{length} F{feedrate}")
             finally:
-                await self.send_command("G90")
+                await self._enqueue_mode_restore()
 
     async def probe_bed_mesh(self) -> dict:
         """Run G29 bed-leveling probe and return the parsed mesh.

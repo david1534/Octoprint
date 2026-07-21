@@ -154,56 +154,55 @@ class TestNativeCommandEndpointGuards:
         ctrl.send_command.assert_awaited_once()
 
 
-class TestCompatCommandEndpointGuards:
-    """POST /api/printer/command (OctoPrint shim) — the C1 regression tests.
+class TestListFormCommandGuards:
+    """OctoPrint clients POST {"commands": [...]} to /api/printer/command.
 
-    Before the fix this endpoint sent ANY command mid-print with no guard.
+    The compat router's identical route was shadowed (dead) by the native one,
+    so the native endpoint now owns BOTH shapes — these are the C1 regression
+    tests for the slicer-facing list form.
     """
 
-    async def test_g28_blocked_while_printing(self):
-        from app.api import octoprint_compat, printer as printer_api
-
-        ctrl = _make_ctrl("printing")
-        printer_api.set_controller(ctrl)
-        with pytest.raises(HTTPException) as exc:
-            await octoprint_compat.octoprint_printer_command(
-                octoprint_compat.GcodeCommandRequest(command="G28")
-            )
-        assert exc.value.status_code == 409
-        ctrl.send_command.assert_not_awaited()
-
     async def test_dangerous_command_in_list_blocks_whole_batch(self):
-        from app.api import octoprint_compat, printer as printer_api
+        from app.api import printer as printer_api
 
         ctrl = _make_ctrl("paused")
         printer_api.set_controller(ctrl)
         with pytest.raises(HTTPException) as exc:
-            await octoprint_compat.octoprint_printer_command(
-                octoprint_compat.GcodeCommandRequest(commands=["M105", "M84"])
+            await printer_api.send_command(
+                printer_api.CommandRequest(commands=["M105", "M84"])
             )
         assert exc.value.status_code == 409
         # Guard runs over the whole batch BEFORE anything is sent
         ctrl.send_command.assert_not_awaited()
 
-    async def test_overtemp_rejected(self):
-        from app.api import octoprint_compat, printer as printer_api
+    async def test_overtemp_in_list_rejected(self):
+        from app.api import printer as printer_api
 
         ctrl = _make_ctrl("idle")
         printer_api.set_controller(ctrl)
         with pytest.raises(HTTPException) as exc:
-            await octoprint_compat.octoprint_printer_command(
-                octoprint_compat.GcodeCommandRequest(command="M190 S150")
+            await printer_api.send_command(
+                printer_api.CommandRequest(commands=["M190 S150"])
             )
         assert exc.value.status_code == 400
         ctrl.send_command.assert_not_awaited()
 
-    async def test_jog_style_commands_pass_when_idle(self):
-        from app.api import octoprint_compat, printer as printer_api
+    async def test_list_form_returns_204(self):
+        from app.api import printer as printer_api
 
         ctrl = _make_ctrl("idle")
         printer_api.set_controller(ctrl)
-        resp = await octoprint_compat.octoprint_printer_command(
-            octoprint_compat.GcodeCommandRequest(commands=["G91", "G1 X10", "G90"])
+        resp = await printer_api.send_command(
+            printer_api.CommandRequest(commands=["G91", "G1 X10", "G90"])
         )
         assert resp.status_code == 204
         assert ctrl.send_command.await_count == 3
+
+    async def test_empty_request_is_400(self):
+        from app.api import printer as printer_api
+
+        ctrl = _make_ctrl("idle")
+        printer_api.set_controller(ctrl)
+        with pytest.raises(HTTPException) as exc:
+            await printer_api.send_command(printer_api.CommandRequest())
+        assert exc.value.status_code == 400

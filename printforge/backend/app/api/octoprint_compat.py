@@ -28,10 +28,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..config import settings
-from ..printer.command_guard import (
-    is_dangerous_during_print,
-    temperature_command_error,
-)
 from ..printer.gcode_parser import parse_gcode_file
 from ..utils.paths import is_within
 
@@ -395,56 +391,14 @@ async def octoprint_upload_file(
 
 
 # ── Printer command ──────────────────────────────────────────────────────────
-
-
-class GcodeCommandRequest(BaseModel):
-    commands: Optional[list[str]] = None
-    command: Optional[str] = None
-
-
-@router.post("/api/printer/command")
-async def octoprint_printer_command(req: GcodeCommandRequest):
-    """Send raw G-code commands to the printer.
-
-    Cura uses this for manual jog controls, preheat buttons, and the
-    terminal tab. Accepts either a single ``command`` string or a list
-    of ``commands``.
-    """
-    ctrl = get_controller()
-    if ctrl.state.status.value in ("disconnected", "connecting"):
-        raise HTTPException(409, "Printer is not connected")
-
-    cmds: list[str] = []
-    if req.commands:
-        cmds = req.commands
-    elif req.command:
-        cmds = [req.command]
-    else:
-        raise HTTPException(400, "No command(s) provided")
-
-    # Apply the SAME guards as the native /api/printer/command endpoint. Without
-    # these a slicer (or any client) could home the printer, disable motors, or
-    # drive a heater past its ceiling mid-print by routing through this shim.
-    printing = ctrl.state.status.value in ("printing", "paused")
-    for cmd in cmds:
-        if printing and is_dangerous_during_print(cmd):
-            base = cmd.strip().split()[0].upper()
-            raise HTTPException(
-                409,
-                f"Cannot send {base} while printing — would corrupt print position",
-            )
-        temp_err = temperature_command_error(
-            cmd,
-            ctrl.safety_monitor.max_hotend_temp,
-            ctrl.safety_monitor.max_bed_temp,
-        )
-        if temp_err:
-            raise HTTPException(400, temp_err)
-
-    for cmd in cmds:
-        await ctrl.send_command(cmd.strip())
-
-    return JSONResponse(status_code=204, content=None)
+# NOTE: POST /api/printer/command is deliberately NOT registered here. The
+# native printer router registers the identical path first, so a route here is
+# unreachable (FastAPI matches in registration order) — a handler lived here
+# for a while and was silently dead, which meant slicers' {"commands": [...]}
+# form 422'd against the native single-command model. The native endpoint in
+# api/printer.py now accepts BOTH shapes and applies the during-print +
+# temperature guards; controller.send_command backstops them for any other
+# producer.
 
 
 # ── Connection management ────────────────────────────────────────────────────

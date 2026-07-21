@@ -221,6 +221,63 @@ class TestPositioningModeTracking:
         assert enqueued[-2] == "G90"
 
 
+class TestSendCommandBackstop:
+    """Guards in controller.send_command cover paths that skip the REST layer
+    (the WebSocket terminal used to reach the wire with no checks at all)."""
+
+    async def test_dangerous_command_blocked_while_printing(self):
+        ctrl = _connected_controller()
+        ctrl.state.status = PrinterStatus.PRINTING
+        with pytest.raises(RuntimeError, match="G28"):
+            await ctrl.send_command("G28")
+        ctrl._queue.enqueue.assert_not_called()
+
+    async def test_dangerous_command_blocked_while_paused(self):
+        ctrl = _connected_controller()
+        ctrl.state.status = PrinterStatus.PAUSED
+        with pytest.raises(RuntimeError):
+            await ctrl.send_command("M84")
+
+    async def test_overtemp_blocked_any_state(self):
+        ctrl = _connected_controller()
+        with pytest.raises(TemperatureLimitError):
+            await ctrl.send_command("M104 S500")
+        ctrl._queue.enqueue.assert_not_called()
+
+    async def test_safe_command_passes_while_printing(self):
+        ctrl = _connected_controller()
+        ctrl.state.status = PrinterStatus.PRINTING
+        result_obj = MagicMock(ok=True)
+        future = asyncio.get_event_loop().create_future()
+        future.set_result(result_obj)
+        ctrl._queue.enqueue = AsyncMock(return_value=future)
+        result = await ctrl.send_command("M220 S95")
+        assert result is result_obj
+
+    async def test_mode_restore_bypasses_backstop(self):
+        # If a print starts mid-jog, the finally-G90 restore must still reach
+        # the queue even though send_command("G90") would now be refused —
+        # otherwise the printer would be stranded in relative mode.
+        ctrl = _connected_controller()
+        ctrl.state.status = PrinterStatus.PRINTING
+
+        async def enqueue(cmd, *args, **kwargs):
+            f = asyncio.get_event_loop().create_future()
+            f.set_result(MagicMock(ok=True))
+            return f
+
+        ctrl._queue.enqueue = AsyncMock(side_effect=enqueue)
+
+        # The guarded path refuses G90 while printing...
+        with pytest.raises(RuntimeError):
+            await ctrl.send_command("G90")
+
+        # ...but the internal restore path still delivers it.
+        await ctrl._enqueue_mode_restore()
+        enqueued = [c.args[0] for c in ctrl._queue.enqueue.await_args_list]
+        assert enqueued == ["G90"]
+
+
 class TestMotionLockSerialization:
     """M7: concurrent jog/extrude sequences can't interleave G90/G91."""
 
@@ -235,7 +292,12 @@ class TestMotionLockSerialization:
             result.ok = True
             return result
 
+        async def fake_restore():
+            order.append("G90")
+            await asyncio.sleep(0)
+
         ctrl.send_command = fake_send  # type: ignore[assignment]
+        ctrl._enqueue_mode_restore = fake_restore  # type: ignore[assignment]
 
         await asyncio.gather(ctrl.jog(x=10), ctrl.extrude(length=5))
 
