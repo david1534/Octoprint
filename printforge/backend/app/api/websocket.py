@@ -272,7 +272,6 @@ async def _handle_client_message(msg: dict, ws: WebSocket) -> None:
                             "type": "command_result",
                             "data": {
                                 "command": result.command,
-                                "response": result.response_lines,
                                 "ok": result.ok,
                                 "error": result.error,
                             },
