@@ -91,11 +91,19 @@
 	}
 
 	function startPrint(file: GcodeFile) {
+		if (disabled) {
+			toast.warning('Printer must be connected and idle to start a print');
+			return;
+		}
 		printDialogFilename = file.path || file.filename;
 		printDialogOpen = true;
 	}
 
 	async function onPrintConfirm(spoolId: number | null) {
+		if (disabled) {
+			toast.warning('Printer must be connected and idle to start a print');
+			return;
+		}
 		const filename = printDialogFilename;
 		printDialogOpen = false;
 		printDialogFilename = '';

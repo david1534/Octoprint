@@ -6,8 +6,17 @@ import { writable, derived, get } from 'svelte/store';
 import { wsManager } from '../websocket';
 import { toast } from './toast';
 
+export type PrinterStatus =
+	| 'disconnected'
+	| 'connecting'
+	| 'idle'
+	| 'printing'
+	| 'paused'
+	| 'error'
+	| 'finishing';
+
 export interface PrinterState {
-	status: string;
+	status: PrinterStatus;
 	port: string;
 	baudrate: number;
 	hotend: { actual: number; target: number };
@@ -81,8 +90,18 @@ const defaultState: PrinterState = {
 export const printerState = writable<PrinterState>({ ...defaultState });
 export const wsConnected = writable<boolean>(false);
 
-// Derived stores for convenience
-export const isConnected = derived(printerState, ($s) => $s.status !== 'disconnected');
+// A usable serial transport is guaranteed only in the normal operating states.
+// Keep this separate from readiness: a printer can have a transport while it is
+// printing, paused, or finishing, but it may start a new print only while idle.
+const TRANSPORT_STATUSES: ReadonlySet<PrinterStatus> = new Set([
+	'idle',
+	'printing',
+	'paused',
+	'finishing'
+]);
+
+export const hasTransport = derived(printerState, ($s) => TRANSPORT_STATUSES.has($s.status));
+export const isReady = derived(printerState, ($s) => $s.status === 'idle');
 export const isPrinting = derived(printerState, ($s) => $s.status === 'printing');
 export const isPaused = derived(printerState, ($s) => $s.status === 'paused');
 export const isFinishing = derived(printerState, ($s) => $s.status === 'finishing');

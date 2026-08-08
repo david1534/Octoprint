@@ -2,7 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import { terminalLines, type TerminalLine } from '../stores/terminal';
 	import { wsManager } from '../websocket';
-	import { printerState } from '../stores/printer';
+	import { hasTransport } from '../stores/printer';
 	import { toast } from '../stores/toast';
 
 	let input = $state('');
@@ -10,7 +10,7 @@
 	let container: HTMLDivElement;
 	let autoScroll = $state(true);
 	let showSearch = $state(false);
-	let isConnected = $derived($printerState.status !== 'disconnected');
+	let transportAvailable = $derived($hasTransport);
 
 	let history: string[] = [];
 	let historyIndex = $state(-1);
@@ -125,7 +125,7 @@
 
 <div class="card flex flex-col h-full">
 	<!-- Disconnected indicator -->
-	{#if !isConnected}
+	{#if !transportAvailable}
 		<div class="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 mb-2 text-xs text-amber-400 flex items-center gap-2">
 			<svg class="w-4 h-4 shrink-0 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636a9 9 0 010 12.728m-2.829-2.829a5 5 0 000-7.07m-4.243 9.9a9 9 0 01-4.243-2.829m2.829-2.829a5 5 0 010-7.07" />
@@ -201,7 +201,7 @@
 					   disabled:opacity-50 disabled:cursor-not-allowed
 					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 				onclick={() => sendCommand(qc.cmd)}
-				disabled={!isConnected}
+				disabled={!transportAvailable}
 				title={qc.desc}
 			>
 				{qc.label}
@@ -232,13 +232,13 @@
 			placeholder="G-code command (e.g. G28)"
 			bind:value={input}
 			onkeydown={onKeydown}
-			disabled={!isConnected}
+			disabled={!transportAvailable}
 		/>
 		<button
 			class="btn-primary min-h-[40px]
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => sendCommand()}
-			disabled={!isConnected || !input.trim()}
+			disabled={!transportAvailable || !input.trim()}
 		>
 			Send
 		</button>

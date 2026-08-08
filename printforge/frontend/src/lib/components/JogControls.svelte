@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { api } from '../api';
-	import { printerState } from '../stores/printer';
+	import { printerState, isReady } from '../stores/printer';
 	import { toast } from '../stores/toast';
 
 	let stepSize = $state(10);
 	let loading = $state('');
-	let isConnected = $derived($printerState.status !== 'disconnected');
+	let ready = $derived($isReady);
 	let pos = $derived($printerState.position);
 
 	const steps = [0.1, 1, 10, 100];
@@ -84,7 +84,7 @@
 				class="btn-secondary flex-1 text-xs py-2 min-h-[36px]
 					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 				onclick={() => homeAxis('X')}
-				disabled={!isConnected || !!loading}
+				disabled={!ready || !!loading}
 			>
 				Home X
 			</button>
@@ -92,7 +92,7 @@
 				class="btn-secondary flex-1 text-xs py-2 min-h-[36px]
 					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 				onclick={() => homeAxis('Y')}
-				disabled={!isConnected || !!loading}
+				disabled={!ready || !!loading}
 			>
 				Home Y
 			</button>
@@ -100,7 +100,7 @@
 				class="btn-secondary flex-1 text-xs py-2 min-h-[36px]
 					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 				onclick={() => homeAxis('Z')}
-				disabled={!isConnected || !!loading}
+				disabled={!ready || !!loading}
 			>
 				Home Z
 			</button>
@@ -114,7 +114,7 @@
 			class="btn-secondary py-3 min-h-[40px] text-center font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('Y', 1)}
-			disabled={!isConnected || !!loading}
+			disabled={!ready || !!loading}
 		>
 			<svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
@@ -126,7 +126,7 @@
 			class="btn-secondary py-3 min-h-[40px] text-center font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('X', -1)}
-			disabled={!isConnected || !!loading}
+			disabled={!ready || !!loading}
 		>
 			<svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
@@ -137,7 +137,7 @@
 			class="btn-secondary py-3 min-h-[40px] text-center text-sm inline-flex items-center justify-center
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={homeAll}
-			disabled={!isConnected || !!loading}
+			disabled={!ready || !!loading}
 			title="Home all axes"
 		>
 			{#if loading === 'home'}
@@ -152,7 +152,7 @@
 			class="btn-secondary py-3 min-h-[40px] text-center font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('X', 1)}
-			disabled={!isConnected || !!loading}
+			disabled={!ready || !!loading}
 		>
 			<svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
@@ -164,7 +164,7 @@
 			class="btn-secondary py-3 min-h-[40px] text-center font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('Y', -1)}
-			disabled={!isConnected || !!loading}
+			disabled={!ready || !!loading}
 		>
 			<svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -180,7 +180,7 @@
 			class="btn-secondary flex-1 px-3 py-2 min-h-[40px] inline-flex items-center justify-center gap-1.5 font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('Z', 1)}
-			disabled={!isConnected || !!loading}
+			disabled={!ready || !!loading}
 		>
 			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
@@ -191,7 +191,7 @@
 			class="btn-secondary flex-1 px-3 py-2 min-h-[40px] inline-flex items-center justify-center gap-1.5 font-medium
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={() => jog('Z', -1)}
-			disabled={!isConnected || !!loading}
+			disabled={!ready || !!loading}
 		>
 			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />

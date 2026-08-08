@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { api } from '../api';
-	import { printerState } from '../stores/printer';
+	import { printerState, isReady } from '../stores/printer';
 	import { toast } from '../stores/toast';
 
 	let length = $state(10);
 	let feedrate = $state(300);
 	let fanSpeed = $state(0);
 	let loading = $state('');
-	let isConnected = $derived($printerState.status !== 'disconnected');
+	let ready = $derived($isReady);
 	let hotendTemp = $derived($printerState.hotend.actual);
 	let isColdExtrude = $derived(hotendTemp < 180);
 
@@ -72,7 +72,7 @@
 	<h3 class="text-sm font-medium text-surface-400 mb-3">Extrusion & Fan</h3>
 
 	<!-- Cold extrude warning -->
-	{#if isColdExtrude && isConnected}
+	{#if isColdExtrude && ready}
 		<div class="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 mb-3 text-xs text-amber-400 flex items-center gap-2">
 			<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
@@ -115,7 +115,7 @@
 			class="btn-primary flex-1 min-h-[44px] inline-flex items-center justify-center gap-2
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={doExtrude}
-			disabled={!isConnected || !!loading}
+			disabled={!ready || !!loading}
 		>
 			{#if loading === 'extrude'}
 				<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white/30 border-t-white"></span>
@@ -130,7 +130,7 @@
 			class="btn-secondary flex-1 min-h-[44px] inline-flex items-center justify-center gap-2
 				   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 			onclick={doRetract}
-			disabled={!isConnected || !!loading}
+			disabled={!ready || !!loading}
 		>
 			{#if loading === 'retract'}
 				<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-surface-400 border-t-white"></span>
@@ -155,7 +155,7 @@
 			min="0" max="100"
 			bind:value={fanSpeed}
 			onchange={setFan}
-			disabled={!isConnected || !!loading}
+				disabled={!ready || !!loading}
 		/>
 	</div>
 
@@ -163,7 +163,7 @@
 		class="btn-secondary w-full text-sm min-h-[40px] inline-flex items-center justify-center gap-2
 			   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 		onclick={motorsOff}
-		disabled={!isConnected || !!loading}
+		disabled={!ready || !!loading}
 	>
 		{#if loading === 'motors'}
 			<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-surface-400 border-t-white"></span>

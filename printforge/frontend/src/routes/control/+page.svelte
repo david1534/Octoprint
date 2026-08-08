@@ -3,9 +3,9 @@
 	import TemperatureControls from '$lib/components/TemperatureControls.svelte';
 	import ExtruderControls from '$lib/components/ExtruderControls.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { printerState, isConnected } from '$lib/stores/printer';
+	import { printerState, hasTransport } from '$lib/stores/printer';
 
-	let connected = $derived($isConnected);
+	let transportAvailable = $derived($hasTransport);
 	let pos = $derived($printerState.position);
 </script>
 
@@ -15,7 +15,7 @@
 
 <h1 class="text-xl font-bold mb-4">Printer Control</h1>
 
-{#if !connected}
+{#if !transportAvailable}
 	<EmptyState
 		title="Printer Not Connected"
 		description="Connect your printer to use the controls"

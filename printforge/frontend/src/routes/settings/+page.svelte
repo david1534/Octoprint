@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import { printerState, isConnected } from '$lib/stores/printer';
+	import { printerState, hasTransport } from '$lib/stores/printer';
 	import { toast } from '$lib/stores/toast';
 	import { confirmAction } from '$lib/stores/confirm';
 
@@ -11,7 +11,7 @@
 	let connecting = $state(false);
 	let disconnecting = $state(false);
 	let error = $state('');
-	let connected = $derived($isConnected);
+	let transportAvailable = $derived($hasTransport);
 	let health = $state<any>(null);
 	let notificationsEnabled = $state(false);
 	let notificationPermission = $state(typeof Notification !== 'undefined' ? Notification.permission : 'default');
@@ -690,7 +690,7 @@ M117 Print Complete`;
 				<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
 					<div>
 						<label class="block text-sm text-surface-400 mb-1">Serial Port</label>
-						<select class="input w-full" bind:value={selectedPort} disabled={connected}>
+						<select class="input w-full" bind:value={selectedPort} disabled={transportAvailable}>
 							{#each ports as port}
 								<option value={port}>{port}</option>
 							{/each}
@@ -698,7 +698,7 @@ M117 Print Complete`;
 					</div>
 					<div>
 						<label class="block text-sm text-surface-400 mb-1">Baud Rate</label>
-						<select class="input w-full" bind:value={baudrate} disabled={connected}>
+						<select class="input w-full" bind:value={baudrate} disabled={transportAvailable}>
 							{#each baudRates as rate}
 								<option value={rate}>{rate.toLocaleString()}</option>
 							{/each}
@@ -712,7 +712,7 @@ M117 Print Complete`;
 					</div>
 				{/if}
 
-				{#if connected}
+				{#if transportAvailable}
 					<div class="flex items-center gap-3">
 						<div class="flex items-center gap-2">
 							<div class="w-2 h-2 rounded-full bg-emerald-400"></div>
@@ -786,7 +786,7 @@ M117 Print Complete`;
 				</div>
 			</div>
 
-			{#if connected && $printerState.firmware}
+			{#if transportAvailable && $printerState.firmware}
 				<div class="card">
 					<h2 class="text-lg font-semibold mb-2">Printer Info</h2>
 					<div class="space-y-2 text-sm">
