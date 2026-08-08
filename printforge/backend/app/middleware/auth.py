@@ -2,7 +2,7 @@
 
 When an API key is configured in settings, all API requests (except WebSocket
 and a few public endpoints) must include the key as a Bearer token or query
-parameter. If no key is set, all requests are allowed (open access).
+parameter. Production may run open when no key is set; staging fails closed.
 """
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ import secrets
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,18 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 
         api_key_hash = APIKeyMiddleware._cached_hash or ""
         if not api_key_hash:
+            if settings.environment == "staging":
+                from fastapi.responses import JSONResponse
+
+                logger.error(
+                    "Refusing unauthenticated staging API request: no API key is configured"
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": "Staging authentication is required but no API key is configured"
+                    },
+                )
             # No key configured = open access
             return await call_next(request)
 

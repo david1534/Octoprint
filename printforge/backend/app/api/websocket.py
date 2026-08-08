@@ -17,6 +17,7 @@ from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from ..config import settings
 from ..printer.controller import PrinterController
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,12 @@ async def websocket_endpoint(websocket: WebSocket):
     from ..storage.models import get_setting
 
     api_key_hash = await get_setting("api_key_hash", "")
+    if not api_key_hash and settings.environment == "staging":
+        await websocket.close(
+            code=4401,
+            reason="Staging authentication is required but no API key is configured",
+        )
+        return
     if api_key_hash:
         key = websocket.query_params.get("apikey", "")
         if not key or not verify_api_key(key, api_key_hash):

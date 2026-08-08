@@ -13,7 +13,6 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import { toast } from '$lib/stores/toast';
-	import { confirmAction } from '$lib/stores/confirm';
 	import { formatTemp, formatDuration } from '$lib/utils';
 
 	let { children } = $props();
@@ -89,24 +88,6 @@
 		!!envBadge && (envBadge.environment !== 'production' || envBadge.mockSerial)
 	);
 	const isStaging = $derived(!!envBadge && envBadge.environment === 'staging');
-	let promoting = $state(false);
-
-	// Production's build version, looked up via staging's /api/system/peer-version
-	// (which proxies 127.0.0.1:8000 internally — no CORS/auth complication).
-	// When it matches staging's version, there's nothing to promote.
-	let peerInfo = $state<{ version: string | null; reachable: boolean } | null>(null);
-	const inSync = $derived(
-		!!envBadge?.version &&
-		!!peerInfo?.version &&
-		peerInfo.reachable &&
-		peerInfo.version === envBadge.version
-	);
-	const promoteDisabledReason = $derived.by(() => {
-		if (promoting) return 'Promoting…';
-		if (inSync) return 'Production already matches staging — nothing to promote';
-		if (peerInfo && !peerInfo.reachable) return "Can't reach production — promote will require confirmation";
-		return '';
-	});
 
 	// Build the other-environment URL on the same host (prod:8000 ↔ staging:8001),
 	// preserving the current path so "Open production" on /settings lands on /settings.
@@ -116,35 +97,6 @@
 		const targetPort = isStaging ? '8000' : '8001';
 		return `${window.location.protocol}//${window.location.hostname}:${targetPort}${window.location.pathname}${window.location.search}`;
 	});
-
-	async function promoteToProduction(force = false) {
-		const ok = await confirmAction({
-			title: force ? 'Force promote to production?' : 'Promote staging to production?',
-			message: force
-				? "Production state couldn't be verified or a print is in progress. Promoting now will RESTART the printer service and interrupt any active print. Continue anyway?"
-				: "This copies staging's code onto production and restarts the printer service. It's blocked automatically if a print is in progress.",
-			confirmLabel: force ? 'Force promote' : 'Promote',
-			variant: force ? 'danger' : 'primary'
-		});
-		if (!ok) return;
-
-		promoting = true;
-		try {
-			const res = await api.promoteStagingToProduction(force);
-			toast.success(`Promoted to production (was: ${res?.productionStatusBefore ?? 'unknown'})`);
-		} catch (e: any) {
-			const msg = String(e?.message ?? e ?? 'unknown');
-			// 409 from backend = print in progress or unverifiable state — offer force
-			if (msg.includes('force=true') || msg.includes('409')) {
-				promoting = false;
-				await promoteToProduction(true);
-				return;
-			}
-			toast.error(`Promote failed: ${msg}`);
-		} finally {
-			promoting = false;
-		}
-	}
 
 	onMount(() => {
 		initPrinterStore();
@@ -162,13 +114,6 @@
 						mockSerial: !!h.mockSerial,
 						version: h.version
 					};
-					// On staging, also look up production's version so we can
-					// tell whether there's actually something to promote.
-					if (envBadge.environment === 'staging') {
-						api.getPeerVersion()
-							.then((p) => { peerInfo = { version: p.version, reachable: p.reachable }; })
-							.catch(() => { peerInfo = { version: null, reachable: false }; });
-					}
 				}
 			})
 			.catch(() => { /* no banner */ });
@@ -227,20 +172,6 @@
 					>
 						Open production ↗
 					</a>
-					<button
-						onclick={() => promoteToProduction(false)}
-						disabled={promoting || inSync}
-						title={promoteDisabledReason}
-						class="ml-2 px-2.5 py-0.5 rounded-md bg-amber-500/30 hover:bg-amber-500/50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-amber-500/30 text-amber-100 border border-amber-400/50 transition-colors normal-case tracking-normal font-medium"
-					>
-						{#if promoting}
-							Promoting…
-						{:else if inSync}
-							✓ In sync with production
-						{:else}
-							Promote to production →
-						{/if}
-					</button>
 				{/if}
 			</div>
 		{/if}

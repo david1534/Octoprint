@@ -68,6 +68,17 @@ def sync_table(table, key_cols):
         return
     shared = [c for c in prod_cols if c in stage_cols]
     prod_rows = prod.execute(f'SELECT {\",\".join(shared)} FROM {table}').fetchall()
+    preserved_auth_hash = ''
+    if table == 'settings':
+        prod_auth = next(
+            (r['value'] for r in prod_rows if r['key'] == 'api_key_hash'),
+            '',
+        )
+        if not prod_auth:
+            row = stage.execute(
+                \"SELECT value FROM settings WHERE key = 'api_key_hash'\"
+            ).fetchone()
+            preserved_auth_hash = row['value'] if row and row['value'] else ''
     print(f'  {table}: {len(prod_rows)} rows in prod, {len(shared)} shared columns')
     if DRY:
         for r in prod_rows:
@@ -81,6 +92,12 @@ def sync_table(table, key_cols):
         f'INSERT INTO {table} ({\",\".join(shared)}) VALUES ({placeholders})',
         [tuple(r[c] for c in shared) for r in prod_rows],
     )
+    if table == 'settings' and preserved_auth_hash:
+        stage.execute(
+            \"INSERT OR REPLACE INTO settings (key, value) VALUES ('api_key_hash', ?)\",
+            (preserved_auth_hash,),
+        )
+        print('  ✓ preserved staging API key because production auth is disabled')
     print(f'  ✓ {table}: replaced with {len(prod_rows)} rows from prod')
 
 print('→ filament_spools')

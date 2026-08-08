@@ -54,6 +54,66 @@ if [ -d /opt/printforge/app ]; then
     echo -e "${GREEN}✓${NC} seeded $STAGING_DIR with production code (identical until deploy-staging.sh runs)"
 fi
 
+# Provision authentication before exposing staging on 0.0.0.0. Reuse the
+# production key when one exists; otherwise preserve an existing staging key
+# or create a new one and show it exactly once.
+PRINTFORGE_PROD_DB="$HOME/printforge/data/printforge.db" \
+PRINTFORGE_STAGE_DB="$STAGING_DATA/data/printforge.db" \
+python3 - <<'PY'
+import hashlib
+import os
+import secrets
+import sqlite3
+
+prod_path = os.environ["PRINTFORGE_PROD_DB"]
+stage_path = os.environ["PRINTFORGE_STAGE_DB"]
+
+
+def read_hash(path):
+    if not os.path.exists(path):
+        return ""
+    conn = sqlite3.connect(path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = 'api_key_hash'"
+        ).fetchone()
+        return row[0] if row and row[0] else ""
+    except sqlite3.OperationalError:
+        return ""
+    finally:
+        conn.close()
+
+
+prod_hash = read_hash(prod_path)
+stage_hash = read_hash(stage_path)
+raw_key = ""
+
+if prod_hash:
+    selected_hash = prod_hash
+    source = "production API key"
+elif stage_hash:
+    selected_hash = stage_hash
+    source = "existing staging API key"
+else:
+    raw_key = "pf_" + secrets.token_urlsafe(32)
+    selected_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    source = "new staging-only API key"
+
+stage = sqlite3.connect(stage_path)
+stage.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+stage.execute(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('api_key_hash', ?)",
+    (selected_hash,),
+)
+stage.commit()
+stage.close()
+
+print(f"Staging authentication: {source}")
+if raw_key:
+    print("Save this key now; it cannot be recovered later:")
+    print(raw_key)
+PY
+
 # Install the systemd unit, substituting the real user (template ships with User=pi)
 sed -e "s|^User=.*|User=$CURRENT_USER|" \
     -e "s|^Group=.*|Group=$CURRENT_USER|" \

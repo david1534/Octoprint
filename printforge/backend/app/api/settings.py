@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Body, HTTPException
 
+from ..config import settings as app_settings
 from ..middleware.auth import generate_api_key, hash_api_key
 from ..storage.models import get_all_settings, get_setting, get_time_correction_factor, set_setting
 
@@ -60,6 +61,9 @@ async def generate_new_api_key():
 async def revoke_api_key():
     """Remove the API key (disables auth, returns to open access)."""
     from ..middleware.auth import APIKeyMiddleware
+
+    if app_settings.environment == "staging":
+        raise HTTPException(403, "Authentication cannot be disabled on staging")
 
     await set_setting("api_key_hash", "")
     APIKeyMiddleware.invalidate_api_key_cache()

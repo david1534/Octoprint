@@ -222,7 +222,7 @@ async def _temperature_limit_error_handler(request: Request, exc: TemperatureLim
 app.include_router(printer.router)
 app.include_router(files.router)
 app.include_router(octoprint_compat.router)
-app.include_router(system.router)
+system.register_routers(app, settings.environment, settings.mock_serial)
 app.include_router(websocket.router)
 app.include_router(history.router)
 app.include_router(timelapse.router)

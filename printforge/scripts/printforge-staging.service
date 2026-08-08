@@ -3,6 +3,7 @@
 #   - never touches the real serial port (PRINTFORGE_MOCK_SERIAL=1)
 #   - has its own data dir (~/printforge-staging/) so its state is isolated
 #   - exposes PRINTFORGE_ENVIRONMENT=staging so the UI can show a banner
+#   - fails closed unless an API key hash has been provisioned in its database
 #
 # Control:
 #   sudo systemctl start  printforge-staging
@@ -26,6 +27,10 @@ Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+# Even though staging shares the production Unix user, prevent this service
+# from using that user's sudoers grants or opening real hardware devices.
+NoNewPrivileges=true
+PrivateDevices=true
 Environment=PRINTFORGE_MOCK_SERIAL=1
 Environment=PRINTFORGE_ENVIRONMENT=staging
 Environment=PRINTFORGE_GCODE_DIR=/home/pi/printforge-staging/gcodes

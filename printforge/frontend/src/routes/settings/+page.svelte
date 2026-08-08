@@ -1587,12 +1587,14 @@ M117 Print Complete`;
 						>
 							Regenerate Key
 						</button>
-						<button
-							class="text-sm px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-							onclick={revokeApiKey}
-						>
-							Revoke Key
-						</button>
+						{#if health?.environment !== 'staging'}
+							<button
+								class="text-sm px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+								onclick={revokeApiKey}
+							>
+								Revoke Key
+							</button>
+						{/if}
 					</div>
 				{:else}
 					<div class="flex items-center gap-3 mb-4">
@@ -1610,6 +1612,7 @@ M117 Print Complete`;
 			</div>
 
 			<!-- Power & Service Controls -->
+			{#if health?.environment === 'production' && !health?.mockSerial}
 			<div class="card">
 				<h2 class="text-lg font-semibold mb-4">Power & Service</h2>
 				<p class="text-sm text-surface-400 mb-4">Control the PrintForge service and Raspberry Pi power.</p>
@@ -1673,6 +1676,8 @@ M117 Print Complete`;
 					</button>
 				</div>
 			</div>
+
+			{/if}
 
 			<div class="card">
 				<h2 class="text-lg font-semibold mb-2">About PrintForge</h2>

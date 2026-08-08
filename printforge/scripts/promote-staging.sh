@@ -7,61 +7,39 @@
 # to the real PrintForge." This replaces the usual `deploy-pi` round trip —
 # no rebuild, no re-SCP, just an rsync on the Pi + restart.
 #
-# WARNING: If a print is in progress, production will be interrupted by the
-# restart. The script will refuse to proceed in that case unless you pass
-# --force.
+# The production API owns the operation and checks its real controller. Active
+# prints and unverifiable controller state are always rejected; there is no
+# force bypass.
 #
 # Usage (from your laptop):
-#   bash printforge/scripts/promote-staging.sh           # safe: refuses if printing
-#   bash printforge/scripts/promote-staging.sh --force   # restart even if printing
+#   bash printforge/scripts/promote-staging.sh
+#   PRINTFORGE_API_KEY=pf_... bash printforge/scripts/promote-staging.sh
 ###############################################################################
 
 set -e
 
-PI_USER="${PRINTFORGE_PI_USER:-david1534}"
 PI_HOST="${PRINTFORGE_PI_HOST:-100.108.194.105}"
-TARGET="$PI_USER@$PI_HOST"
-FORCE="${1:-}"
+API_KEY="${PRINTFORGE_API_KEY:-}"
 
-echo "── promote staging → production on $TARGET ──"
+echo "── promote staging → production on $PI_HOST ──"
 
-# Pi reachable?
-if ! ssh -o ConnectTimeout=5 "$TARGET" "echo OK" > /dev/null 2>&1; then
-    echo "✗ Pi unreachable. Check 'tailscale status'."
-    exit 1
+CURL_ARGS=(-sS --max-time 30 -X POST -w $'\n%{http_code}' "http://$PI_HOST:8000/api/system/promote")
+if [ -n "$API_KEY" ]; then
+    CURL_ARGS+=(-H "Authorization: Bearer $API_KEY")
 fi
 
-# Print-in-progress guard. Uses the public /api/system/health (which
-# includes printerStatus) so this works even when production has API-key
-# auth turned on — /api/printer/state would 401.
-STATUS_JSON=$(curl -s --max-time 5 "http://$PI_HOST:8000/api/system/health" || echo '{}')
-if echo "$STATUS_JSON" | grep -q '"printerStatus"[[:space:]]*:[[:space:]]*"printing"'; then
-    if [ "$FORCE" != "--force" ]; then
-        echo "✗ A print is in progress on production. Aborting."
-        echo "  Wait for it to finish, or re-run with --force to proceed anyway."
-        exit 1
-    fi
-    echo "! print in progress — proceeding because --force was passed"
-fi
+RESPONSE=$(curl "${CURL_ARGS[@]}" || true)
+HTTP_CODE=$(printf '%s\n' "$RESPONSE" | tail -n 1)
+BODY=$(printf '%s\n' "$RESPONSE" | sed '$d')
 
-# Sync staging → production code. Keep production's venv, data, config untouched.
-echo "→ rsync /opt/printforge-staging/app → /opt/printforge/app"
-ssh "$TARGET" "rsync -a --delete /opt/printforge-staging/app/ /opt/printforge/app/"
-
-if ssh "$TARGET" "[ -d /opt/printforge-staging/frontend/build ]"; then
-    echo "→ rsync /opt/printforge-staging/frontend/build → /opt/printforge/frontend/build"
-    ssh "$TARGET" "mkdir -p /opt/printforge/frontend && rsync -a --delete /opt/printforge-staging/frontend/build/ /opt/printforge/frontend/build/"
-fi
-
-echo "→ restarting printforge (production)"
-ssh "$TARGET" "sudo systemctl restart printforge"
-sleep 3
-
-STATUS=$(ssh "$TARGET" "sudo systemctl is-active printforge" || true)
-if [ "$STATUS" = "active" ]; then
-    echo "✓ production is live at http://$PI_HOST:8000"
+if [ "$HTTP_CODE" = "200" ]; then
+    echo "$BODY"
+    echo "✓ production accepted the promotion and scheduled its restart"
 else
-    echo "✗ production is $STATUS after restart. Recent logs:"
-    ssh "$TARGET" "journalctl -u printforge -n 40 --no-pager"
+    echo "✗ promotion refused (HTTP $HTTP_CODE)"
+    echo "$BODY"
+    if [ "$HTTP_CODE" = "401" ]; then
+        echo "  Set PRINTFORGE_API_KEY to the production API key and retry."
+    fi
     exit 1
 fi

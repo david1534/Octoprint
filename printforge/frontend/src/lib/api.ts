@@ -133,7 +133,6 @@ export const api = {
 
 	// System
 	getHealth: () => request<any>('/system/health'),
-	getPeerVersion: () => request<{ peerEnvironment: string; version: string | null; reachable: boolean }>('/system/peer-version'),
 	getSerialPorts: () => request<any>('/system/serial-ports'),
 	getDiskUsage: () => request<any>('/system/disk-usage'),
 
@@ -174,10 +173,6 @@ export const api = {
 	restartService: () => post<any>('/system/restart-service'),
 	restartOS: () => post<any>('/system/restart-os'),
 	shutdownOS: () => post<any>('/system/shutdown-os'),
-
-	// Staging → production promote (only works on staging instance)
-	promoteStagingToProduction: (force = false) =>
-		post<any>(`/system/promote${force ? '?force=true' : ''}`),
 
 	// Filament spools
 	getSpools: () => request<any>('/filament/'),

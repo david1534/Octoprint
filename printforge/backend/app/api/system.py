@@ -13,13 +13,14 @@ import time
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 
 from ..config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+host_router = APIRouter(prefix="/api/system", tags=["system"])
 
 _start_time = time.time()
 
@@ -152,8 +153,6 @@ async def camera_health():
     Reports ustreamer status, ffmpeg availability, camera device detection,
     and the active capture fallback chain.
     """
-    from ..printer.controller import PrinterController
-
     # Get the controller from the printer API module (same singleton)
     from ..api import printer as printer_api
 
@@ -204,7 +203,14 @@ async def disk_usage():
         return {"total": 0, "used": 0, "free": 0}
 
 
-@router.post("/restart-service")
+def register_routers(app: FastAPI, environment: str, mock_serial: bool) -> None:
+    """Register host controls only on the real production process."""
+    app.include_router(router)
+    if environment == "production" and not mock_serial:
+        app.include_router(host_router)
+
+
+@host_router.post("/restart-service")
 async def restart_service():
     """Restart the PrintForge service (blocked during active prints)."""
     # Restarting tears down the serial connection and the print task, aborting
@@ -227,7 +233,12 @@ def _reject_if_printing() -> None:
     from fastapi import HTTPException
 
     ctrl = getattr(printer_api, "_controller", None)
-    if ctrl and ctrl.state.status in ("printing", "paused", "finishing"):
+    if ctrl is None:
+        raise HTTPException(
+            503,
+            "Cannot verify the production printer state. Host operation refused.",
+        )
+    if ctrl.state.status in ("printing", "paused", "finishing"):
         raise HTTPException(
             409,
             f"Cannot perform this action while printer is {ctrl.state.status}. "
@@ -235,7 +246,7 @@ def _reject_if_printing() -> None:
         )
 
 
-@router.post("/restart-os")
+@host_router.post("/restart-os")
 async def restart_os():
     """Restart the operating system (blocked during active prints)."""
     _reject_if_printing()
@@ -250,7 +261,7 @@ async def restart_os():
         return {"status": "error", "detail": str(e)}
 
 
-@router.post("/shutdown-os")
+@host_router.post("/shutdown-os")
 async def shutdown_os():
     """Shut down the operating system (blocked during active prints)."""
     _reject_if_printing()
@@ -302,51 +313,23 @@ async def peer_version():
         return {"peerEnvironment": "production", "version": None, "reachable": False}
 
 
-@router.post("/promote")
-async def promote_staging_to_production(force: bool = False):
+@host_router.post("/promote")
+async def promote_staging_to_production():
     """Copy /opt/printforge-staging/ onto production and restart.
 
-    Only callable on the staging instance. Refuses if production is currently
-    printing unless force=true. If production status can't be verified, also
-    requires force=true — we won't blindly restart the printer service.
+    This route is mounted only by production, so its local controller is the
+    real printer controller. Active or unverifiable print state always blocks.
     """
-    if settings.environment != "staging":
-        raise HTTPException(403, "Promote is only available on staging.")
+    _reject_if_printing()
 
     log: list[str] = []
 
-    # Check production's printer state via the public health endpoint.
-    # Using /api/printer/state would 401 when production has API-key auth
-    # configured — that used to force every promote to require --force.
-    prod_status = "unknown"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get("http://127.0.0.1:8000/api/system/health")
-            if r.status_code == 200:
-                data = r.json()
-                prod_status = str(data.get("printerStatus", "unknown"))
-            else:
-                prod_status = f"http_{r.status_code}"
-    except Exception as e:
-        prod_status = f"unreachable ({e.__class__.__name__})"
+    from ..api import printer as printer_api
 
+    prod_status = printer_api._controller.state.status.value
     log.append(f"production status: {prod_status}")
 
-    unsafe_states = {"printing", "paused", "finishing"}
-    if prod_status in unsafe_states and not force:
-        raise HTTPException(
-            409,
-            f"Production is {prod_status}. Promotion would interrupt the print. "
-            "Re-run with force=true to proceed anyway.",
-        )
-    if prod_status.startswith(("unreachable", "http_")) and not force:
-        raise HTTPException(
-            409,
-            f"Can't verify production state ({prod_status}). "
-            "Re-run with force=true to proceed anyway.",
-        )
-
-    # rsync staging app → production app
+    # rsync staging app ? production app
     rc, out = await _run([
         "rsync", "-a", "--delete",
         "/opt/printforge-staging/app/",
@@ -372,12 +355,12 @@ async def promote_staging_to_production(force: bool = False):
         if rc != 0:
             raise HTTPException(500, "\n".join(log))
 
-    # Restart production
-    rc, out = await _run(["sudo", "systemctl", "restart", "printforge"])
-    log.append(f"restart rc={rc}")
-    if out:
-        log.append(out)
-    if rc != 0:
-        raise HTTPException(500, "\n".join(log))
+    # Return before systemd terminates this process.
+    subprocess.Popen(
+        ["sudo", "systemctl", "restart", "printforge"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    log.append("restart scheduled")
 
     return {"status": "promoted", "productionStatusBefore": prod_status, "log": log}
