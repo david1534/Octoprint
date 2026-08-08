@@ -4,26 +4,36 @@ When an API key is configured in settings, all API requests (except WebSocket
 and a few public endpoints) must include the key as a Bearer token or query
 parameter. Production may run open when no key is set; staging fails closed.
 """
+
 from __future__ import annotations
 
 import hashlib
 import hmac
 import logging
 import secrets
+from typing import TYPE_CHECKING
 
-from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from ..config import settings
 
+if TYPE_CHECKING:
+    from fastapi import Request, Response
+
 logger = logging.getLogger(__name__)
 
 # Endpoints that never require authentication
-PUBLIC_PATHS = frozenset({
-    "/api/system/health",
-    "/docs",
-    "/openapi.json",
-})
+PUBLIC_PATHS = frozenset(
+    {
+        "/api/system/health",
+        # Tells a fresh device "a key is required here" (yes/no only — no secret
+        # leakage). Needed so the Settings UI on an un-authed phone can still show
+        # the "paste existing key" field instead of "open access".
+        "/api/settings/api-key/status",
+        "/docs",
+        "/openapi.json",
+    }
+)
 
 # Prefixes that skip auth (static frontend, websocket handled separately)
 PUBLIC_PREFIXES = (
@@ -65,13 +75,16 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         cls._cached_hash = None
         cls._cache_loaded = False
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
 
-        # Skip auth for public paths
-        if path in PUBLIC_PATHS:
+        # Production health remains public for monitoring. Staging health is
+        # authenticated like every other operational API route so staging is
+        # never a source of unauthenticated printer/system state.
+        staging_protected_health = (
+            settings.environment == "staging" and path == "/api/system/health"
+        )
+        if path in PUBLIC_PATHS and not staging_protected_health:
             return await call_next(request)
 
         # Skip auth for public prefixes (frontend static, websocket)

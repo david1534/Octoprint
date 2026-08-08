@@ -45,11 +45,15 @@ mkdir -p "$STAGING_DATA/gcodes" "$STAGING_DATA/data" "$STAGING_DATA/logs"
 echo -e "${GREEN}✓${NC} created $STAGING_DATA/{gcodes,data,logs}"
 
 # Seed staging with current production code so the service has something to run
-if [ -d /opt/printforge/app ]; then
-    rsync -a --delete /opt/printforge/app/ "$STAGING_DIR/app/"
-    if [ -d /opt/printforge/frontend/build ]; then
+PRODUCTION_RELEASE="/opt/printforge"
+if [ -d /opt/printforge/current/app ]; then
+    PRODUCTION_RELEASE="/opt/printforge/current"
+fi
+if [ -d "$PRODUCTION_RELEASE/app" ]; then
+    rsync -a --delete "$PRODUCTION_RELEASE/app/" "$STAGING_DIR/app/"
+    if [ -d "$PRODUCTION_RELEASE/frontend/build" ]; then
         mkdir -p "$STAGING_DIR/frontend"
-        rsync -a --delete /opt/printforge/frontend/build/ "$STAGING_DIR/frontend/build/"
+        rsync -a --delete "$PRODUCTION_RELEASE/frontend/build/" "$STAGING_DIR/frontend/build/"
     fi
     echo -e "${GREEN}✓${NC} seeded $STAGING_DIR with production code (identical until deploy-staging.sh runs)"
 fi

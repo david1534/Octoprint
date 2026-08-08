@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # the UI can show a banner when you're not on production.
     environment: str = "production"
 
+    # Separate privileged credential for release promotion/rollback. This is
+    # intentionally not the normal API key: a leaked UI credential must not
+    # grant permission to replace production code. An empty value disables
+    # promotion and rollback (fail closed).
+    promotion_token: str = ""
+
     model_config = {"env_prefix": "PRINTFORGE_"}
 
 

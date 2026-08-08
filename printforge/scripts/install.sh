@@ -138,7 +138,7 @@ step 2 "Installing system dependencies"
 ###############################################################################
 
 sudo apt-get update -qq
-sudo apt-get install -y -qq python3-pip python3-venv python3-dev curl git ffmpeg fswebcam > /dev/null 2>&1
+sudo apt-get install -y -qq python3-pip python3-venv python3-dev curl git rsync ffmpeg fswebcam > /dev/null 2>&1
 success "Python 3 + build tools + ffmpeg + fswebcam"
 
 # Install Node.js for frontend build
@@ -202,6 +202,16 @@ npm run build 2>&1 | tail -1
 success "SvelteKit frontend built to $INSTALL_DIR/frontend/build/"
 
 cd "$PROJECT_DIR"
+
+# Production runs from an immutable release selected by an atomic symlink.
+# The shared venv and user data stay outside releases.
+INITIAL_RELEASE="$INSTALL_DIR/releases/install-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$INITIAL_RELEASE/app" "$INITIAL_RELEASE/frontend/build"
+rsync -a "$INSTALL_DIR/app/" "$INITIAL_RELEASE/app/"
+rsync -a "$INSTALL_DIR/frontend/build/" "$INITIAL_RELEASE/frontend/build/"
+ln -sfn "$INITIAL_RELEASE" "$INSTALL_DIR/current.new"
+mv -Tf "$INSTALL_DIR/current.new" "$INSTALL_DIR/current"
+success "Created immutable initial release"
 
 ###############################################################################
 step 5 "Creating data directories"
@@ -310,6 +320,18 @@ success "Sudoers entry for power controls"
 step 8 "Installing systemd services"
 ###############################################################################
 
+# Promotion has a separate privileged credential from the ordinary API key.
+# Preserve it across reinstalls and keep it out of the world-readable unit.
+PROMOTION_ENV_FILE="/etc/printforge-promotion.env"
+if ! sudo test -s "$PROMOTION_ENV_FILE"; then
+    PROMOTION_TOKEN="$(python3 -c 'import secrets; print("pfp_" + secrets.token_urlsafe(48))')"
+    printf 'PRINTFORGE_PROMOTION_TOKEN=%s\n' "$PROMOTION_TOKEN" \
+        | sudo tee "$PROMOTION_ENV_FILE" > /dev/null
+    sudo chmod 600 "$PROMOTION_ENV_FILE"
+else
+    PROMOTION_TOKEN="$(sudo sed -n 's/^PRINTFORGE_PROMOTION_TOKEN=//p' "$PROMOTION_ENV_FILE")"
+fi
+
 # Generate printforge service with detected settings
 cat << EOF | sudo tee /etc/systemd/system/printforge.service > /dev/null
 [Unit]
@@ -320,7 +342,7 @@ After=network.target
 Type=simple
 User=$CURRENT_USER
 Group=$CURRENT_USER
-WorkingDirectory=$INSTALL_DIR
+WorkingDirectory=$INSTALL_DIR/current
 ExecStart=$INSTALL_DIR/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=5
@@ -331,6 +353,7 @@ Environment=PRINTFORGE_SERIAL_BAUDRATE=$DETECTED_BAUD
 Environment=PRINTFORGE_GCODE_DIR=$DATA_DIR/gcodes
 Environment=PRINTFORGE_DATA_DIR=$DATA_DIR/data
 Environment=PRINTFORGE_LOG_LEVEL=INFO
+EnvironmentFile=-$PROMOTION_ENV_FILE
 
 [Install]
 WantedBy=multi-user.target
@@ -450,6 +473,7 @@ echo -e "  ${BOLD}Useful commands:${NC}"
 echo -e "  View logs:         sudo journalctl -u printforge -f"
 echo -e "  Restart:           sudo systemctl restart printforge"
 echo -e "  Switch to OctoPrint: bash ~/printforge/restore-octoprint.sh"
+echo -e "  Promotion token:    ${BOLD}$PROMOTION_TOKEN${NC}  (save this securely)"
 echo ""
 if $OCTOPRINT_WAS_RUNNING; then
     echo -e "  ${YELLOW}NOTE:${NC} OctoPrint was disabled but NOT uninstalled."

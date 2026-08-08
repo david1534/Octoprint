@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import logging
 import os
 import platform
 import shutil
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 
 from ..config import settings
 
@@ -23,6 +25,14 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 host_router = APIRouter(prefix="/api/system", tags=["system"])
 
 _start_time = time.time()
+
+SAFE_HOST_STATES = frozenset({"idle", "disconnected"})
+COMMAND_TIMEOUT_SECONDS = 30.0
+PRODUCTION_ROOT = Path("/opt/printforge")
+STAGING_ROOT = Path("/opt/printforge-staging")
+RELEASES_ROOT = PRODUCTION_ROOT / "releases"
+CURRENT_LINK = PRODUCTION_ROOT / "current"
+PREVIOUS_LINK = PRODUCTION_ROOT / "previous"
 
 
 def _compute_build_version() -> str:
@@ -153,6 +163,7 @@ async def camera_health():
     Reports ustreamer status, ffmpeg availability, camera device detection,
     and the active capture fallback chain.
     """
+
     # Get the controller from the printer API module (same singleton)
     from ..api import printer as printer_api
 
@@ -227,10 +238,9 @@ async def restart_service():
         return {"status": "error", "detail": str(e)}
 
 
-def _reject_if_printing() -> None:
-    """Raise HTTPException if a print is in progress — safety guard."""
+def _require_safe_production_state() -> str:
+    """Return an exact safe state or reject the host operation fail closed."""
     from ..api import printer as printer_api
-    from fastapi import HTTPException
 
     ctrl = getattr(printer_api, "_controller", None)
     if ctrl is None:
@@ -238,12 +248,28 @@ def _reject_if_printing() -> None:
             503,
             "Cannot verify the production printer state. Host operation refused.",
         )
-    if ctrl.state.status in ("printing", "paused", "finishing"):
+
+    try:
+        raw_status = ctrl.state.status
+        status = raw_status.value if hasattr(raw_status, "value") else raw_status
+    except Exception as exc:
+        raise HTTPException(
+            503,
+            "Cannot verify the production printer state. Host operation refused.",
+        ) from exc
+
+    if not isinstance(status, str) or status not in SAFE_HOST_STATES:
         raise HTTPException(
             409,
-            f"Cannot perform this action while printer is {ctrl.state.status}. "
-            "Cancel or finish the print first.",
+            f"Cannot perform this action while printer state is {status!r}. "
+            f"Expected one of: {', '.join(sorted(SAFE_HOST_STATES))}.",
         )
+    return status
+
+
+def _reject_if_printing() -> None:
+    """Backward-compatible wrapper for existing host-control call sites."""
+    _require_safe_production_state()
 
 
 @host_router.post("/restart-os")
@@ -276,13 +302,23 @@ async def shutdown_os():
         return {"status": "error", "detail": str(e)}
 
 
-async def _run(cmd: list[str]) -> tuple[int, str]:
+async def _run(cmd: list[str], timeout: float = COMMAND_TIMEOUT_SECONDS) -> tuple[int, str]:
+    """Run a subprocess with a hard timeout and collect combined output."""
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    out, _ = await proc.communicate()
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+        return 124, f"Command timed out after {timeout:g}s: {cmd[0]}"
     return proc.returncode or 0, out.decode("utf-8", errors="replace").strip()
 
 
@@ -313,54 +349,159 @@ async def peer_version():
         return {"peerEnvironment": "production", "version": None, "reachable": False}
 
 
-@host_router.post("/promote")
-async def promote_staging_to_production():
-    """Copy /opt/printforge-staging/ onto production and restart.
+def _require_promotion_token(request: Request) -> None:
+    """Require the deployment-only credential in addition to normal API auth."""
+    expected = settings.promotion_token.strip()
+    if not expected:
+        raise HTTPException(
+            503,
+            "Promotion is disabled because PRINTFORGE_PROMOTION_TOKEN is not configured.",
+        )
 
-    This route is mounted only by production, so its local controller is the
-    real printer controller. Active or unverifiable print state always blocks.
-    """
-    _reject_if_printing()
+    provided = request.headers.get("x-printforge-promotion-token", "")
+    if not provided or not hmac.compare_digest(provided, expected):
+        raise HTTPException(403, "Invalid or missing promotion token.")
 
-    log: list[str] = []
 
-    from ..api import printer as printer_api
+def _release_target(link: Path) -> Path | None:
+    """Resolve a release link only when it remains inside RELEASES_ROOT."""
+    if not link.is_symlink():
+        return None
+    try:
+        target = link.resolve(strict=True)
+        target.relative_to(RELEASES_ROOT.resolve())
+    except (OSError, ValueError):
+        return None
+    return target
 
-    prod_status = printer_api._controller.state.status.value
-    log.append(f"production status: {prod_status}")
 
-    # rsync staging app ? production app
-    rc, out = await _run([
-        "rsync", "-a", "--delete",
-        "/opt/printforge-staging/app/",
-        "/opt/printforge/app/",
-    ])
-    log.append(f"rsync app rc={rc}")
+def _atomic_release_link(target: Path, link: Path) -> None:
+    """Atomically replace a release symlink without exposing a missing link."""
+    target = target.resolve(strict=True)
+    target.relative_to(RELEASES_ROOT.resolve())
+    temporary = link.with_name(f".{link.name}-{os.getpid()}-{time.time_ns()}")
+    temporary.symlink_to(target, target_is_directory=True)
+    try:
+        os.replace(temporary, link)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+async def _copy_tree(source: Path, destination: Path, label: str, log: list[str]) -> None:
+    destination.mkdir(parents=True, exist_ok=False)
+    rc, out = await _run(["rsync", "-a", "--delete", f"{source}/", f"{destination}/"])
+    log.append(f"rsync {label} rc={rc}")
     if out:
         log.append(out)
     if rc != 0:
         raise HTTPException(500, "\n".join(log))
 
-    # rsync frontend build if present on staging
-    if Path("/opt/printforge-staging/frontend/build").is_dir():
-        await _run(["mkdir", "-p", "/opt/printforge/frontend"])
-        rc, out = await _run([
-            "rsync", "-a", "--delete",
-            "/opt/printforge-staging/frontend/build/",
-            "/opt/printforge/frontend/build/",
-        ])
-        log.append(f"rsync frontend rc={rc}")
-        if out:
-            log.append(out)
-        if rc != 0:
-            raise HTTPException(500, "\n".join(log))
 
-    # Return before systemd terminates this process.
+async def _stage_release(log: list[str]) -> Path:
+    """Build an immutable, complete release without touching the live release."""
+    staging_app = STAGING_ROOT / "app"
+    staging_frontend = STAGING_ROOT / "frontend" / "build"
+    if not staging_app.is_dir() or not staging_frontend.is_dir():
+        raise HTTPException(
+            503,
+            "Staging release is incomplete; both app and frontend/build are required.",
+        )
+
+    RELEASES_ROOT.mkdir(parents=True, exist_ok=True)
+    # timezone.utc keeps the deployment API compatible with the Pi's Python 3.9.
+    release_id = (
+        f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S%f}-{_build_version}"  # noqa: UP017
+    )
+    release = RELEASES_ROOT / release_id
+    temporary = RELEASES_ROOT / f".{release_id}-{os.getpid()}"
+    temporary.mkdir(parents=False, exist_ok=False)
+    try:
+        await _copy_tree(staging_app, temporary / "app", "app", log)
+        await _copy_tree(staging_frontend, temporary / "frontend" / "build", "frontend", log)
+        os.replace(temporary, release)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    return release
+
+
+def _schedule_service_restart() -> None:
+    """Schedule a production restart after activation."""
     subprocess.Popen(
         ["sudo", "systemctl", "restart", "printforge"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
-    log.append("restart scheduled")
 
-    return {"status": "promoted", "productionStatusBefore": prod_status, "log": log}
+
+def _require_active_release_layout() -> Path:
+    """Verify systemd actually launched this process from the current release."""
+    current = _release_target(CURRENT_LINK)
+    # system.py is <release>/app/api/system.py.
+    running_release = Path(__file__).resolve().parents[2]
+    if current is None or running_release != current:
+        raise HTTPException(
+            503,
+            "Production is not running from /opt/printforge/current. "
+            "Install the release-based systemd unit before promoting.",
+        )
+    return current
+
+
+@host_router.post("/promote")
+async def promote_staging_to_production(request: Request):
+    """Stage and atomically activate a complete release, retaining rollback."""
+    _require_promotion_token(request)
+    prod_status = _require_safe_production_state()
+    log = [f"production status: {prod_status}"]
+
+    current = _require_active_release_layout()
+
+    release = await _stage_release(log)
+    try:
+        _atomic_release_link(current, PREVIOUS_LINK)
+        _atomic_release_link(release, CURRENT_LINK)
+        _schedule_service_restart()
+    except Exception as exc:
+        _atomic_release_link(current, CURRENT_LINK)
+        raise HTTPException(500, f"Release activation failed: {exc}") from exc
+
+    log.append(f"activated release: {release.name}")
+    log.append(f"rollback release: {current.name}")
+    log.append("restart scheduled")
+    return {
+        "status": "promoted",
+        "productionStatusBefore": prod_status,
+        "release": release.name,
+        "previousRelease": current.name,
+        "rollbackAvailable": True,
+        "log": log,
+    }
+
+
+@host_router.post("/promote/rollback")
+async def rollback_production_release(request: Request):
+    """Atomically reactivate the retained previous release and restart."""
+    _require_promotion_token(request)
+    prod_status = _require_safe_production_state()
+    current = _release_target(CURRENT_LINK)
+    previous = _release_target(PREVIOUS_LINK)
+    if current is None or previous is None or current == previous:
+        raise HTTPException(409, "No valid previous production release is available.")
+
+    try:
+        _atomic_release_link(previous, CURRENT_LINK)
+        _atomic_release_link(current, PREVIOUS_LINK)
+        _schedule_service_restart()
+    except Exception as exc:
+        _atomic_release_link(current, CURRENT_LINK)
+        _atomic_release_link(previous, PREVIOUS_LINK)
+        raise HTTPException(500, f"Rollback activation failed: {exc}") from exc
+
+    return {
+        "status": "rolled_back",
+        "productionStatusBefore": prod_status,
+        "release": previous.name,
+        "previousRelease": current.name,
+    }

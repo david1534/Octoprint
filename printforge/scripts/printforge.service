@@ -11,7 +11,7 @@ After=network.target
 Type=simple
 User=pi
 Group=pi
-WorkingDirectory=/opt/printforge
+WorkingDirectory=/opt/printforge/current
 ExecStart=/opt/printforge/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=5
@@ -22,6 +22,7 @@ Environment=PRINTFORGE_SERIAL_BAUDRATE=115200
 Environment=PRINTFORGE_GCODE_DIR=/home/pi/printforge/gcodes
 Environment=PRINTFORGE_DATA_DIR=/home/pi/printforge/data
 Environment=PRINTFORGE_LOG_LEVEL=INFO
+EnvironmentFile=-/etc/printforge-promotion.env
 
 [Install]
 WantedBy=multi-user.target
