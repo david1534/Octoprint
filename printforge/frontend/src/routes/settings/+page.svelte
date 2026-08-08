@@ -503,6 +503,11 @@ M117 Print Complete`;
 	let apiKeyEnabled = $state(false);
 	let apiKeyLoading = $state(false);
 	let generatedKey = $state('');
+	// "I have a key from another device, use it here" — pastes into localStorage
+	// and verifies against the backend. Only needed the first time you visit on
+	// a new device (iPhone home-screen icon, etc.).
+	let existingKey = $state('');
+	let existingKeyLoading = $state(false);
 
 	async function loadApiKeyStatus() {
 		try {
@@ -551,6 +556,34 @@ M117 Print Complete`;
 	function copyApiKey() {
 		navigator.clipboard.writeText(generatedKey);
 		toast.success('API key copied to clipboard');
+	}
+
+	async function saveExistingKey() {
+		const trimmed = existingKey.trim();
+		if (!trimmed) return;
+		const { setApiKey } = await import('$lib/api');
+		// Snapshot the previous key so we can revert on a bad paste
+		const previous = typeof localStorage !== 'undefined'
+			? localStorage.getItem('printforge:apiKey')
+			: null;
+		setApiKey(trimmed);
+		existingKeyLoading = true;
+		try {
+			// Hit an authed endpoint to prove the key actually works before
+			// we keep it and tear down the UI. getState is a reliable probe.
+			await api.getState();
+			toast.success('Key accepted — reloading to reconnect…');
+			existingKey = '';
+			// Reload so the WebSocket picks up the new key cleanly and the
+			// backend issues the durable HttpOnly cookie on the next request.
+			setTimeout(() => window.location.reload(), 600);
+		} catch (e: any) {
+			// Revert localStorage to whatever was there before
+			setApiKey(previous);
+			toast.error('That key was rejected. Double-check it and try again.');
+		} finally {
+			existingKeyLoading = false;
+		}
 	}
 
 	async function handleRestartService() {
@@ -1595,6 +1628,39 @@ M117 Print Complete`;
 								Revoke Key
 							</button>
 						{/if}
+					</div>
+
+					<!-- "I have the key on another device" flow — pastes into
+					     localStorage, pings an authed endpoint to confirm, and
+					     reloads so the WS + durable cookie pick it up. -->
+					<div class="mt-5 pt-5 border-t border-surface-700">
+						<p class="text-sm font-medium text-surface-200 mb-1">Use an existing key on this device</p>
+						<p class="text-xs text-surface-500 mb-3">
+							Paste the key from another device (e.g. your laptop) to authenticate this
+							browser. On your laptop at <code class="text-surface-400">/</code>, run
+							<code class="text-surface-400">localStorage.getItem('printforge:apiKey')</code> in DevTools.
+						</p>
+						<div class="flex gap-2">
+							<input
+								type="password"
+								class="input flex-1 text-xs font-mono"
+								placeholder="pf_…"
+								bind:value={existingKey}
+								autocomplete="off"
+								autocapitalize="off"
+								autocorrect="off"
+								spellcheck="false"
+								disabled={existingKeyLoading}
+								onkeydown={(e) => { if (e.key === 'Enter') saveExistingKey(); }}
+							/>
+							<button
+								class="btn-primary text-sm shrink-0"
+								onclick={saveExistingKey}
+								disabled={existingKeyLoading || !existingKey.trim()}
+							>
+								{existingKeyLoading ? 'Checking…' : 'Use key'}
+							</button>
+						</div>
 					</div>
 				{:else}
 					<div class="flex items-center gap-3 mb-4">

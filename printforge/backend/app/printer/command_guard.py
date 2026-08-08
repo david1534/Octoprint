@@ -13,6 +13,8 @@ bypass by choosing a different endpoint.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 # Raw commands accepted from external clients while a print is active or
@@ -61,15 +63,45 @@ _TEMP_SET_COMMANDS = _HOTEND_TEMP_COMMANDS | _BED_TEMP_COMMANDS
 
 # S = target (heat), R = target used by M109/M190's wait-including-cooling form.
 # Both express the target temperature, so both must be checked against the cap.
-_TEMP_PARAM_RE = re.compile(r"\b[SR](-?\d+(?:\.\d+)?)", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"^\s*(?:N\d+\s+)?([GMT]\d+)", re.IGNORECASE)
+_TEMP_PARAM_RE = re.compile(
+    r"[SR]\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))", re.IGNORECASE
+)
+
+
+class TemperatureLimitError(ValueError):
+    """Raised when G-code requests a heater target above a safety ceiling."""
+
+    def __init__(
+        self, message: str, violations: Optional[list["GcodeSafetyViolation"]] = None
+    ) -> None:
+        self.violations = violations or []
+        super().__init__(message)
+
+
+@dataclass(frozen=True)
+class GcodeSafetyViolation:
+    """A temperature command rejected during G-code preflight."""
+
+    source: str
+    line_number: Optional[int]
+    command: str
+    message: str
+
+    def to_dict(self) -> dict:
+        return {
+            "source": self.source,
+            "lineNumber": self.line_number,
+            "command": self.command,
+            "message": self.message,
+        }
 
 
 def command_base(command: str) -> str:
     """Return the upper-cased opcode of a G-code line (e.g. 'M104'), or ''."""
-    stripped = command.strip()
-    if not stripped:
-        return ""
-    return stripped.split()[0].upper()
+    code = command.split(";", 1)[0]
+    match = _COMMAND_RE.match(code)
+    return match.group(1).upper() if match else ""
 
 
 def is_allowed_during_print(command: str) -> bool:
@@ -100,7 +132,8 @@ def temperature_command_error(
         ceiling, label = max_hotend, "Hotend"
     else:
         ceiling, label = max_bed, "Bed"
-    for match in _TEMP_PARAM_RE.finditer(command):
+    code = command.split(";", 1)[0]
+    for match in _TEMP_PARAM_RE.finditer(code):
         value = float(match.group(1))
         if value > ceiling:
             return (
@@ -108,6 +141,73 @@ def temperature_command_error(
                 f"{ceiling:.0f}C"
             )
     return None
+
+
+def is_heater_shutdown_command(command: str) -> bool:
+    """Return whether a command is a heater-set command with only zero targets.
+
+    This is deliberately strict because it gates the queue's trusted shutdown
+    escape hatch. A caller cannot label an arbitrary heater command as trusted.
+    """
+    if command_base(command) not in _TEMP_SET_COMMANDS:
+        return False
+    values = [
+        float(match.group(1))
+        for match in _TEMP_PARAM_RE.finditer(command.split(";", 1)[0])
+    ]
+    return bool(values) and all(value == 0 for value in values)
+
+
+def preflight_gcode_lines(
+    lines,
+    max_hotend: float,
+    max_bed: float,
+    source: str,
+) -> list[GcodeSafetyViolation]:
+    """Return all over-ceiling heater commands in an iterable of G-code lines."""
+    violations: list[GcodeSafetyViolation] = []
+    for line_number, raw_line in enumerate(lines, start=1):
+        command = raw_line.split(";", 1)[0].strip()
+        if not command:
+            continue
+        error = temperature_command_error(command, max_hotend, max_bed)
+        if error:
+            violations.append(
+                GcodeSafetyViolation(source, line_number, command, error)
+            )
+    return violations
+
+
+def preflight_gcode_text(
+    text: str,
+    max_hotend: float,
+    max_bed: float,
+    source: str,
+) -> list[GcodeSafetyViolation]:
+    """Preflight a custom start/end G-code sequence."""
+    return preflight_gcode_lines(text.splitlines(), max_hotend, max_bed, source)
+
+
+def preflight_gcode_file(
+    filepath: Path,
+    max_hotend: float,
+    max_bed: float,
+    source: str = "file",
+) -> list[GcodeSafetyViolation]:
+    """Preflight a G-code file without loading the entire print into memory."""
+    with open(filepath, "r", encoding="utf-8", errors="replace") as handle:
+        return preflight_gcode_lines(handle, max_hotend, max_bed, source)
+
+
+def format_preflight_error(violations: list[GcodeSafetyViolation]) -> str:
+    """Build a user-facing error that identifies every blocked command."""
+    lines = ["Print blocked by temperature safety preflight:"]
+    for violation in violations:
+        location = violation.source
+        if violation.line_number is not None:
+            location += f" line {violation.line_number}"
+        lines.append(f"- {location}: {violation.command} — {violation.message}")
+    return "\n".join(lines)
 
 
 def temperature_value_error(

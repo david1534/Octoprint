@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.serial.command_queue import CommandPriority, CommandQueue
+from app.serial.command_queue import CommandPriority
 from app.serial.gcode_sender import GcodeSender, PrintResult
 from app.serial.protocol import CommandResult
 
@@ -442,3 +442,76 @@ class TestGcodeSenderReset:
 
         sender.reset()
         assert sender._filament_used_mm == pytest.approx(123.456)
+
+
+class _ControlledCancelQueue:
+    def __init__(self):
+        self.calls = []
+        self.heater_futures = {}
+        self.clear = AsyncMock()
+        self.resume = MagicMock()
+
+    async def enqueue(self, command, priority, **kwargs):
+        self.calls.append((command, priority, kwargs))
+        future = asyncio.get_running_loop().create_future()
+        if command in {"M104 S0", "M140 S0"}:
+            self.heater_futures[command] = future
+        elif command != "G28 X Y":
+            future.set_result(CommandResult(command=command, ok=True))
+        return future
+
+
+class TestCancelSafetyOrdering:
+    async def test_heaters_are_safety_priority_and_acknowledged_before_park(self):
+        queue = _ControlledCancelQueue()
+        sender = GcodeSender(queue)
+
+        cleanup = asyncio.create_task(sender._on_cancel())
+        while len(queue.calls) < 3:
+            await asyncio.sleep(0)
+
+        assert [call[0] for call in queue.calls] == [
+            "M104 S0",
+            "M140 S0",
+            "M106 S0",
+        ]
+        assert all(call[1] == CommandPriority.SAFETY for call in queue.calls)
+        assert queue.calls[0][2]["timeout"] == 3.0
+        assert queue.calls[1][2]["timeout"] == 3.0
+
+        for command, future in queue.heater_futures.items():
+            future.set_result(CommandResult(command=command, ok=True))
+
+        # G28 deliberately never acknowledges. Cancellation still finishes
+        # because parking is queued only after heater ack and is not awaited.
+        await asyncio.wait_for(cleanup, timeout=0.2)
+        commands = [call[0] for call in queue.calls]
+        assert commands.index("M104 S0") < commands.index("G28 X Y")
+        assert commands.index("M140 S0") < commands.index("G28 X Y")
+
+    async def test_failed_heater_ack_skips_all_parking_motion(self):
+        queue = _ControlledCancelQueue()
+        sender = GcodeSender(queue)
+
+        cleanup = asyncio.create_task(sender._on_cancel())
+        while len(queue.heater_futures) < 2:
+            await asyncio.sleep(0)
+        for command, future in queue.heater_futures.items():
+            future.set_result(
+                CommandResult(command=command, ok=False, error="disconnected")
+            )
+
+        await cleanup
+        commands = [call[0] for call in queue.calls]
+        assert commands == ["M104 S0", "M140 S0", "M106 S0"]
+
+    def test_request_cancel_releases_paused_sender_immediately(self):
+        queue = _ControlledCancelQueue()
+        sender = GcodeSender(queue)
+        sender._paused = True
+
+        sender.request_cancel()
+
+        assert sender._cancelled is True
+        assert sender._paused is False
+        queue.resume.assert_called_once_with()

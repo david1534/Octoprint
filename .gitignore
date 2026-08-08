@@ -1,2 +1,7 @@
 node_modules/
 .dev-data/
+
+# Local agent runtime artifacts
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+_ul

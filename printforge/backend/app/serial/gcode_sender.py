@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 # The sender should abort immediately on these, not count retries.
 _FATAL_ERROR_PATTERNS = ("STOP", "KILLED", "Halted", "BLTouch")
 
+# Cancellation heater commands must not inherit the protocol's 300-second
+# timeout for long motion commands. The aggregate acknowledgement wait also
+# bounds cancellation when serial is disconnected or already wedged.
+_CANCEL_COMMAND_TIMEOUT = 3.0
+_CANCEL_HEATER_ACK_TIMEOUT = 5.0
+
 
 class PrintResult(str, Enum):
     """Lifecycle result for the current sender task.
@@ -148,6 +154,7 @@ class GcodeSender:
         self._current_layer = 0
         self._total_layers = 0
         self._task: Optional[asyncio.Task] = None
+        self._cancel_cleanup_task: Optional[asyncio.Task] = None
         self._result = PrintResult.IDLE
         self._failure: Optional[BaseException] = None
         # Saved position for resume
@@ -344,6 +351,7 @@ class GcodeSender:
         self._lcd_last_layer = -1
         self._paused = False
         self._cancelled = False
+        self._cancel_cleanup_task = None
         self._current_line = 0
         self._current_layer = 0
         self._total_pause_duration = 0.0
@@ -724,12 +732,13 @@ class GcodeSender:
 
     async def cancel(self) -> None:
         """Cancel the current print."""
-        if not self.is_printing:
+        was_printing = self.is_printing
+        self.request_cancel()
+        await self._on_cancel()
+        if not was_printing:
             return
-        self._cancelled = True
-        self._paused = False
-        self._queue.resume()
-        # Wait for the print task to finish its cleanup
+        # An already in-flight serial command may still be using its protocol
+        # timeout. Bound how long the API waits for the print task to unwind.
         if self._task:
             try:
                 await asyncio.wait_for(self._task, timeout=10.0)
@@ -737,11 +746,72 @@ class GcodeSender:
                 self._task.cancel()
         logger.info("Print cancelled")
 
+    def request_cancel(self) -> None:
+        """Synchronously flag cancellation and release a paused print loop."""
+        self._cancelled = True
+        self._paused = False
+        self._queue.resume()
+
     async def _on_cancel(self) -> None:
-        """Clean up after cancellation."""
+        """Run cancellation cleanup once, even with concurrent callers."""
+        if self._cancel_cleanup_task is None:
+            self._cancel_cleanup_task = asyncio.create_task(
+                self._cancel_hardware(), name="print-cancel-hardware"
+            )
+        await asyncio.shield(self._cancel_cleanup_task)
+
+    async def _cancel_hardware(self) -> None:
+        """Shut down heaters before attempting any cancellation movement."""
         await self._queue.clear()
-        # Retract in relative extrusion mode regardless of whether the file uses
-        # M82 or M83, then restore the tracked extrusion state.
+        # Shutdown outranks every queued motion/print command. The queue only
+        # permits trusted_shutdown for zero-target heater commands.
+        # Turn off heaters — await to ensure they actually shut off before
+        hotend_off = await self._queue.enqueue(
+            "M104 S0",
+            CommandPriority.SAFETY,
+            trusted_shutdown=True,
+            timeout=_CANCEL_COMMAND_TIMEOUT,
+        )
+        bed_off = await self._queue.enqueue(
+            "M140 S0",
+            CommandPriority.SAFETY,
+            trusted_shutdown=True,
+            timeout=_CANCEL_COMMAND_TIMEOUT,
+        )
+        await self._queue.enqueue(
+            "M106 S0",
+            CommandPriority.SAFETY,
+            timeout=_CANCEL_COMMAND_TIMEOUT,
+        )
+
+        done, pending = await asyncio.wait(
+            (hotend_off, bed_off), timeout=_CANCEL_HEATER_ACK_TIMEOUT
+        )
+        heaters_off = len(done) == 2
+        for future in done:
+            try:
+                result: CommandResult = future.result()
+                heaters_off = heaters_off and result.ok
+            except asyncio.CancelledError:
+                heaters_off = False
+            except Exception:
+                heaters_off = False
+
+        for future in pending:
+            # Cancel only the waiter. Its safety command remains queued and will
+            # still be sent after any command already in flight finishes.
+            future.cancel()
+
+        if not heaters_off:
+            logger.warning(
+                "Heater shutoff was not acknowledged within %.1fs; "
+                "skipping cancellation park",
+                _CANCEL_HEATER_ACK_TIMEOUT,
+            )
+            return
+
+        # Park only after both heater-off commands have been acknowledged. These
+        # are fire-and-forget so a non-acknowledging home cannot delay cancel.
         await self._queue.enqueue("M83", CommandPriority.SYSTEM)
         await self._queue.enqueue("G91", CommandPriority.SYSTEM)
         await self._queue.enqueue("G1 E-5 F1800", CommandPriority.SYSTEM)
@@ -749,18 +819,6 @@ class GcodeSender:
         await self._queue.enqueue("G1 Z10 F600", CommandPriority.SYSTEM)
         await self._queue.enqueue("G90", CommandPriority.SYSTEM)
         await self._queue.enqueue("G28 X Y", CommandPriority.SYSTEM)
-        # Turn off heaters — await to ensure they actually shut off before
-        # the cancel timeout potentially force-cancels the task
-        hotend_off = await self._queue.enqueue("M104 S0", CommandPriority.SYSTEM)
-        bed_off = await self._queue.enqueue("M140 S0", CommandPriority.SYSTEM)
-        try:
-            await asyncio.wait_for(hotend_off, timeout=5.0)
-            await asyncio.wait_for(bed_off, timeout=5.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            logger.warning("Heater shutoff commands did not complete in time")
-        # Turn off fan
-        await self._queue.enqueue("M106 S0", CommandPriority.SYSTEM)
-        # Disable steppers after a delay
         await self._queue.enqueue("M84", CommandPriority.SYSTEM)
 
     async def _restore_extrusion_state(self) -> None:
@@ -856,6 +914,7 @@ class GcodeSender:
         self._start_time = None
         self._paused = False
         self._cancelled = False
+        self._cancel_cleanup_task = None
         self._in_start_gcode = False
         self._task = None
         self._result = PrintResult.IDLE

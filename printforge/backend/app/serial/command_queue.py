@@ -14,6 +14,11 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Optional
 
+from ..printer.command_guard import (
+    TemperatureLimitError,
+    is_heater_shutdown_command,
+    temperature_command_error,
+)
 from .protocol import CommandResult, MarlinProtocol
 
 logger = logging.getLogger(__name__)
@@ -33,14 +38,23 @@ class QueuedCommand:
     timestamp: float = field(compare=True)
     command: str = field(compare=False)
     with_checksum: bool = field(compare=False, default=False)
+    trusted_shutdown: bool = field(compare=False, default=False)
+    timeout: Optional[float] = field(compare=False, default=None)
     future: asyncio.Future = field(compare=False, default=None)
 
 
 class CommandQueue:
     """Thread-safe priority queue for printer commands."""
 
-    def __init__(self, protocol: MarlinProtocol):
+    def __init__(
+        self,
+        protocol: MarlinProtocol,
+        max_hotend_temp: float = 290.0,
+        max_bed_temp: float = 110.0,
+    ):
         self._protocol = protocol
+        self._max_hotend_temp = max_hotend_temp
+        self._max_bed_temp = max_bed_temp
         self._queue: asyncio.PriorityQueue[QueuedCommand] = asyncio.PriorityQueue()
         self._paused = False
         self._pause_event = asyncio.Event()
@@ -101,7 +115,11 @@ class CommandQueue:
         command: str,
         priority: CommandPriority = CommandPriority.USER,
         with_checksum: bool = False,
+        trusted_shutdown: bool = False,
+        timeout: Optional[float] = None,
     ) -> asyncio.Future:
+        self._validate_temperature_command(command, trusted_shutdown)
+
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         queued = QueuedCommand(
@@ -109,10 +127,29 @@ class CommandQueue:
             timestamp=time.monotonic(),
             command=command,
             with_checksum=with_checksum,
+            trusted_shutdown=trusted_shutdown,
+            timeout=timeout,
             future=future,
         )
         await self._queue.put(queued)
         return future
+
+    def _validate_temperature_command(
+        self, command: str, trusted_shutdown: bool
+    ) -> None:
+        """Enforce heater ceilings before enqueue and immediately before send."""
+        if trusted_shutdown:
+            if not is_heater_shutdown_command(command):
+                raise ValueError(
+                    "trusted_shutdown is restricted to zero-target heater commands"
+                )
+        else:
+            error = temperature_command_error(
+                command, self._max_hotend_temp, self._max_bed_temp
+            )
+            if error:
+                logger.error("Blocked unsafe heater command at queue boundary: %s", command)
+                raise TemperatureLimitError(error)
 
     async def _process_loop(self) -> None:
         logger.info("Command processing loop started")
@@ -136,8 +173,15 @@ class CommandQueue:
                 await self._pause_event.wait()
                 continue
             try:
+                # Re-check at the final wire boundary. This also protects
+                # against commands inserted directly into the internal queue.
+                self._validate_temperature_command(
+                    queued.command, queued.trusted_shutdown
+                )
                 result = await self._protocol.send_command(
-                    queued.command, with_checksum=queued.with_checksum
+                    queued.command,
+                    with_checksum=queued.with_checksum,
+                    timeout=queued.timeout,
                 )
                 if queued.future and not queued.future.done():
                     queued.future.set_result(result)

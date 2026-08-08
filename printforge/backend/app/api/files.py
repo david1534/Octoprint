@@ -1,5 +1,6 @@
 """File management REST API endpoints with folder support."""
 
+import asyncio
 import re
 import shutil
 from pathlib import Path
@@ -9,6 +10,11 @@ import aiofiles
 from fastapi import APIRouter, HTTPException, UploadFile, Query
 
 from ..config import settings
+from ..printer.command_guard import (
+    GcodeSafetyViolation,
+    preflight_gcode_file,
+    temperature_value_error,
+)
 from ..printer.gcode_parser import calculate_filament_cost, parse_gcode_file
 from ..storage.models import get_setting
 from ..utils.paths import is_within
@@ -160,10 +166,38 @@ async def upload_file(
         while chunk := await file.read(1024 * 64):
             await f.write(chunk)
 
+    violations = await asyncio.to_thread(
+        preflight_gcode_file,
+        filepath,
+        settings.max_hotend_temp,
+        settings.max_bed_temp,
+        safe_name,
+    )
+
     try:
         metadata = parse_gcode_file(filepath)
+        metadata_error = temperature_value_error(
+            metadata.nozzle_temp,
+            metadata.bed_temp,
+            settings.max_hotend_temp,
+            settings.max_bed_temp,
+        )
+        if metadata_error:
+            violations.append(
+                GcodeSafetyViolation(
+                    "metadata",
+                    None,
+                    (
+                        f"nozzle_temp={metadata.nozzle_temp}, "
+                        f"bed_temp={metadata.bed_temp}"
+                    ),
+                    metadata_error,
+                )
+            )
         result = metadata.to_dict()
         result["path"] = str(filepath.relative_to(GCODE_DIR)).replace("\\", "/")
+        result["safetyBlocked"] = bool(violations)
+        result["blockedCommands"] = [v.to_dict() for v in violations]
         return {"ok": True, "file": result}
     except Exception:
         return {
@@ -172,6 +206,8 @@ async def upload_file(
                 "filename": safe_name,
                 "fileSize": filepath.stat().st_size,
                 "path": str(filepath.relative_to(GCODE_DIR)).replace("\\", "/"),
+                "safetyBlocked": bool(violations),
+                "blockedCommands": [v.to_dict() for v in violations],
             },
         }
 

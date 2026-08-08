@@ -121,8 +121,8 @@ class TimelapseRecorder:
 
         Returns True if recording started, False if disabled or already recording.
         """
-        if self._recording:
-            logger.warning("Already recording, ignoring start request")
+        if self._recording or self._assembling:
+            logger.warning("Timelapse busy, ignoring start request")
             return False
 
         # Reload settings from DB so we pick up any changes made via the API
@@ -194,24 +194,26 @@ class TimelapseRecorder:
             return None
 
         self._recording = False
-
-        # Stop timed capture
-        if self._timer_task:
-            self._timer_task.cancel()
-            try:
-                await self._timer_task
-            except asyncio.CancelledError:
-                pass
-            self._timer_task = None
-
-        if self._frame_count < 2:
-            logger.warning("Timelapse has %d frame(s), skipping assembly", self._frame_count)
-            await asyncio.to_thread(self._cleanup_frames)
-            return None
-
-        # Assemble video (or ZIP fallback if ffmpeg is missing)
         self._assembling = True
         try:
+            # Stop timed capture. Mark assembling before this first await so a
+            # new print cannot overwrite this session's frame state.
+            if self._timer_task:
+                self._timer_task.cancel()
+                try:
+                    await self._timer_task
+                except asyncio.CancelledError:
+                    pass
+                self._timer_task = None
+
+            if self._frame_count < 2:
+                logger.warning(
+                    "Timelapse has %d frame(s), skipping assembly",
+                    self._frame_count,
+                )
+                return None
+
+            # Assemble video (or ZIP fallback if ffmpeg is missing)
             if self._camera.has_ffmpeg:
                 video_filename = await self._assemble_video(success)
                 if video_filename:
@@ -301,6 +303,7 @@ class TimelapseRecorder:
             self._render_fps,
         )
 
+        proc: Optional[asyncio.subprocess.Process] = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -320,7 +323,13 @@ class TimelapseRecorder:
             return video_name
         except asyncio.TimeoutError:
             logger.error("ffmpeg timed out after 300s")
+            if proc:
+                await self._kill_subprocess(proc, "timelapse assembly")
             return None
+        except asyncio.CancelledError:
+            if proc:
+                await self._kill_subprocess(proc, "cancelled timelapse assembly")
+            raise
         except FileNotFoundError:
             logger.error("ffmpeg not found. Install ffmpeg to enable timelapse assembly.")
             return None
@@ -342,6 +351,7 @@ class TimelapseRecorder:
             str(thumb_path),
         ]
 
+        proc: Optional[asyncio.subprocess.Process] = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -353,8 +363,31 @@ class TimelapseRecorder:
                 logger.info("Thumbnail generated: %s", thumb_path.name)
             else:
                 logger.warning("Thumbnail generation failed for %s", video_filename)
-        except (asyncio.TimeoutError, FileNotFoundError):
+        except asyncio.TimeoutError:
+            if proc:
+                await self._kill_subprocess(proc, "thumbnail generation")
             logger.warning("Could not generate thumbnail (ffmpeg issue)")
+        except asyncio.CancelledError:
+            if proc:
+                await self._kill_subprocess(proc, "cancelled thumbnail generation")
+            raise
+        except FileNotFoundError:
+            logger.warning("Could not generate thumbnail (ffmpeg issue)")
+
+    @staticmethod
+    async def _kill_subprocess(
+        proc: asyncio.subprocess.Process, operation: str
+    ) -> None:
+        """Terminate and reap a stalled ffmpeg process."""
+        if proc.returncode is not None:
+            return
+        try:
+            proc.kill()
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except ProcessLookupError:
+            pass
+        except asyncio.TimeoutError:
+            logger.error("Could not reap ffmpeg after %s", operation)
 
     def _save_frames_as_zip(self, success: bool) -> Optional[str]:
         """Fallback: save captured frames as a ZIP archive when ffmpeg is missing."""

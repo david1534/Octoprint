@@ -324,7 +324,9 @@
       "Bash(scp printforge/backend/app/serial/gcode_sender.py david1534@100.108.194.105:/opt/printforge/app/serial/gcode_sender.py)",
       "Bash(scp printforge/backend/app/printer/controller.py david1534@100.108.194.105:/opt/printforge/app/printer/controller.py)",
       "Bash(scp printforge/backend/app/serial/protocol.py david1534@100.108.194.105:/opt/printforge/app/serial/protocol.py)",
-      "Bash(scp printforge/backend/app/serial/command_queue.py david1534@100.108.194.105:/opt/printforge/app/serial/command_queue.py)"
+      "Bash(scp printforge/backend/app/serial/command_queue.py david1534@100.108.194.105:/opt/printforge/app/serial/command_queue.py)",
+      "Bash(xargs wc -l)",
+      "Bash(xargs cat)"
     ]
   }
 }

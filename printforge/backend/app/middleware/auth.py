@@ -42,6 +42,11 @@ PUBLIC_PREFIXES = (
     "/favicon",
 )
 
+# HttpOnly cookie that mirrors the API key. Server-set cookies survive iOS
+# Safari ITP's 7-day localStorage eviction, so phones can stay authed long-term.
+AUTH_COOKIE_NAME = "pf_auth"
+AUTH_COOKIE_MAX_AGE = 365 * 24 * 60 * 60  # 1 year
+
 
 def generate_api_key() -> str:
     """Generate a secure random API key."""
@@ -121,13 +126,15 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Extract key from Authorization header, X-Api-Key header (OctoPrint
-        # compat), or query param
+        # compat), HttpOnly cookie, or query param
         key = None
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
             key = auth_header[7:]
         if not key:
             key = request.headers.get("x-api-key", "")
+        if not key:
+            key = request.cookies.get(AUTH_COOKIE_NAME, "")
         if not key:
             key = request.query_params.get("apikey", "")
 
@@ -139,4 +146,16 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Invalid or missing API key"},
             )
 
-        return await call_next(request)
+        response = await call_next(request)
+        # Refresh the durable cookie on every successful auth (sliding expiration).
+        # HttpOnly = no XSS theft; SameSite=strict = no CSRF; no Secure because
+        # PrintForge runs on plain http over Tailscale.
+        response.set_cookie(
+            key=AUTH_COOKIE_NAME,
+            value=key,
+            max_age=AUTH_COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="strict",
+            path="/",
+        )
+        return response

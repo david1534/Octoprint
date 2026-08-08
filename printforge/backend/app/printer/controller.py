@@ -26,8 +26,13 @@ from ..services import notifier
 from ..services.camera import CameraService
 from ..services.timelapse import TimelapseRecorder
 from .command_guard import (
+    GcodeSafetyViolation,
+    TemperatureLimitError,
     command_base,
+    format_preflight_error,
     is_allowed_during_print,
+    preflight_gcode_file,
+    preflight_gcode_text,
     temperature_command_error,
     temperature_value_error,
 )
@@ -35,6 +40,10 @@ from .error_log import ErrorLog
 from .state import PrinterState, PrinterStatus
 
 logger = logging.getLogger(__name__)
+
+_POSTPROCESS_TIMEOUT = 15.0
+_TIMELAPSE_POSTPROCESS_TIMEOUT = 310.0
+_CURRENT_SPOOL = object()
 
 # Pre-compiled regex for position parsing (called on every M114 response)
 _POSITION_RE = re.compile(r"X:([\d.-]+)\s*Y:([\d.-]+)\s*Z:([\d.-]+)")
@@ -74,16 +83,6 @@ class PrinterCommandError(RuntimeError):
         super().__init__(f"{command}: {detail}")
 
 
-class TemperatureLimitError(ValueError):
-    """Raised when a requested heater target exceeds the safety ceiling.
-
-    The API layer maps this to HTTP 400 — it's a rejected client request, not
-    a printer-side failure, so it must not be confused with PrinterCommandError
-    (502). Enforcing the ceiling here means every structured temperature set
-    honors the limit regardless of which endpoint called it.
-    """
-
-
 class PrinterController:
     """High-level printer control interface."""
 
@@ -112,6 +111,8 @@ class PrinterController:
         self._current_job_id: Optional[int] = None
         # Spool selected for current print
         self._current_spool_id: Optional[int] = None
+        # Keep fire-and-forget post-processing alive and observable until done.
+        self._background_tasks: set[asyncio.Task] = set()
         # Camera and timelapse
         self._camera: Optional[CameraService] = None
         self._timelapse: Optional[TimelapseRecorder] = None
@@ -396,7 +397,11 @@ class PrinterController:
                 )
                 if self._protocol:
                     self._protocol.reset_line_number()
-                    self._queue = CommandQueue(self._protocol)
+                    self._queue = CommandQueue(
+                        self._protocol,
+                        max_hotend_temp=self._safety.max_hotend_temp,
+                        max_bed_temp=self._safety.max_bed_temp,
+                    )
                     self._queue.start()
                     self._sender = GcodeSender(self._queue)
                 if self._queue:
@@ -507,7 +512,11 @@ class PrinterController:
         # and leave the connection in a permanently broken state.
         self.state.firmware_name = await self._protocol.query_firmware()
 
-        self._queue = CommandQueue(self._protocol)
+        self._queue = CommandQueue(
+            self._protocol,
+            max_hotend_temp=self._safety.max_hotend_temp,
+            max_bed_temp=self._safety.max_bed_temp,
+        )
         self._queue.start()
 
         self._sender = GcodeSender(self._queue)
@@ -853,6 +862,62 @@ M117 Print Complete"""
                 "{nozzle_temp}", str(int(nozzle_temp))
             ).replace("{bed_temp}", str(int(bed_temp)))
 
+        # Preflight every temperature source before resetting the printer,
+        # starting timelapse, updating probe timestamps, or creating history.
+        # The queue repeats this check at the wire boundary to close TOCTOU
+        # gaps if a file or setting changes after this scan.
+        max_hotend = self._safety.max_hotend_temp
+        max_bed = self._safety.max_bed_temp
+        violations: list[GcodeSafetyViolation] = []
+
+        metadata_error = temperature_value_error(
+            meta.nozzle_temp if meta else None,
+            meta.bed_temp if meta else None,
+            max_hotend,
+            max_bed,
+        )
+        if metadata_error:
+            metadata_command = (
+                f"nozzle_temp={meta.nozzle_temp}, bed_temp={meta.bed_temp}"
+            )
+            violations.append(
+                GcodeSafetyViolation(
+                    "metadata", None, metadata_command, metadata_error
+                )
+            )
+
+        violations.extend(
+            await asyncio.to_thread(
+                preflight_gcode_file,
+                filepath,
+                max_hotend,
+                max_bed,
+                filepath.name,
+            )
+        )
+        violations.extend(
+            preflight_gcode_text(
+                start_gcode, max_hotend, max_bed, "custom start G-code"
+            )
+        )
+        end_gcode_raw = await get_setting("end_gcode", self.DEFAULT_END_GCODE)
+        end_gcode_for_preflight = end_gcode_raw.replace(
+            "{nozzle_temp}", "0"
+        ).replace("{bed_temp}", "0")
+        violations.extend(
+            preflight_gcode_text(
+                end_gcode_for_preflight,
+                max_hotend,
+                max_bed,
+                "custom end G-code",
+            )
+        )
+        if violations:
+            raise TemperatureLimitError(
+                format_preflight_error(violations), violations=violations
+            )
+
+        if start_gcode_raw.strip():
             # Periodic bed probing: skip G29 if probed recently.
             # M420 S1 (already in default start gcode) loads the saved
             # mesh from EEPROM, so skipping G29 is safe.
@@ -978,44 +1043,122 @@ M117 Print Complete"""
     async def cancel_print(self) -> None:
         """Cancel the current print."""
         if self._sender:
-            # Stop timelapse (mark as failed)
-            await self._stop_timelapse(success=False)
+            # This synchronous flag is the first action: it stops the producer
+            # and releases paused prints before any database or media work.
+            self._sender.request_cancel()
 
-            # Capture filament usage before cancel/reset clears state
+            # Snapshot all post-processing inputs so a subsequent print cannot
+            # race background cleanup and change the selected job/spool/file.
             filament_used = self._sender._filament_used_mm
             elapsed = self._sender.elapsed_seconds
             lines = self._sender.current_line
-
-            # Record cancellation in history
-            if self._current_job_id:
-                from ..storage.models import complete_print_job
-
-                try:
-                    await complete_print_job(
-                        job_id=self._current_job_id,
-                        status="cancelled",
-                        duration_seconds=int(elapsed),
-                        lines_printed=lines,
-                        filament_used_mm=filament_used,
-                    )
-                except Exception:
-                    logger.exception("Failed to record print cancellation")
-                self._current_job_id = None
-
-            # Deduct filament actually used before cancellation
-            await self._deduct_filament(filament_used)
+            job_id = self._current_job_id
+            spool_id = self._current_spool_id
+            filename = self.state.current_file or "Unknown"
+            self._current_job_id = None
             self._current_spool_id = None
 
-            await self._sender.cancel()
-            self._sender.reset()
-            # Notify before clearing current_file so we have the filename
+            # FINISHING excludes this task from the monitor's completion/abort
+            # detector, which would otherwise race and record it as failed.
+            self.state.status = PrinterStatus.FINISHING
+            self._notify_state_change()
+
             try:
-                await notifier.notify_print_cancelled(self.state.current_file or "Unknown")
+                await self._sender.cancel()
             except Exception:
-                logger.exception("Error sending print-cancelled notification")
+                logger.exception("Error during printer cancellation cleanup")
+            self._detach_timelapse_callback()
+            self._sender.reset()
             self.state.status = PrinterStatus.IDLE
             self.state.current_file = None
             self._notify_state_change()
+
+            # Hardware cancellation is complete (or hit its short fallback)
+            # before any of these independent, bounded tasks are launched.
+            self._schedule_background(
+                self._cancel_timelapse_postprocess(), "cancel-timelapse"
+            )
+            if job_id:
+                self._schedule_background(
+                    self._cancel_history_postprocess(
+                        job_id, elapsed, lines, filament_used
+                    ),
+                    "cancel-history",
+                )
+            self._schedule_background(
+                self._cancel_filament_postprocess(filament_used, spool_id),
+                "cancel-filament",
+            )
+            self._schedule_background(
+                self._cancel_notification_postprocess(filename),
+                "cancel-notification",
+            )
+
+    def _schedule_background(self, coroutine, name: str) -> None:
+        """Schedule tracked post-processing without blocking printer safety."""
+        task = asyncio.create_task(coroutine, name=name)
+        self._background_tasks.add(task)
+
+        def _finished(done: asyncio.Task) -> None:
+            self._background_tasks.discard(done)
+            if not done.cancelled() and (error := done.exception()):
+                logger.error("Background task %s failed: %s", name, error)
+
+        task.add_done_callback(_finished)
+
+    async def _run_bounded_postprocess(
+        self, label: str, operation, timeout: float
+    ) -> None:
+        try:
+            await asyncio.wait_for(operation, timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error("%s timed out after %.1fs", label, timeout)
+        except Exception:
+            logger.exception("%s failed", label)
+
+    async def _cancel_timelapse_postprocess(self) -> None:
+        await self._run_bounded_postprocess(
+            "Cancel timelapse post-processing",
+            self._stop_timelapse(success=False),
+            _TIMELAPSE_POSTPROCESS_TIMEOUT,
+        )
+
+    async def _cancel_history_postprocess(
+        self,
+        job_id: int,
+        elapsed: float,
+        lines: int,
+        filament_used: float,
+    ) -> None:
+        from ..storage.models import complete_print_job
+
+        await self._run_bounded_postprocess(
+            "Cancel history write",
+            complete_print_job(
+                job_id=job_id,
+                status="cancelled",
+                duration_seconds=int(elapsed),
+                lines_printed=lines,
+                filament_used_mm=filament_used,
+            ),
+            _POSTPROCESS_TIMEOUT,
+        )
+
+    async def _cancel_filament_postprocess(
+        self, filament_used: float, spool_id: Optional[int]
+    ) -> None:
+        await self._run_bounded_postprocess(
+            "Cancel filament deduction",
+            self._deduct_filament(filament_used, spool_id),
+            _POSTPROCESS_TIMEOUT,
+        )
+
+    async def _cancel_notification_postprocess(self, filename: str) -> None:
+        await self._run_bounded_postprocess(
+            "Cancel notification",
+            notifier.notify_print_cancelled(filename),
+            _POSTPROCESS_TIMEOUT,
+        )
 
     async def emergency_stop(self) -> None:
         """Send M112 emergency stop. Printer must be power-cycled after."""
@@ -1046,7 +1189,11 @@ M117 Print Complete"""
         """Disable stepper motors."""
         await self._send_checked("M84")
 
-    async def _deduct_filament(self, filament_used_mm: float) -> None:
+    async def _deduct_filament(
+        self,
+        filament_used_mm: float,
+        spool_id: Optional[int] | object = _CURRENT_SPOOL,
+    ) -> None:
         """Deduct filament from the selected spool (or active spool fallback).
 
         Called on ALL print endings — success, cancel, or failure — so that
@@ -1061,10 +1208,14 @@ M117 Print Complete"""
             get_spool,
         )
 
+        selected_spool_id = (
+            self._current_spool_id if spool_id is _CURRENT_SPOOL else spool_id
+        )
+
         logger.info(
             "Filament deduction: %.1fmm extruded, spool_id=%s",
             filament_used_mm,
-            self._current_spool_id,
+            selected_spool_id,
         )
         if filament_used_mm <= 0:
             logger.info("No filament usage tracked (0mm extruded)")
@@ -1072,15 +1223,15 @@ M117 Print Complete"""
 
         try:
             spool = None
-            if self._current_spool_id:
-                spool = await get_spool(self._current_spool_id)
+            if selected_spool_id:
+                spool = await get_spool(selected_spool_id)
             if not spool:
                 spool = await get_active_spool()
             if not spool:
                 logger.warning(
                     "No spool found for filament deduction "
                     "(spool_id=%s, no active spool)",
-                    self._current_spool_id,
+                    selected_spool_id,
                 )
                 return
 
@@ -1101,9 +1252,7 @@ M117 Print Complete"""
 
     async def _stop_timelapse(self, success: bool = True) -> None:
         """Stop timelapse recording and remove the layer callback."""
-        if self._sender and hasattr(self, "_timelapse_layer_cb"):
-            self._sender.remove_layer_callback(self._timelapse_layer_cb)
-            del self._timelapse_layer_cb
+        self._detach_timelapse_callback()
 
         if self._timelapse and self._timelapse.is_recording:
             self._notify_terminal("[SYSTEM] Assembling timelapse video...", "system")
@@ -1115,6 +1264,12 @@ M117 Print Complete"""
                     "[SYSTEM] Timelapse: not enough frames or assembly failed",
                     "system",
                 )
+
+    def _detach_timelapse_callback(self) -> None:
+        """Detach the current print's callback before sender state is reset."""
+        if self._sender and hasattr(self, "_timelapse_layer_cb"):
+            self._sender.remove_layer_callback(self._timelapse_layer_cb)
+            del self._timelapse_layer_cb
 
     async def _on_print_complete(
         self,
@@ -1147,8 +1302,12 @@ M117 Print Complete"""
             if cooldown == "true" and not end_gcode.strip():
                 logger.info("Post-print cooldown: turning off heaters")
                 if self._queue:
-                    await self._queue.enqueue("M104 S0", CommandPriority.SYSTEM)
-                    await self._queue.enqueue("M140 S0", CommandPriority.SYSTEM)
+                    await self._queue.enqueue(
+                        "M104 S0", CommandPriority.SYSTEM, trusted_shutdown=True
+                    )
+                    await self._queue.enqueue(
+                        "M140 S0", CommandPriority.SYSTEM, trusted_shutdown=True
+                    )
         except Exception:
             logger.exception("Error running end G-code")
 

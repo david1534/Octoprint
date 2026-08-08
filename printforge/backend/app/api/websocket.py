@@ -170,7 +170,7 @@ def _ensure_terminal_flush_task() -> None:
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     # Validate API key if authentication is enabled
-    from ..middleware.auth import verify_api_key
+    from ..middleware.auth import AUTH_COOKIE_NAME, verify_api_key
     from ..storage.models import get_setting
 
     api_key_hash = await get_setting("api_key_hash", "")
@@ -181,7 +181,10 @@ async def websocket_endpoint(websocket: WebSocket):
         )
         return
     if api_key_hash:
-        key = websocket.query_params.get("apikey", "")
+        # Prefer the HttpOnly cookie (durable on iOS Safari, auto-sent by the
+        # browser on the WS handshake). Fall back to the ?apikey= query param
+        # for clients that can't rely on cookies (e.g. debugging with wscat).
+        key = websocket.cookies.get(AUTH_COOKIE_NAME, "") or websocket.query_params.get("apikey", "")
         if not key or not verify_api_key(key, api_key_hash):
             await websocket.close(code=4401, reason="Invalid or missing API key")
             return

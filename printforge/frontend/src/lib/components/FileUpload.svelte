@@ -18,17 +18,25 @@
 
 		try {
 			const names: string[] = [];
+			const blocked: string[] = [];
 			for (const file of Array.from(fileList)) {
 				uploadFilename = file.name;
 				totalBytes = file.size;
 				uploadedBytes = 0;
 				uploadProgress = 0;
 
-				await uploadWithProgress(file);
+				const response = await uploadWithProgress(file);
 				names.push(file.name);
+				for (const violation of response?.file?.blockedCommands ?? []) {
+					const line = violation.lineNumber ? `line ${violation.lineNumber}` : violation.source;
+					blocked.push(`${file.name} ${line}: ${violation.command}`);
+				}
 			}
 			await refreshFiles($currentPath);
 			toast.success(`Uploaded: ${names.join(', ')}`);
+			if (blocked.length) {
+				toast.warning(`Print blocked by heater limits: ${blocked.join('; ')}`);
+			}
 		} catch (e: any) {
 			toast.error(e.message || 'Upload failed');
 		} finally {
@@ -38,7 +46,7 @@
 		}
 	}
 
-	function uploadWithProgress(file: File): Promise<void> {
+	function uploadWithProgress(file: File): Promise<any> {
 		return new Promise((resolve, reject) => {
 			const xhr = new XMLHttpRequest();
 			const formData = new FormData();
@@ -53,7 +61,11 @@
 
 			xhr.addEventListener('load', () => {
 				if (xhr.status >= 200 && xhr.status < 300) {
-					resolve();
+					try {
+						resolve(JSON.parse(xhr.responseText));
+					} catch {
+						resolve(null);
+					}
 				} else {
 					try {
 						const err = JSON.parse(xhr.responseText);

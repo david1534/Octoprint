@@ -215,7 +215,12 @@ async def _printer_command_error_handler(request: Request, exc: PrinterCommandEr
 @app.exception_handler(TemperatureLimitError)
 async def _temperature_limit_error_handler(request: Request, exc: TemperatureLimitError):
     logger.warning("Temperature target rejected: %s", exc)
-    return JSONResponse(status_code=400, content={"detail": str(exc)})
+    content = {"detail": str(exc)}
+    if exc.violations:
+        content["blockedCommands"] = [
+            violation.to_dict() for violation in exc.violations
+        ]
+    return JSONResponse(status_code=400, content=content)
 
 
 # Register API routers
