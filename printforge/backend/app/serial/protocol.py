@@ -9,6 +9,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import Optional
 
 from .connection import SerialConnection
 
@@ -37,7 +38,7 @@ class CommandResult:
     command: str
     ok: bool
     response_lines: list[str] = field(default_factory=list)
-    error: str | None = None
+    error: Optional[str] = None  # noqa: UP045 - staging currently runs Python 3.9
 
 
 class MarlinProtocol:
@@ -116,7 +117,10 @@ class MarlinProtocol:
         return bool(_USER_WAIT_RE.search(line))
 
     async def send_command(
-        self, command: str, with_checksum: bool = False, timeout: float | None = None
+        self,
+        command: str,
+        with_checksum: bool = False,
+        timeout: Optional[float] = None,  # noqa: UP045 - staging runs Python 3.9
     ) -> CommandResult:
         original_command = command.strip()
         if with_checksum:
