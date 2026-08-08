@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..config import settings
+from ..printer.controller import PrinterLifecycleError
 from ..printer.gcode_parser import parse_gcode_file
 from ..utils.paths import is_within
 
@@ -446,16 +447,18 @@ async def octoprint_connection_command(req: ConnectionRequest):
     if cmd == "connect":
         port = req.port or "/dev/ttyUSB0"
         baudrate = req.baudrate or 115200
-        if ctrl.state.status.value not in ("disconnected", "error"):
-            raise HTTPException(409, "Already connected")
-        ok = await ctrl.connect(port=port, baudrate=baudrate)
+        try:
+            ok = await ctrl.connect(port=port, baudrate=baudrate)
+        except PrinterLifecycleError as exc:
+            raise HTTPException(409, str(exc)) from exc
         if not ok:
             raise HTTPException(500, f"Failed to connect to {port}")
 
     elif cmd == "disconnect":
-        if ctrl.state.status.value == "disconnected":
-            raise HTTPException(409, "Already disconnected")
-        await ctrl.disconnect()
+        try:
+            await ctrl.disconnect()
+        except PrinterLifecycleError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     else:
         raise HTTPException(400, f"Unsupported command: {cmd}")

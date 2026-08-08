@@ -60,7 +60,9 @@ class CommandQueue:
         self._pause_event = asyncio.Event()
         self._pause_event.set()  # Start unpaused
         self._processing = False
+        self._stopped = False
         self._task: Optional[asyncio.Task] = None
+        self._in_flight: Optional[QueuedCommand] = None
 
     @property
     def is_paused(self) -> bool:
@@ -68,14 +70,49 @@ class CommandQueue:
 
     def start(self) -> None:
         if self._task is None or self._task.done():
+            self._stopped = False
             self._processing = True
             self._task = asyncio.create_task(self._process_loop())
             logger.info("Command queue started")
 
     def stop(self) -> None:
+        """Stop accepting commands and resolve every outstanding future.
+
+        Resolving the futures synchronously is important: the serial connection
+        may be torn down immediately after this method returns.  A caller that
+        was awaiting either the command currently on the wire or one still in
+        the priority queue must be woken instead of being left behind on a queue
+        that no longer has a consumer.
+        """
         self._processing = False
+        self._stopped = True
+        if self._in_flight:
+            self._resolve_stopped(self._in_flight)
+        drained = self._drain_stopped()
         if self._task:
             self._task.cancel()
+        logger.info("Command queue stopped (%d queued commands drained)", drained)
+
+    @staticmethod
+    def _resolve_stopped(queued: QueuedCommand) -> None:
+        if queued.future and not queued.future.done():
+            queued.future.set_result(
+                CommandResult(
+                    command=queued.command,
+                    ok=False,
+                    error="Command queue stopped before completion",
+                )
+            )
+
+    def _drain_stopped(self) -> int:
+        drained = 0
+        while True:
+            try:
+                queued = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return drained
+            self._resolve_stopped(queued)
+            drained += 1
 
     async def wait_for_stop(self, timeout: float = 5.0) -> None:
         """Wait for the processing task to fully exit after stop().
@@ -118,6 +155,8 @@ class CommandQueue:
         trusted_shutdown: bool = False,
         timeout: Optional[float] = None,
     ) -> asyncio.Future:
+        if self._stopped:
+            raise ConnectionError("Command queue is stopped")
         self._validate_temperature_command(command, trusted_shutdown)
 
         loop = asyncio.get_running_loop()
@@ -166,9 +205,11 @@ class CommandQueue:
                 continue
             except asyncio.CancelledError:
                 break
+            self._in_flight = queued
             if self._paused and queued.priority == CommandPriority.PRINT:
                 # Put the print command back and wait for resume instead
                 # of busy-looping (saves CPU during long pauses)
+                self._in_flight = None
                 await self._queue.put(queued)
                 await self._pause_event.wait()
                 continue
@@ -186,8 +227,7 @@ class CommandQueue:
                 if queued.future and not queued.future.done():
                     queued.future.set_result(result)
             except asyncio.CancelledError:
-                if queued.future and not queued.future.done():
-                    queued.future.cancel()
+                self._resolve_stopped(queued)
                 break
             except Exception as e:
                 logger.exception("Error processing command: %s", queued.command)
@@ -195,4 +235,11 @@ class CommandQueue:
                     queued.future.set_result(
                         CommandResult(command=queued.command, ok=False, error=str(e))
                     )
+            finally:
+                self._in_flight = None
+        # Also cover an unexpected consumer exit.  Once there is no processing
+        # task, no future may remain pending in this queue.
+        self._processing = False
+        self._stopped = True
+        self._drain_stopped()
         logger.info("Command processing loop stopped")

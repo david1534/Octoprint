@@ -12,7 +12,7 @@ from ..printer.command_guard import (
     is_allowed_during_print,
     temperature_command_error,
 )
-from ..printer.controller import PrinterController
+from ..printer.controller import PrinterController, PrinterLifecycleError
 from ..utils.paths import is_within
 
 router = APIRouter(prefix="/api/printer", tags=["printer"])
@@ -90,7 +90,10 @@ async def get_state():
 async def connect(req: ConnectRequest):
     """Connect to the printer."""
     ctrl = get_controller()
-    success = await ctrl.connect(port=req.port, baudrate=req.baudrate)
+    try:
+        success = await ctrl.connect(port=req.port, baudrate=req.baudrate)
+    except PrinterLifecycleError as exc:
+        raise HTTPException(409, str(exc)) from exc
     if not success:
         raise HTTPException(500, f"Failed to connect to {req.port}")
     return {"status": "connected", "firmware": ctrl.state.firmware_name}
@@ -100,7 +103,10 @@ async def connect(req: ConnectRequest):
 async def disconnect():
     """Disconnect from the printer."""
     ctrl = get_controller()
-    await ctrl.disconnect()
+    try:
+        await ctrl.disconnect()
+    except PrinterLifecycleError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {"status": "disconnected"}
 
 

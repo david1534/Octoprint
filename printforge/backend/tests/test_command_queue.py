@@ -4,6 +4,8 @@ import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from app.serial.command_queue import CommandPriority, CommandQueue, QueuedCommand
 from app.serial.protocol import CommandResult
 
@@ -79,3 +81,47 @@ class TestCommandTimeoutOverride:
         )
         queue.stop()
         await queue.wait_for_stop()
+
+
+class _BlockingProtocol:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def send_command(self, command, with_checksum=False, timeout=None):
+        self.started.set()
+        await self.release.wait()
+
+    async def drain_unsolicited(self):
+        return None
+
+
+class TestCommandQueueShutdown:
+    async def test_stop_resolves_in_flight_and_queued_futures(self):
+        protocol = _BlockingProtocol()
+        queue = CommandQueue(protocol)
+        queue.start()
+        in_flight = await queue.enqueue("G28")
+        queued = await queue.enqueue("M105")
+
+        await protocol.started.wait()
+        queue.stop()
+
+        first, second = await asyncio.wait_for(
+            asyncio.gather(in_flight, queued), timeout=1.0
+        )
+        await queue.wait_for_stop(timeout=1.0)
+
+        assert first.ok is False
+        assert second.ok is False
+        assert "stopped" in first.error.lower()
+        assert "stopped" in second.error.lower()
+
+    async def test_enqueue_after_stop_fails_fast(self):
+        queue = CommandQueue(_BlockingProtocol())
+        queue.start()
+        queue.stop()
+
+        with pytest.raises(ConnectionError, match="stopped"):
+            await queue.enqueue("M105")
+        await queue.wait_for_stop(timeout=1.0)
