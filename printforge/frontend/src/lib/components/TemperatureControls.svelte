@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { api } from '../api';
-	import { printerState } from '../stores/printer';
+	import { printerState, hasTransport } from '../stores/printer';
 	import { toast } from '../stores/toast';
 
 	let hotendInput = $state('');
 	let bedInput = $state('');
 	let loading = $state('');
-	let isConnected = $derived($printerState.status !== 'disconnected');
+	let transportAvailable = $derived($hasTransport);
 	let hotend = $derived($printerState.hotend);
 	let bed = $derived($printerState.bed);
 
@@ -107,7 +107,7 @@
 				class="btn-secondary flex-1 text-xs py-2.5 min-h-[40px] inline-flex items-center justify-center
 					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 				onclick={() => applyPreset(preset)}
-				disabled={!isConnected || !!loading}
+				disabled={!transportAvailable || !!loading}
 			>
 				{#if loading === 'preset:' + preset.name}
 					<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-surface-400 border-t-white"></span>
@@ -127,13 +127,13 @@
 				class="input flex-1"
 				placeholder="200"
 				bind:value={hotendInput}
-				disabled={!isConnected || !!loading}
+				disabled={!transportAvailable || !!loading}
 			/>
 			<button
 				class="btn-primary text-sm px-4 min-h-[40px] inline-flex items-center gap-1.5
 					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 				onclick={setHotend}
-				disabled={!isConnected || !!loading}
+				disabled={!transportAvailable || !!loading}
 			>
 				{#if loading === 'hotend'}
 					<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white/30 border-t-white"></span>
@@ -152,13 +152,13 @@
 				class="input flex-1"
 				placeholder="60"
 				bind:value={bedInput}
-				disabled={!isConnected || !!loading}
+				disabled={!transportAvailable || !!loading}
 			/>
 			<button
 				class="btn-primary text-sm px-4 min-h-[40px] inline-flex items-center gap-1.5
 					   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 				onclick={setBed}
-				disabled={!isConnected || !!loading}
+				disabled={!transportAvailable || !!loading}
 			>
 				{#if loading === 'bed'}
 					<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white/30 border-t-white"></span>
@@ -172,7 +172,7 @@
 		class="btn-secondary w-full text-sm min-h-[40px] inline-flex items-center justify-center gap-2
 			   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
 		onclick={coolDown}
-		disabled={!isConnected || !!loading}
+		disabled={!transportAvailable || !!loading}
 	>
 		{#if loading === 'cooldown'}
 			<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-surface-400 border-t-white"></span>

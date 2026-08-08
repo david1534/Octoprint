@@ -10,7 +10,7 @@
 	import JogControls from '$lib/components/JogControls.svelte';
 	import TemperatureControls from '$lib/components/TemperatureControls.svelte';
 	import ExtruderControls from '$lib/components/ExtruderControls.svelte';
-	import { printerState, isConnected, isPrinting, isPaused, isFinishing } from '$lib/stores/printer';
+	import { printerState, hasTransport, isReady, isPrinting, isPaused, isFinishing } from '$lib/stores/printer';
 	import { files, refreshFiles } from '$lib/stores/files';
 	import { api } from '$lib/api';
 	import { toast } from '$lib/stores/toast';
@@ -18,7 +18,8 @@
 	import { formatDuration } from '$lib/utils';
 
 	let state = $derived($printerState);
-	let connected = $derived($isConnected);
+	let transportAvailable = $derived($hasTransport);
+	let ready = $derived($isReady);
 	let printing = $derived($isPrinting);
 	let paused = $derived($isPaused);
 	let finishing = $derived($isFinishing);
@@ -98,7 +99,7 @@
 	let lastStatus = $state('');
 
 	onMount(() => {
-		if ($isConnected) {
+		if ($hasTransport) {
 			refreshFiles();
 		}
 		loadHealth();
@@ -190,11 +191,19 @@
 	}
 
 	function quickPrint(filename: string) {
+		if (!ready) {
+			toast.warning('Printer must be connected and idle to start a print');
+			return;
+		}
 		printDialogFilename = filename;
 		printDialogOpen = true;
 	}
 
 	async function onPrintConfirm(spoolId: number | null) {
+		if (!ready) {
+			toast.warning('Printer must be connected and idle to start a print');
+			return;
+		}
 		const filename = printDialogFilename;
 		printDialogOpen = false;
 		printDialogFilename = '';
@@ -221,7 +230,7 @@
 
 <svelte:window onkeydown={onDashboardKeydown} />
 
-{#if !connected}
+{#if !transportAvailable}
 	<!-- Disconnected state -->
 	<div class="max-w-md mx-auto mt-20 text-center fade-in">
 		<div class="w-16 h-16 bg-accent/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -587,4 +596,4 @@
 	oncancel={onPrintCancel}
 />
 
-<FilesDrawer bind:open={drawerOpen} onclose={closeDrawer} disabled={printing || paused || finishing} />
+<FilesDrawer bind:open={drawerOpen} onclose={closeDrawer} disabled={!ready} />

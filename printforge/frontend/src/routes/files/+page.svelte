@@ -3,15 +3,14 @@
 	import { goto } from '$app/navigation';
 	import { files, folders, currentPath, parentPath, refreshFiles, type GcodeFile, type Folder } from '$lib/stores/files';
 	import { api } from '$lib/api';
-	import { printerState } from '$lib/stores/printer';
+	import { isReady } from '$lib/stores/printer';
 	import { toast } from '$lib/stores/toast';
 	import { confirmAction } from '$lib/stores/confirm';
 	import { formatFileSize, formatDuration } from '$lib/utils';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PrintStartDialog from '$lib/components/PrintStartDialog.svelte';
 
-	let isConnected = $derived($printerState.status !== 'disconnected');
-	let isPrinting = $derived($printerState.status === 'printing' || $printerState.status === 'paused');
+	let canStartPrint = $derived($isReady);
 	let loading = $state('');
 
 	// Print start dialog
@@ -186,6 +185,10 @@
 
 	async function onPrintConfirm(spoolId: number | null) {
 		if (!printDialogFile) return;
+		if (!canStartPrint) {
+			toast.warning('Printer must be connected and idle to start a print');
+			return;
+		}
 		const file = printDialogFile;
 		printDialogOpen = false;
 		printDialogFile = null;
@@ -1122,8 +1125,8 @@
 							<button
 								class="btn-primary text-sm px-3 py-1.5 inline-flex items-center gap-1.5"
 								onclick={() => startPrint(file)}
-								disabled={!isConnected || isPrinting || !!loading}
-								title={!isConnected ? 'Printer not connected' : isPrinting ? 'Print in progress' : 'Print & monitor'}
+								disabled={!canStartPrint || !!loading}
+								title={canStartPrint ? 'Print & monitor' : 'Printer must be connected and idle'}
 							>
 								{#if loading === 'print:' + file.path}
 									<span class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white/30 border-t-white"></span>
@@ -1205,7 +1208,7 @@
 						<button
 							class="btn-primary text-xs px-2.5 py-1.5 flex-1"
 							onclick={() => startPrint(file)}
-							disabled={!isConnected || isPrinting || !!loading}
+							disabled={!canStartPrint || !!loading}
 						>Print</button>
 						<button
 							class="btn-icon text-surface-500 hover:text-surface-200 hover:bg-surface-700"
@@ -1237,7 +1240,7 @@
 			{@const file = contextMenu.file}
 			<button class="w-full px-3 py-2 text-sm text-left text-surface-200 hover:bg-surface-700 flex items-center gap-2 disabled:opacity-40"
 				onclick={() => { startPrint(file); contextMenu = null; }}
-				disabled={!isConnected || isPrinting}
+				disabled={!canStartPrint}
 			>
 				<svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />

@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import BedMesh from '$lib/components/BedMesh.svelte';
-	import { printerState, isConnected } from '$lib/stores/printer';
+	import { printerState, hasTransport } from '$lib/stores/printer';
 	import { api } from '$lib/api';
 	import { toast } from '$lib/stores/toast';
 
-	let connected = $derived($isConnected);
+	let transportAvailable = $derived($hasTransport);
 	let state = $derived($printerState);
 	let meshData = $state<any>(null);
 	let probing = $state(false);
@@ -59,7 +59,7 @@
 	<title>PrintForge - Bed Mesh</title>
 </svelte:head>
 
-{#if !connected}
+{#if !transportAvailable}
 	<div class="max-w-md mx-auto mt-20 text-center fade-in">
 		<p class="text-surface-400 mb-4">Connect to the printer to view bed mesh data</p>
 		<a href="/settings" class="btn-primary inline-block">Go to Settings</a>
