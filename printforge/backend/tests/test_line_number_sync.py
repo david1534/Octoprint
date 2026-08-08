@@ -81,6 +81,31 @@ class TestPreambleSkipping:
         )
         return f
 
+    @pytest.fixture
+    def markerless_gcode(self, tmp_path):
+        f = tmp_path / "markerless.gcode"
+        f.write_text(
+            "G28\n"
+            "M109 S200\n"
+            "G1 X5 Y5 E0.5 F1200\n"
+            "G1 X10 Y10 E1.0\n"
+            "G1 X20 Y20 E2.0\n"
+        )
+        return f
+
+    @pytest.fixture
+    def simplify3d_gcode(self, tmp_path):
+        f = tmp_path / "simplify3d.gcode"
+        f.write_text(
+            "G28\n"
+            "M109 S200\n"
+            "G1 X5 Y5 E5 F1200\n"
+            "; layer 1, Z = 0.200\n"
+            "G1 X10 Y10 E5.5\n"
+            "G1 X20 Y20 E6.0\n"
+        )
+        return f
+
     @pytest.mark.asyncio
     async def test_preamble_skipped_when_start_gcode_provided(self, gcode_with_preamble):
         enqueued = []
@@ -134,6 +159,76 @@ class TestPreambleSkipping:
         # Without start gcode, nothing should be skipped
         print_cmds = [cmd for cmd, pri, _ in enqueued if pri == CommandPriority.PRINT]
         assert "G28" in print_cmds
+
+    @pytest.mark.asyncio
+    async def test_markerless_file_is_streamed_unchanged(self, markerless_gcode):
+        """Custom start G-code must not suppress a file with no layer marker."""
+        enqueued = []
+
+        async def mock_enqueue(cmd, priority=CommandPriority.USER, with_checksum=False):
+            enqueued.append((cmd, priority, with_checksum))
+            future = asyncio.get_running_loop().create_future()
+            future.set_result(CommandResult(command=cmd, ok=True))
+            return future
+
+        queue = MagicMock()
+        queue.enqueue = mock_enqueue
+        queue.pause = MagicMock()
+        queue.resume = MagicMock()
+        queue.clear = AsyncMock()
+
+        sender = GcodeSender(queue)
+        await sender.start_print(markerless_gcode, start_gcode="G28\nM109 S200")
+        await asyncio.wait_for(sender._task, timeout=5.0)
+
+        print_cmds = [cmd for cmd, pri, _ in enqueued if pri == CommandPriority.PRINT]
+        assert print_cmds == [
+            "G28",
+            "M109 S200",
+            "G1 X5 Y5 E0.5 F1200",
+            "G1 X10 Y10 E1.0",
+            "G1 X20 Y20 E2.0",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_simplify3d_layer_marker_ends_preamble(self, simplify3d_gcode):
+        """Alternative slicer markers get the same bounded skip behavior."""
+        enqueued = []
+
+        async def mock_enqueue(cmd, priority=CommandPriority.USER, with_checksum=False):
+            enqueued.append((cmd, priority, with_checksum))
+            future = asyncio.get_running_loop().create_future()
+            future.set_result(CommandResult(command=cmd, ok=True))
+            return future
+
+        queue = MagicMock()
+        queue.enqueue = mock_enqueue
+        queue.pause = MagicMock()
+        queue.resume = MagicMock()
+        queue.clear = AsyncMock()
+
+        sender = GcodeSender(queue)
+        await sender.start_print(simplify3d_gcode, start_gcode="G28\nM109 S200")
+        await asyncio.wait_for(sender._task, timeout=5.0)
+
+        print_cmds = [cmd for cmd, pri, _ in enqueued if pri == CommandPriority.PRINT]
+        assert print_cmds == ["G1 X10 Y10 E5.5", "G1 X20 Y20 E6.0"]
+        assert sender.current_layer == 1
+        assert sender.total_layers == 1
+
+    def test_preamble_skip_is_capped(self, tmp_path):
+        """A distant marker cannot authorize skipping hundreds of commands."""
+        gcode_file = tmp_path / "oversized-preamble.gcode"
+        commands = ["G28", "M109 S200"]
+        commands.extend(f"G1 X{i} Y{i}" for i in range(200))
+        commands.extend([";LAYER:0", "G1 X210 Y210 E1"])
+        gcode_file.write_text("\n".join(commands) + "\n")
+
+        _, _, boundary = GcodeSender._analyze_file(
+            gcode_file, find_preamble_boundary=True
+        )
+
+        assert boundary is None
 
 
 # ── Progress defense-in-depth ────────────────────────────────────────

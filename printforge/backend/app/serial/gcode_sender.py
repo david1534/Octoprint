@@ -73,6 +73,26 @@ _PREAMBLE_PASSTHROUGH_PREFIXES = (
     "M83",   # Relative extrusion mode
 )
 
+# Never suppress an unbounded portion of a file. A normal slicer preamble is
+# much shorter than this; if no first-layer boundary appears within the cap,
+# sending the file unchanged is safer than guessing where the model begins.
+_MAX_PREAMBLE_SKIP_COMMANDS = 200
+
+_NUMBERED_LAYER_MARKERS = (
+    # Cura, ideaMaker, and related slicers (zero-based).
+    (re.compile(r"^;\s*LAYER\s*:\s*(-?\d+)\b", re.IGNORECASE), True),
+    # Simplify3D: "; layer 1, Z = 0.200" (one-based).
+    (re.compile(r"^;\s*layer\s+(\d+)\s*,\s*Z\s*=", re.IGNORECASE), False),
+)
+_UNNUMBERED_LAYER_MARKERS = (
+    # PrusaSlicer / OrcaSlicer / SuperSlicer.
+    re.compile(r"^;\s*LAYER_CHANGE(?:\s|$)", re.IGNORECASE),
+    # Bambu Studio and compatible slicers.
+    re.compile(r"^;\s*CHANGE_LAYER(?:\s|$)", re.IGNORECASE),
+    # KISSlicer.
+    re.compile(r"^;\s*BEGIN_LAYER_OBJECT(?:\s|$)", re.IGNORECASE),
+)
+
 
 def _is_preamble_passthrough(command: str) -> bool:
     """Return True if a command should be sent even during preamble skip.
@@ -83,6 +103,33 @@ def _is_preamble_passthrough(command: str) -> bool:
     """
     cmd_upper = command.split()[0].upper() if command.strip() else ""
     return cmd_upper in _PREAMBLE_PASSTHROUGH_PREFIXES
+
+
+def _parse_layer_marker(line: str) -> tuple[bool, Optional[int]]:
+    """Return whether *line* is a layer marker and its one-based number."""
+    for pattern, zero_based in _NUMBERED_LAYER_MARKERS:
+        match = pattern.match(line)
+        if match:
+            number = int(match.group(1))
+            return True, number + 1 if zero_based else number
+
+    if any(pattern.match(line) for pattern in _UNNUMBERED_LAYER_MARKERS):
+        return True, None
+
+    return False, None
+
+
+def _preamble_structure_flags(command: str) -> tuple[bool, bool, bool]:
+    """Classify commands that provide evidence of a slicer preamble."""
+    parts = command.split()
+    opcode = parts[0].upper() if parts else ""
+    is_homing = opcode in {"G28", "G29"}
+    is_heating = opcode in {"M104", "M109", "M140", "M190"}
+    is_extrusion = (
+        opcode in {"G0", "G1"}
+        and re.search(r"(?:^|\s)E[-+\d.]", command, re.IGNORECASE) is not None
+    )
+    return is_homing, is_heating, is_extrusion
 
 
 class GcodeSender:
@@ -214,22 +261,72 @@ class GcodeSender:
         self._lcd_interval = max(10, interval)
 
     @staticmethod
-    def _count_lines_and_layers(filepath: Path) -> tuple[int, int]:
-        """Count printable lines and layer changes in a G-code file.
+    def _analyze_file(
+        filepath: Path, find_preamble_boundary: bool = False
+    ) -> tuple[int, int, Optional[int]]:
+        """Count the file and optionally locate a safe preamble boundary.
 
         Runs synchronously — intended to be called via asyncio.to_thread().
+        A boundary is accepted only at the first recognized layer marker, when
+        at least two of homing, heating, and extrusion have appeared before it.
+        The number of commands that would be skipped is capped; failure to
+        prove a boundary means the entire file is sent unchanged.
         """
         total_lines = 0
         total_layers = 0
+        preamble_boundary: Optional[int] = None
+        boundary_candidate_open = find_preamble_boundary
+        skippable_commands = 0
+        saw_homing = False
+        saw_heating = False
+        saw_extrusion = False
+
         with open(filepath, encoding="utf-8") as f:
-            for line in f:
+            for file_line_number, line in enumerate(f, start=1):
                 stripped = line.strip()
                 if stripped and not stripped.startswith(";"):
                     total_lines += 1
-                if (";LAYER:" in stripped or "; LAYER:" in stripped
-                        or stripped == ";LAYER_CHANGE"
-                        or stripped.startswith(";LAYER_CHANGE ")):
+
+                is_layer_marker, _ = _parse_layer_marker(stripped)
+                if is_layer_marker:
                     total_layers += 1
+                    if boundary_candidate_open:
+                        structure_count = sum(
+                            (saw_homing, saw_heating, saw_extrusion)
+                        )
+                        if (
+                            structure_count >= 2
+                            and 0 < skippable_commands
+                            <= _MAX_PREAMBLE_SKIP_COMMANDS
+                        ):
+                            preamble_boundary = file_line_number
+                        # Only the first layer marker can end a preamble. Never
+                        # keep searching and accidentally skip the first layer.
+                        boundary_candidate_open = False
+
+                if not boundary_candidate_open or not stripped:
+                    continue
+
+                command = stripped.split(";", 1)[0].strip()
+                if not command:
+                    continue
+
+                homing, heating, extrusion = _preamble_structure_flags(command)
+                saw_homing = saw_homing or homing
+                saw_heating = saw_heating or heating
+                saw_extrusion = saw_extrusion or extrusion
+
+                if not _is_preamble_passthrough(command):
+                    skippable_commands += 1
+                    if skippable_commands > _MAX_PREAMBLE_SKIP_COMMANDS:
+                        boundary_candidate_open = False
+
+        return total_lines, total_layers, preamble_boundary
+
+    @staticmethod
+    def _count_lines_and_layers(filepath: Path) -> tuple[int, int]:
+        """Count printable lines and layers (compatibility helper)."""
+        total_lines, total_layers, _ = GcodeSender._analyze_file(filepath)
         return total_lines, total_layers
 
     async def start_print(self, filepath: Path, start_gcode: str = "") -> None:
@@ -260,13 +357,19 @@ class GcodeSender:
 
         # Count printable lines and layers (run in thread to avoid blocking
         # the event loop on large files — significant on Pi SD cards)
-        self._total_lines, self._total_layers = await asyncio.to_thread(
-            self._count_lines_and_layers, filepath
+        (
+            self._total_lines,
+            self._total_layers,
+            preamble_boundary,
+        ) = await asyncio.to_thread(
+            self._analyze_file, filepath, bool(start_gcode.strip())
         )
 
         self._start_time = time.monotonic()
         self._result = PrintResult.RUNNING
-        self._task = asyncio.create_task(self._print_loop(filepath, start_gcode))
+        self._task = asyncio.create_task(
+            self._print_loop(filepath, start_gcode, preamble_boundary)
+        )
         logger.info(
             "Print started: %s (%d lines, %d layers)",
             filepath.name,
@@ -274,7 +377,12 @@ class GcodeSender:
             self._total_layers,
         )
 
-    async def _print_loop(self, filepath: Path, start_gcode: str = "") -> None:
+    async def _print_loop(
+        self,
+        filepath: Path,
+        start_gcode: str = "",
+        preamble_boundary: Optional[int] = None,
+    ) -> None:
         """Stream G-code lines to the command queue."""
         try:
             # Run start G-code preamble (homing, leveling, heating, purge)
@@ -355,20 +463,25 @@ class GcodeSender:
             consecutive_failures = 0
             max_consecutive_failures = 10
 
-            # When PrintForge ran its own start gcode, skip redundant
-            # slicer preamble commands (homing, heating, purge moves)
-            # before the first ;LAYER: marker. However, pass through
+            # When PrintForge ran its own start gcode and the pre-scan found a
+            # safe, bounded first-layer boundary, skip redundant slicer
+            # preamble commands (homing, heating, purge moves). Pass through
             # machine configuration commands that the slicer sets for the
             # first layer — acceleration, jerk, fan, linear advance, etc.
             # These are NOT redundant: PrintForge's start gcode doesn't
             # set them, and skipping them causes the first layer to print
             # with default firmware values (typically much too fast).
-            skip_preamble = bool(start_gcode.strip())
+            skip_preamble = bool(start_gcode.strip()) and preamble_boundary is not None
             preamble_skipped = 0
             preamble_passthrough = 0
 
+            if start_gcode.strip() and preamble_boundary is None:
+                logger.warning(
+                    "No safe, bounded slicer preamble found; streaming file unchanged"
+                )
+
             with open(filepath, encoding="utf-8") as f:
-                for line in f:
+                for file_line_number, line in enumerate(f, start=1):
                     if self._cancelled:
                         await self._on_cancel()
                         return
@@ -382,29 +495,26 @@ class GcodeSender:
 
                     stripped = line.strip()
 
+                    if (
+                        skip_preamble
+                        and preamble_boundary is not None
+                        and file_line_number >= preamble_boundary
+                    ):
+                        skip_preamble = False
+                        logger.info(
+                            "Preamble complete: skipped %d commands, "
+                            "passed through %d config commands",
+                            preamble_skipped,
+                            preamble_passthrough,
+                        )
+
                     # Track layer changes
-                    # Cura: ;LAYER:N  OrcaSlicer/PrusaSlicer: ;LAYER_CHANGE
-                    if (";LAYER:" in stripped or "; LAYER:" in stripped
-                            or stripped == ";LAYER_CHANGE"
-                            or stripped.startswith(";LAYER_CHANGE ")):
-                        if skip_preamble:
-                            skip_preamble = False
-                            logger.info(
-                                "Preamble complete: skipped %d commands, "
-                                "passed through %d config commands",
-                                preamble_skipped,
-                                preamble_passthrough,
-                            )
-                        # Cura embeds the layer number: ;LAYER:N (0-based)
-                        # OrcaSlicer just marks the boundary: ;LAYER_CHANGE
-                        if ";LAYER:" in stripped or "; LAYER:" in stripped:
-                            try:
-                                layer_str = stripped.split("LAYER:")[-1].strip()
-                                self._current_layer = int(layer_str) + 1
-                            except ValueError:
-                                self._current_layer += 1
-                        else:
+                    is_layer_marker, layer_number = _parse_layer_marker(stripped)
+                    if is_layer_marker:
+                        if layer_number is None:
                             self._current_layer += 1
+                        else:
+                            self._current_layer = layer_number
                         self._notify_layer_change(self._current_layer)
 
                     # Skip empty lines and comments
@@ -427,11 +537,18 @@ class GcodeSender:
                             )
                             # Fall through to send this command normally
                         else:
-                            preamble_skipped += 1
-                            logger.debug(
-                                "Skipping preamble command: %s", stripped
-                            )
-                            continue
+                            if preamble_skipped >= _MAX_PREAMBLE_SKIP_COMMANDS:
+                                skip_preamble = False
+                                logger.error(
+                                    "Preamble skip cap reached unexpectedly; "
+                                    "streaming remaining file unchanged"
+                                )
+                            else:
+                                preamble_skipped += 1
+                                logger.debug(
+                                    "Skipping preamble command: %s", stripped
+                                )
+                                continue
 
                     # Send through command queue (plain G-code, no
                     # checksums — USB serial has its own CRC layer and
