@@ -84,6 +84,25 @@ class TemperatureLimitError(ValueError):
     """
 
 
+class PrinterLifecycleError(RuntimeError):
+    """Raised when an operation is invalid for the current printer state."""
+
+
+# Lifecycle-changing operations all consult this table while holding the same
+# lock.  Keeping the allowed source states in one place makes it impossible for
+# native and compatibility routes to quietly acquire different transition
+# rules.
+_LIFECYCLE_TRANSITIONS: dict[str, frozenset[PrinterStatus]] = {
+    "connect": frozenset({PrinterStatus.DISCONNECTED, PrinterStatus.ERROR}),
+    "disconnect": frozenset({PrinterStatus.IDLE, PrinterStatus.ERROR}),
+    "start print": frozenset({PrinterStatus.IDLE}),
+}
+
+_ACTIVE_PRINT_STATES = frozenset(
+    {PrinterStatus.PRINTING, PrinterStatus.PAUSED, PrinterStatus.FINISHING}
+)
+
+
 class PrinterController:
     """High-level printer control interface."""
 
@@ -124,6 +143,9 @@ class PrinterController:
         # executing in the wrong positioning mode. Created lazily on first use
         # because the controller is constructed at import time (no running loop).
         self._motion_lock: Optional[asyncio.Lock] = None
+        # Serializes connection teardown/setup with print startup.  This is
+        # lazy for the same reason as the motion lock above.
+        self._lifecycle_lock: Optional[asyncio.Lock] = None
 
     @property
     def temp_monitor(self) -> TemperatureMonitor:
@@ -339,6 +361,19 @@ class PrinterController:
         """Return True if a print is actively running or paused."""
         return self.state.status in (PrinterStatus.PRINTING, PrinterStatus.PAUSED)
 
+    def _get_lifecycle_lock(self) -> asyncio.Lock:
+        """Return the lock shared by every connection lifecycle transition."""
+        if self._lifecycle_lock is None:
+            self._lifecycle_lock = asyncio.Lock()
+        return self._lifecycle_lock
+
+    def _require_lifecycle_transition(self, operation: str) -> None:
+        allowed = _LIFECYCLE_TRANSITIONS[operation]
+        if self.state.status not in allowed:
+            raise PrinterLifecycleError(
+                f"Cannot {operation} while printer is {self.state.status.value}"
+            )
+
     async def _attempt_kill_recovery(self, kill_line: str) -> None:
         """Attempt to recover from a Marlin kill/STOP state via M999.
 
@@ -478,7 +513,34 @@ class PrinterController:
                 logger.warning("Auto-connect: %s failed: %s", port, e)
 
     async def connect(self, port: str = "/dev/ttyUSB0", baudrate: int = 115200) -> bool:
-        """Connect to the printer."""
+        """Connect to the printer through the serialized lifecycle."""
+        async with self._get_lifecycle_lock():
+            self._require_lifecycle_transition("connect")
+
+            # ERROR may still own a live serial stack (for example after an
+            # emergency stop). Tear it down before constructing replacements.
+            if any((self._connection, self._protocol, self._queue, self._sender)):
+                await self._stop_components(cancel_active_print=True)
+
+            try:
+                return await self._connect_unlocked(port, baudrate)
+            except asyncio.CancelledError:
+                # A client going away during the handshake must not strand a
+                # half-built serial stack in CONNECTING.
+                await self._stop_components(cancel_active_print=True)
+                self.state.status = PrinterStatus.ERROR
+                self.state.error_message = f"Connection to {port} was cancelled"
+                self._notify_state_change()
+                raise
+            except Exception as exc:
+                logger.exception("Failed to initialize printer connection: %s", exc)
+                await self._stop_components(cancel_active_print=True)
+                self.state.status = PrinterStatus.ERROR
+                self.state.error_message = f"Failed to connect to {port}: {exc}"
+                self._notify_state_change()
+                return False
+
+    async def _connect_unlocked(self, port: str, baudrate: int) -> bool:
         self.state.status = PrinterStatus.CONNECTING
         self.state.port = port
         self.state.baudrate = baudrate
@@ -490,6 +552,7 @@ class PrinterController:
         else:
             self._connection = SerialConnection(port=port, baudrate=baudrate)
         if not await self._connection.connect():
+            await self._stop_components(cancel_active_print=True)
             self.state.status = PrinterStatus.ERROR
             self.state.error_message = f"Failed to connect to {port}"
             self._notify_state_change()
@@ -527,38 +590,58 @@ class PrinterController:
         logger.info("Printer connected: %s", self.state.firmware_name)
         return True
 
-    async def disconnect(self) -> None:
-        """Disconnect from the printer."""
-        if self._safety_task:
-            self._safety_task.cancel()
+    async def _stop_components(self, cancel_active_print: bool) -> None:
+        """Stop the owned serial stack while the lifecycle lock is held."""
+        safety_task = self._safety_task
+        self._safety_task = None
+        if safety_task:
+            safety_task.cancel()
             try:
-                await self._safety_task
+                await safety_task
             except asyncio.CancelledError:
                 pass
 
-        if self._sender and self._sender.is_printing:
-            await self._sender.cancel()
+        sender = self._sender
+        if cancel_active_print and sender and sender.is_printing:
+            await sender.cancel()
 
-        if self._queue:
-            self._queue.stop()
+        queue = self._queue
+        if queue:
+            # stop() resolves the in-flight and queued command futures before
+            # returning; then wait until its serial reader has exited.
+            queue.stop()
+            await queue.wait_for_stop()
 
-        if self._connection:
-            await self._connection.disconnect()
+        connection = self._connection
+        try:
+            if connection:
+                await connection.disconnect()
+        finally:
+            self._sender = None
+            self._queue = None
+            self._protocol = None
+            self._connection = None
 
-        # Drop the now-dead references. The queue's consumer task was cancelled
-        # by stop(), so leaving _queue set meant send_command's `if not
-        # self._queue` guard passed, the command was enqueued into a queue with
-        # no consumer, and `await future` hung forever. Nulling these makes
-        # post-disconnect commands fail fast with "Not connected".
-        self._safety_task = None
-        self._sender = None
-        self._queue = None
-        self._protocol = None
-        self._connection = None
+    async def disconnect(self, *, force: bool = False) -> None:
+        """Disconnect safely, rejecting active print jobs unless forced.
 
-        self.state.status = PrinterStatus.DISCONNECTED
-        self._notify_state_change()
-        logger.info("Printer disconnected")
+        ``force`` is reserved for process shutdown, where the print is first
+        cancelled through GcodeSender so its normal safety cleanup can run.
+        User-facing routes never force a disconnect.
+        """
+        async with self._get_lifecycle_lock():
+            if not force:
+                self._require_lifecycle_transition("disconnect")
+                if self._sender and self._sender.is_printing:
+                    raise PrinterLifecycleError(
+                        "Cannot disconnect while a print is in progress"
+                    )
+
+            await self._stop_components(cancel_active_print=force)
+            self.state.status = PrinterStatus.DISCONNECTED
+            self.state.error_message = None
+            self._notify_state_change()
+            logger.info("Printer disconnected")
 
     async def send_command(self, command: str) -> CommandResult:
         """Send a manual G-code command.
@@ -804,7 +887,21 @@ M117 Print Complete"""
                 )
 
     async def start_print(self, filepath: Path, spool_id: Optional[int] = None) -> None:
-        """Start printing a G-code file."""
+        """Start a print without allowing connection teardown to overlap."""
+        async with self._get_lifecycle_lock():
+            if not self._sender:
+                raise ConnectionError("Not connected")
+            if (
+                self.state.status in _ACTIVE_PRINT_STATES
+                or (self._sender and self._sender.is_printing)
+            ):
+                raise PrinterLifecycleError("A print is already in progress")
+            self._require_lifecycle_transition("start print")
+            await self._start_print_unlocked(filepath, spool_id)
+
+    async def _start_print_unlocked(
+        self, filepath: Path, spool_id: Optional[int] = None
+    ) -> None:
         if not self._sender:
             raise ConnectionError("Not connected")
 

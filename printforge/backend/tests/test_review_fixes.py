@@ -12,11 +12,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
+from app.api import octoprint_compat, printer as printer_api
 from app.printer.controller import (
     PrinterController,
+    PrinterLifecycleError,
     TemperatureLimitError,
 )
 from app.printer.state import PrinterState, PrinterStatus
+from app.serial.command_queue import CommandQueue
 from app.utils.paths import is_within
 
 
@@ -59,6 +62,7 @@ def _connected_controller() -> PrinterController:
     ctrl._protocol = MagicMock()
     ctrl._queue = MagicMock()
     ctrl._queue.stop = MagicMock()
+    ctrl._queue.wait_for_stop = AsyncMock()
     ctrl._sender = MagicMock()
     ctrl._sender.is_printing = False
     return ctrl
@@ -88,6 +92,151 @@ class TestDisconnectNullsRefs:
         await ctrl.disconnect()
         with pytest.raises(ConnectionError):
             await ctrl.start_print(tmp_path / "x.gcode")
+
+
+class TestSerializedLifecycle:
+    async def test_concurrent_connect_is_serialized_and_rejected(self):
+        ctrl = PrinterController(PrinterState())
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def connect_unlocked(port, baudrate):
+            started.set()
+            await release.wait()
+            ctrl.state.status = PrinterStatus.IDLE
+            return True
+
+        ctrl._connect_unlocked = connect_unlocked
+        first = asyncio.create_task(ctrl.connect("mock", 115200))
+        await started.wait()
+        second = asyncio.create_task(ctrl.connect("mock", 115200))
+        await asyncio.sleep(0)
+        assert second.done() is False
+
+        release.set()
+        assert await first is True
+        with pytest.raises(PrinterLifecycleError, match="Cannot connect"):
+            await second
+
+    async def test_cancelled_connect_cleans_partial_stack(self):
+        ctrl = PrinterController(PrinterState())
+        started = asyncio.Event()
+        connection = MagicMock()
+        connection.disconnect = AsyncMock()
+
+        async def connect_unlocked(port, baudrate):
+            ctrl.state.status = PrinterStatus.CONNECTING
+            ctrl._connection = connection
+            started.set()
+            await asyncio.Event().wait()
+
+        ctrl._connect_unlocked = connect_unlocked
+        task = asyncio.create_task(ctrl.connect("mock", 115200))
+        await started.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        connection.disconnect.assert_awaited_once()
+        assert ctrl._connection is None
+        assert ctrl.state.status == PrinterStatus.ERROR
+
+    async def test_disconnect_waits_for_print_start_then_rejects(self, tmp_path):
+        ctrl = _connected_controller()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def start_print_unlocked(filepath, spool_id=None):
+            started.set()
+            await release.wait()
+            ctrl.state.status = PrinterStatus.PRINTING
+
+        ctrl._start_print_unlocked = start_print_unlocked
+        start_task = asyncio.create_task(ctrl.start_print(tmp_path / "x.gcode"))
+        await started.wait()
+        disconnect_task = asyncio.create_task(ctrl.disconnect())
+        await asyncio.sleep(0)
+        assert disconnect_task.done() is False
+
+        release.set()
+        await start_task
+        with pytest.raises(PrinterLifecycleError, match="Cannot disconnect"):
+            await disconnect_task
+
+        ctrl._connection.disconnect.assert_not_awaited()
+
+    async def test_pending_command_is_resolved_by_disconnect(self):
+        ctrl = _connected_controller()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        protocol = MagicMock()
+
+        async def send_command(command, with_checksum=False):
+            started.set()
+            await release.wait()
+
+        protocol.send_command = AsyncMock(side_effect=send_command)
+        protocol.drain_unsolicited = AsyncMock()
+        queue = CommandQueue(protocol)
+        queue.start()
+        ctrl._protocol = protocol
+        ctrl._queue = queue
+
+        command_task = asyncio.create_task(ctrl.send_command("M105"))
+        await started.wait()
+        await ctrl.disconnect()
+        result = await asyncio.wait_for(command_task, timeout=1.0)
+
+        assert result.ok is False
+        assert "stopped" in result.error.lower()
+        assert ctrl.state.status == PrinterStatus.DISCONNECTED
+
+    @pytest.mark.parametrize(
+        "status",
+        [PrinterStatus.PRINTING, PrinterStatus.PAUSED, PrinterStatus.FINISHING],
+    )
+    async def test_disconnect_rejected_during_active_print_states(self, status):
+        ctrl = _connected_controller()
+        ctrl.state.status = status
+
+        with pytest.raises(PrinterLifecycleError, match="Cannot disconnect"):
+            await ctrl.disconnect()
+
+        ctrl._queue.stop.assert_not_called()
+        ctrl._connection.disconnect.assert_not_awaited()
+
+    async def test_native_connect_route_rejects_already_connected(self):
+        ctrl = _connected_controller()
+        printer_api.set_controller(ctrl)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await printer_api.connect(printer_api.ConnectRequest())
+
+        assert exc_info.value.status_code == 409
+
+    async def test_native_disconnect_route_rejects_active_print(self):
+        ctrl = _connected_controller()
+        ctrl.state.status = PrinterStatus.PRINTING
+        printer_api.set_controller(ctrl)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await printer_api.disconnect()
+
+        assert exc_info.value.status_code == 409
+        ctrl._connection.disconnect.assert_not_awaited()
+
+    async def test_compat_disconnect_route_rejects_active_print(self):
+        ctrl = _connected_controller()
+        ctrl.state.status = PrinterStatus.PAUSED
+        printer_api.set_controller(ctrl)
+
+        request = octoprint_compat.ConnectionRequest(command="disconnect")
+        with pytest.raises(HTTPException) as exc_info:
+            await octoprint_compat.octoprint_connection_command(request)
+
+        assert exc_info.value.status_code == 409
+        ctrl._connection.disconnect.assert_not_awaited()
 
 
 class TestStartPrintGuard:

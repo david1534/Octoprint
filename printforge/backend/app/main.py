@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI):
         await _camera_client.aclose()
     if controller.camera:
         await controller.camera.close()
-    await controller.disconnect()
+    await controller.disconnect(force=True)
     await close_db()
 
 
