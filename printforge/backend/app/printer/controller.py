@@ -5,6 +5,8 @@ safety checks, and G-code sending. This is the main interface used by
 the API layer.
 """
 
+from __future__ import annotations
+
 import asyncio
 import glob
 import logging
