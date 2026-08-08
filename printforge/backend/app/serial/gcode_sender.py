@@ -661,9 +661,13 @@ class GcodeSender:
         )
 
         # Safe parking sequence
-        # Retract filament slightly to prevent ooze
+        # Extrusion mode is independent of G90/G91. Force relative extrusion
+        # for the retract so an M82 print at a large E position cannot interpret
+        # E-2 as an absolute target, then restore the file's extrusion state.
+        await self._queue.enqueue("M83", CommandPriority.SYSTEM)
         await self._queue.enqueue("G91", CommandPriority.SYSTEM)
         await self._queue.enqueue("G1 E-2 F1800", CommandPriority.SYSTEM)
+        await self._restore_extrusion_state()
         # Lift Z to clear the print
         await self._queue.enqueue("G1 Z5 F600", CommandPriority.SYSTEM)
         await self._queue.enqueue("G90", CommandPriority.SYSTEM)
@@ -695,9 +699,11 @@ class GcodeSender:
             f"G1 Z{self._saved_z:.3f} F600",
             CommandPriority.SYSTEM,
         )
-        # Prime filament (push back what we retracted)
-        await self._queue.enqueue("G91", CommandPriority.SYSTEM)
+        # Prime in relative extrusion mode, then restore both the file's
+        # extrusion mode and (for M82) its absolute E coordinate.
+        await self._queue.enqueue("M83", CommandPriority.SYSTEM)
         await self._queue.enqueue("G1 E2 F1800", CommandPriority.SYSTEM)
+        await self._restore_extrusion_state()
         # Restore the positioning mode the file was actually using. Forcing G90
         # unconditionally would break a print streaming in relative mode (G91):
         # every subsequent move would be reinterpreted as absolute.
@@ -734,9 +740,12 @@ class GcodeSender:
     async def _on_cancel(self) -> None:
         """Clean up after cancellation."""
         await self._queue.clear()
-        # Retract, lift, and cool down
+        # Retract in relative extrusion mode regardless of whether the file uses
+        # M82 or M83, then restore the tracked extrusion state.
+        await self._queue.enqueue("M83", CommandPriority.SYSTEM)
         await self._queue.enqueue("G91", CommandPriority.SYSTEM)
         await self._queue.enqueue("G1 E-5 F1800", CommandPriority.SYSTEM)
+        await self._restore_extrusion_state()
         await self._queue.enqueue("G1 Z10 F600", CommandPriority.SYSTEM)
         await self._queue.enqueue("G90", CommandPriority.SYSTEM)
         await self._queue.enqueue("G28 X Y", CommandPriority.SYSTEM)
@@ -753,6 +762,17 @@ class GcodeSender:
         await self._queue.enqueue("M106 S0", CommandPriority.SYSTEM)
         # Disable steppers after a delay
         await self._queue.enqueue("M84", CommandPriority.SYSTEM)
+
+    async def _restore_extrusion_state(self) -> None:
+        """Restore the extrusion mode and absolute E coordinate used by the file."""
+        if self._e_relative:
+            await self._queue.enqueue("M83", CommandPriority.SYSTEM)
+            return
+
+        await self._queue.enqueue("M82", CommandPriority.SYSTEM)
+        await self._queue.enqueue(
+            f"G92 E{self._last_e_position:.5f}", CommandPriority.SYSTEM
+        )
 
     def _track_position(self, command: str) -> None:
         """Track nozzle position from G0/G1 move commands (absolute mode)."""

@@ -166,6 +166,91 @@ class TestGcodeSenderTerminalResult:
         assert sender.failure is None
 
 
+class TestPauseResumeExtrusionSafety:
+    """Pause/cancel helper moves must be safe in both M82 and M83 modes."""
+
+    def _make_sender(self):
+        queue = MagicMock()
+
+        async def enqueue(*args, **kwargs):
+            future = asyncio.get_running_loop().create_future()
+            future.set_result(MagicMock(ok=True))
+            return future
+
+        queue.enqueue = AsyncMock(side_effect=enqueue)
+        queue.clear = AsyncMock()
+        sender = GcodeSender(queue)
+        sender._task = MagicMock()
+        sender._task.done.return_value = False
+        return sender, queue
+
+    async def test_absolute_extrusion_pause_resume_restores_large_e(self):
+        sender, queue = self._make_sender()
+        sender._track_filament("M82")
+        sender._track_filament("G1 X100 Y100 E1200.12345 F1800")
+
+        await sender.pause()
+        await sender.resume()
+
+        commands = [call.args[0] for call in queue.enqueue.await_args_list]
+        retract = commands.index("G1 E-2 F1800")
+        prime = commands.index("G1 E2 F1800")
+
+        assert commands[retract - 2] == "M83"
+        assert commands[retract + 1 : retract + 3] == [
+            "M82",
+            "G92 E1200.12345",
+        ]
+        assert commands[prime - 1] == "M83"
+        assert commands[prime + 1 : prime + 3] == [
+            "M82",
+            "G92 E1200.12345",
+        ]
+
+    async def test_relative_extrusion_pause_resume_restores_m83(self):
+        sender, queue = self._make_sender()
+        sender._track_filament("M83")
+
+        await sender.pause()
+        await sender.resume()
+
+        commands = [call.args[0] for call in queue.enqueue.await_args_list]
+        retract = commands.index("G1 E-2 F1800")
+        prime = commands.index("G1 E2 F1800")
+
+        assert commands[retract - 2] == "M83"
+        assert commands[retract + 1] == "M83"
+        assert commands[prime - 1] == "M83"
+        assert commands[prime + 1] == "M83"
+        assert not any(command.startswith("G92 E") for command in commands)
+
+    async def test_cancel_retract_uses_m83_and_restores_absolute_e(self):
+        sender, queue = self._make_sender()
+        sender._track_filament("G1 E9876.54321")
+
+        await sender._on_cancel()
+
+        commands = [call.args[0] for call in queue.enqueue.await_args_list]
+        retract = commands.index("G1 E-5 F1800")
+        assert commands[retract - 2] == "M83"
+        assert commands[retract + 1 : retract + 3] == [
+            "M82",
+            "G92 E9876.54321",
+        ]
+
+    async def test_cancel_restores_relative_extrusion_mode(self):
+        sender, queue = self._make_sender()
+        sender._track_filament("M83")
+
+        await sender._on_cancel()
+
+        commands = [call.args[0] for call in queue.enqueue.await_args_list]
+        retract = commands.index("G1 E-5 F1800")
+        assert commands[retract - 2] == "M83"
+        assert commands[retract + 1] == "M83"
+        assert not any(command.startswith("G92 E") for command in commands)
+
+
 class TestGcodeSenderProgress:
     """Test progress calculation properties."""
 
