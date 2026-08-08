@@ -1,18 +1,19 @@
-"""Tests for the shared command guards (during-print block + temp ceiling).
+"""Tests for the shared command guards (during-print allowlist + temp ceiling).
 
 These guards are the fix for the review's C1 (OctoPrint-compat shim allowed
 G28/M84 mid-print) and H1 (no ceiling on temperature targets), so the endpoint
 tests here are regression tests against reintroducing those bypasses.
 """
 
-import pytest
-from fastapi import HTTPException
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+from fastapi import HTTPException
+
 from app.printer.command_guard import (
-    DANGEROUS_DURING_PRINT,
+    ALLOWED_DURING_PRINT,
     command_base,
-    is_dangerous_during_print,
+    is_allowed_during_print,
     temperature_command_error,
     temperature_value_error,
 )
@@ -33,26 +34,54 @@ class TestCommandBase:
         assert command_base("   ") == ""
 
 
-class TestDangerousDuringPrint:
-    @pytest.mark.parametrize("cmd", sorted(DANGEROUS_DURING_PRINT))
-    def test_blocked_bases(self, cmd):
-        assert is_dangerous_during_print(cmd) is True
-        assert is_dangerous_during_print(f"{cmd.lower()} X10") is True
+class TestAllowedDuringPrint:
+    @pytest.mark.parametrize("cmd", sorted(ALLOWED_DURING_PRINT))
+    def test_allowed_bases(self, cmd):
+        assert is_allowed_during_print(cmd) is True
+        assert is_allowed_during_print(f"{cmd.lower()} S1") is True
 
-    def test_g90_g91_now_blocked(self):
-        # G90 was missing from the original block list even though flipping
-        # positioning mode mid-print is just as corrupting as G91.
-        assert is_dangerous_during_print("G90") is True
-        assert is_dangerous_during_print("G91") is True
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "G0 X0 Y0 F6000",       # linear travel
+            "G1 X10",               # linear print move
+            "G1 E5 F300",           # extrusion-only move
+            "G2 X10 Y10 I5 J0",     # clockwise arc
+            "G3 X0 Y0 I-5 J0",      # counter-clockwise arc
+            "G5 X10 Y10 I2 J2",     # Bezier move
+            "G10",                  # firmware retract
+            "G11",                  # firmware unretract
+            "T0",                   # tool change
+            "T1",                   # tool change
+            "M600",                 # filament-change movement sequence
+            "M701",                 # load filament
+            "M702",                 # unload filament
+            "M810",                 # stored G-code macro
+            "M819",                 # stored G-code macro
+            "M98 P\"macro.g\"",    # subprogram/macro call
+            "G28",                  # home
+            "G90",                  # positioning mode
+            "G91",                  # positioning mode
+            "G92 E0",               # rewrite coordinate origin
+            "M18",                  # disable steppers
+            "M84",                  # disable steppers
+        ],
+    )
+    def test_motion_extrusion_tool_and_macro_commands_are_blocked(self, cmd):
+        assert is_allowed_during_print(cmd) is False
 
-    @pytest.mark.parametrize("cmd", ["M105", "M104 S200", "G1 X10", "M220 S50", "M117 hi"])
-    def test_safe_commands_pass(self, cmd):
-        assert is_dangerous_during_print(cmd) is False
+    @pytest.mark.parametrize(
+        "cmd", ["M105", "M104 S200", "M106 S128", "M220 S50", "M117 hi"]
+    )
+    def test_benign_commands_pass(self, cmd):
+        assert is_allowed_during_print(cmd) is True
 
-    def test_prefix_does_not_false_positive(self):
-        # G280/M840 share a string prefix with blocked codes but are distinct
-        assert is_dangerous_during_print("G280") is False
-        assert is_dangerous_during_print("M840") is False
+    def test_unknown_commands_fail_closed(self):
+        assert is_allowed_during_print("G280") is False
+        assert is_allowed_during_print("M840") is False
+
+    def test_embedded_newline_cannot_smuggle_a_move(self):
+        assert is_allowed_during_print("M105\nG1 X0 Y0") is False
 
 
 class TestTemperatureCommandError:
@@ -119,6 +148,18 @@ def _make_ctrl(status_value: str) -> MagicMock:
 
 class TestNativeCommandEndpointGuards:
     """POST /api/printer/command uses the shared guards."""
+
+    async def test_g1_move_blocked_while_printing(self):
+        from app.api import printer as printer_api
+
+        ctrl = _make_ctrl("printing")
+        printer_api.set_controller(ctrl)
+        with pytest.raises(HTTPException) as exc:
+            await printer_api.send_command(
+                printer_api.CommandRequest(command="G1 X0 Y0 F6000")
+            )
+        assert exc.value.status_code == 409
+        ctrl.send_command.assert_not_awaited()
 
     async def test_g28_blocked_while_printing(self):
         from app.api import printer as printer_api

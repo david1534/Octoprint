@@ -2,7 +2,7 @@
 
 These are pure functions (no I/O, no controller import) so they can be unit
 tested in isolation and, more importantly, reused by BOTH the native printer
-API and the OctoPrint-compat shim. Previously the during-print block list and
+API and the OctoPrint-compat shim. Previously the during-print command guard and
 the temperature ceiling lived only in ``api/printer.py``; the compat endpoint
 (``/api/printer/command``) sent raw G-code with no guards at all, so a client
 could home the printer or drive a heater past its limit mid-print by going
@@ -15,10 +15,44 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-# Commands that corrupt an in-progress print if injected mid-stream: homing
-# drives the toolhead across the part, G92 rewrites the coordinate origin,
-# G90/G91 flip positioning mode, M84/M18 drop the steppers (lost position).
-DANGEROUS_DURING_PRINT = frozenset({"G28", "G29", "G90", "G91", "G92", "M84", "M18"})
+# Raw commands accepted from external clients while a print is active or
+# paused. This is intentionally an allowlist: Marlin has many movement paths
+# beyond G0/G1 (arcs, firmware retract, tool changes, stored macros, filament
+# load/unload, etc.), so a denylist will inevitably miss a way to invalidate
+# the sender's position/extrusion assumptions.
+#
+# Controller-owned print, pause, resume, cancel, and emergency-stop sequences
+# enqueue or write their commands internally and do not pass through this
+# external-command guard.
+ALLOWED_DURING_PRINT = frozenset(
+    {
+        # Read-only status/reporting commands.
+        "M27",   # SD print status
+        "M31",   # Elapsed print time
+        "M105",  # Temperatures
+        "M114",  # Current position
+        "M115",  # Firmware information
+        "M119",  # Endstop states
+        "M408",  # Machine status
+        "M503",  # Current settings
+        # Bounded print-time controls exposed by PrintForge's own UI.
+        "M104",  # Set hotend temperature
+        "M106",  # Set fan speed
+        "M107",  # Fan off
+        "M109",  # Set/wait for hotend temperature
+        "M140",  # Set bed temperature
+        "M155",  # Temperature auto-report interval
+        "M190",  # Set/wait for bed temperature
+        "M220",  # Feed-rate percentage
+        "M221",  # Flow percentage
+        # Display/host feedback and synchronization; none changes position.
+        "M73",
+        "M117",
+        "M118",
+        "M300",
+        "M400",
+    }
+)
 
 # Commands that set a heater target (the S/R parameter is a temperature in C).
 _HOTEND_TEMP_COMMANDS = frozenset({"M104", "M109"})
@@ -38,9 +72,16 @@ def command_base(command: str) -> str:
     return stripped.split()[0].upper()
 
 
-def is_dangerous_during_print(command: str) -> bool:
-    """True if `command` must not be sent while a print is active/paused."""
-    return command_base(command) in DANGEROUS_DURING_PRINT
+def is_allowed_during_print(command: str) -> bool:
+    """True if an external raw command is safe during an active/paused print.
+
+    One call represents exactly one serial line. Reject embedded newlines even
+    when the first opcode is allowed, otherwise ``M105\nG1 X0`` could smuggle a
+    second command past the opcode check.
+    """
+    if "\r" in command or "\n" in command:
+        return False
+    return command_base(command) in ALLOWED_DURING_PRINT
 
 
 def temperature_command_error(

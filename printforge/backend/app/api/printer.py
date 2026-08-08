@@ -8,7 +8,8 @@ from pydantic import BaseModel
 
 from ..config import settings
 from ..printer.command_guard import (
-    is_dangerous_during_print,
+    command_base,
+    is_allowed_during_print,
     temperature_command_error,
 )
 from ..printer.controller import PrinterController
@@ -147,7 +148,7 @@ async def set_fan(req: FanRequest):
 
 
 def guard_raw_commands(ctrl: PrinterController, cmds: list) -> None:
-    """Apply the during-print block list and temperature ceiling to raw G-code.
+    """Apply the during-print allowlist and temperature ceiling to raw G-code.
 
     Raises HTTPException; guards the WHOLE batch before anything is sent so a
     rejected command can't land after earlier ones already executed. Shared by
@@ -155,11 +156,11 @@ def guard_raw_commands(ctrl: PrinterController, cmds: list) -> None:
     """
     printing = ctrl.state.status.value in ("printing", "paused")
     for cmd in cmds:
-        if printing and is_dangerous_during_print(cmd):
-            cmd_base = cmd.strip().split()[0].upper()
+        if printing and not is_allowed_during_print(cmd):
+            base = command_base(cmd) or "command"
             raise HTTPException(
                 409,
-                f"Cannot send {cmd_base} while printing — would corrupt print position",
+                f"Cannot send {base} while printing — command is not print-safe",
             )
         temp_err = temperature_command_error(
             cmd,

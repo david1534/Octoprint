@@ -26,7 +26,8 @@ from ..services import notifier
 from ..services.camera import CameraService
 from ..services.timelapse import TimelapseRecorder
 from .command_guard import (
-    is_dangerous_during_print,
+    command_base,
+    is_allowed_during_print,
     temperature_command_error,
     temperature_value_error,
 )
@@ -571,10 +572,10 @@ class PrinterController:
         """
         if not self._queue:
             raise ConnectionError("Not connected")
-        if self._is_printing() and is_dangerous_during_print(command):
-            base = command.strip().split()[0].upper() if command.strip() else ""
+        if self._is_printing() and not is_allowed_during_print(command):
+            base = command_base(command) or "command"
             raise RuntimeError(
-                f"Cannot send {base} while printing — would corrupt print position"
+                f"Cannot send {base} while printing — command is not print-safe"
             )
         temp_err = temperature_command_error(
             command, self._safety.max_hotend_temp, self._safety.max_bed_temp
