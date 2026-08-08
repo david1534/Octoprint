@@ -49,18 +49,4 @@ export function initTerminalStore(): void {
 			}))
 		);
 	});
-
-	// Handle command results — single batched update instead of N updates
-	wsManager.on('command_result', (data: any) => {
-		if (data.response && data.response.length) {
-			const now = Date.now();
-			appendLines(
-				data.response.map((line: string) => ({
-					text: line,
-					direction: 'recv' as const,
-					timestamp: now
-				}))
-			);
-		}
-	});
 }
