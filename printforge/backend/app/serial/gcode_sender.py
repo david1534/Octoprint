@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 import time
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +20,21 @@ logger = logging.getLogger(__name__)
 # Errors that indicate the printer has halted and cannot continue.
 # The sender should abort immediately on these, not count retries.
 _FATAL_ERROR_PATTERNS = ("STOP", "KILLED", "Halted", "BLTouch")
+
+
+class PrintResult(str, Enum):
+    """Lifecycle result for the current sender task.
+
+    A completed asyncio task is not necessarily a successful print: the task
+    may have caught an I/O, decoding, callback, or queue exception. Consumers
+    must require COMPLETED before running success-only post-print actions.
+    """
+
+    IDLE = "idle"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
 
 
 def _is_fatal_error(error_msg: Optional[str]) -> bool:
@@ -85,6 +101,8 @@ class GcodeSender:
         self._current_layer = 0
         self._total_layers = 0
         self._task: Optional[asyncio.Task] = None
+        self._result = PrintResult.IDLE
+        self._failure: Optional[BaseException] = None
         # Saved position for resume
         self._saved_x: float = 0
         self._saved_y: float = 0
@@ -115,6 +133,14 @@ class GcodeSender:
     @property
     def is_paused(self) -> bool:
         return self._paused
+
+    @property
+    def result(self) -> PrintResult:
+        return self._result
+
+    @property
+    def failure(self) -> Optional[BaseException]:
+        return self._failure
 
     @property
     def in_start_gcode(self) -> bool:
@@ -195,7 +221,7 @@ class GcodeSender:
         """
         total_lines = 0
         total_layers = 0
-        with open(filepath, "r") as f:
+        with open(filepath, encoding="utf-8") as f:
             for line in f:
                 stripped = line.strip()
                 if stripped and not stripped.startswith(";"):
@@ -229,6 +255,8 @@ class GcodeSender:
         self._e_relative = False
         self._absolute_positioning = True
         self._in_start_gcode = bool(start_gcode.strip())
+        self._result = PrintResult.IDLE
+        self._failure = None
 
         # Count printable lines and layers (run in thread to avoid blocking
         # the event loop on large files — significant on Pi SD cards)
@@ -237,6 +265,7 @@ class GcodeSender:
         )
 
         self._start_time = time.monotonic()
+        self._result = PrintResult.RUNNING
         self._task = asyncio.create_task(self._print_loop(filepath, start_gcode))
         logger.info(
             "Print started: %s (%d lines, %d layers)",
@@ -338,7 +367,7 @@ class GcodeSender:
             preamble_skipped = 0
             preamble_passthrough = 0
 
-            with open(filepath, "r") as f:
+            with open(filepath, encoding="utf-8") as f:
                 for line in f:
                     if self._cancelled:
                         await self._on_cancel()
@@ -481,10 +510,21 @@ class GcodeSender:
                 self._total_lines,
                 elapsed,
             )
+            self._result = PrintResult.COMPLETED
         except asyncio.CancelledError:
+            self._result = PrintResult.CANCELLED
             logger.info("Print task cancelled (CancelledError)")
-        except Exception:
+        except Exception as exc:
+            self._failure = exc
+            self._result = PrintResult.FAILED
             logger.exception("Error during print (unhandled exception)")
+        finally:
+            # Explicit cancel paths return from inside the loop after cleanup.
+            # Classify those returns instead of leaving a done task RUNNING.
+            if self._result == PrintResult.RUNNING:
+                self._result = (
+                    PrintResult.CANCELLED if self._cancelled else PrintResult.FAILED
+                )
 
     async def pause(self) -> None:
         """Pause the print with safe nozzle parking.
@@ -681,4 +721,6 @@ class GcodeSender:
         self._cancelled = False
         self._in_start_gcode = False
         self._task = None
+        self._result = PrintResult.IDLE
+        self._failure = None
         self._layer_callbacks.clear()

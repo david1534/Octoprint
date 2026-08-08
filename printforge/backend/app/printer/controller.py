@@ -17,7 +17,7 @@ from ..config import settings
 from ..serial.bed_mesh import BedMeshParser
 from ..serial.command_queue import CommandPriority, CommandQueue
 from ..serial.connection import SerialConnection
-from ..serial.gcode_sender import GcodeSender
+from ..serial.gcode_sender import GcodeSender, PrintResult
 from ..serial.mock_connection import MockSerialConnection
 from ..serial.protocol import CommandResult, MarlinProtocol
 from ..serial.safety import SafetyAction, SafetyAlert, SafetyMonitor
@@ -1233,9 +1233,10 @@ M117 Print Complete"""
                     and self.state.status
                     in (PrinterStatus.PRINTING, PrinterStatus.PAUSED)
                 ):
-                    was_cancelled = self._sender._cancelled
+                    print_result = self._sender.result
+                    print_failure = self._sender.failure
 
-                    if not was_cancelled:
+                    if print_result == PrintResult.COMPLETED:
                         # Normal completion — run end gcode and cleanup
                         logger.info("Print task completed, running post-print actions")
                         self.state.status = PrinterStatus.FINISHING
@@ -1253,9 +1254,11 @@ M117 Print Complete"""
                         # Aborted due to consecutive failures
                         aborted_in_start = self._sender.in_start_gcode
                         logger.warning(
-                            "Print task aborted (cancelled=%s, in_start_gcode=%s)",
-                            was_cancelled,
+                            "Print task ended unsuccessfully "
+                            "(result=%s, in_start_gcode=%s, failure=%r)",
+                            print_result.value,
                             aborted_in_start,
+                            print_failure,
                         )
                         # Stop timelapse on abort
                         await self._stop_timelapse(success=False)
@@ -1280,7 +1283,18 @@ M117 Print Complete"""
                         self._current_spool_id = None
                         self._sender.reset()
 
-                        if aborted_in_start:
+                        if print_result == PrintResult.FAILED:
+                            failure_detail = (
+                                f"{type(print_failure).__name__}: {print_failure}"
+                                if print_failure
+                                else "the sender stopped without completing"
+                            )
+                            error_msg = f"Print failed: {failure_detail}"
+                            self._error_log.log_system_error(
+                                "Print Task Failed",
+                                error_msg,
+                            )
+                        elif aborted_in_start:
                             error_msg = (
                                 "Print aborted: start G-code commands failed — "
                                 "printer may need reconnection or power cycle"

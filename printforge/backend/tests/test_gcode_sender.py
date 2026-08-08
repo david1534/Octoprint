@@ -1,9 +1,25 @@
 """Tests for the G-code sender - filament tracking, progress, LCD, callbacks."""
 
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
-from app.serial.gcode_sender import GcodeSender
 from app.serial.command_queue import CommandPriority, CommandQueue
+from app.serial.gcode_sender import GcodeSender, PrintResult
+from app.serial.protocol import CommandResult
+
+
+def _sender_with_successful_queue() -> GcodeSender:
+    queue = MagicMock()
+
+    async def enqueue(command, *args, **kwargs):
+        future = asyncio.get_running_loop().create_future()
+        future.set_result(CommandResult(command=command, ok=True))
+        return future
+
+    queue.enqueue = AsyncMock(side_effect=enqueue)
+    return GcodeSender(queue)
 
 
 class TestFilamentTracking:
@@ -84,6 +100,72 @@ class TestFilamentTracking:
         assert sender._filament_used_mm == 0.0
 
 
+class TestGcodeSenderTerminalResult:
+    """A done sender task is successful only after the whole loop completes."""
+
+    async def test_file_io_failure_is_failed(self, monkeypatch, tmp_path):
+        sender = _sender_with_successful_queue()
+        sender._result = PrintResult.RUNNING
+
+        def fail_open(*args, **kwargs):
+            raise OSError("SD card read failed")
+
+        monkeypatch.setattr("builtins.open", fail_open)
+        await sender._print_loop(tmp_path / "broken.gcode")
+
+        assert sender.result == PrintResult.FAILED
+        assert isinstance(sender.failure, OSError)
+
+    async def test_decode_error_is_failed(self, tmp_path):
+        path = tmp_path / "invalid-utf8.gcode"
+        path.write_bytes(b"G1 X1\n\xff\n")
+        sender = _sender_with_successful_queue()
+        sender._result = PrintResult.RUNNING
+
+        await sender._print_loop(path)
+
+        assert sender.result == PrintResult.FAILED
+        assert isinstance(sender.failure, UnicodeDecodeError)
+
+    async def test_escaping_callback_exception_is_failed(self, tmp_path):
+        path = tmp_path / "callback.gcode"
+        path.write_text(";LAYER:0\nG1 X1\n", encoding="utf-8")
+        sender = _sender_with_successful_queue()
+        sender._result = PrintResult.RUNNING
+        sender._notify_layer_change = MagicMock(
+            side_effect=RuntimeError("callback dispatch failed")
+        )
+
+        await sender._print_loop(path)
+
+        assert sender.result == PrintResult.FAILED
+        assert isinstance(sender.failure, RuntimeError)
+
+    async def test_unexpected_queue_failure_is_failed(self, tmp_path):
+        path = tmp_path / "queue.gcode"
+        path.write_text("G1 X1\n", encoding="utf-8")
+        queue = MagicMock()
+        queue.enqueue = AsyncMock(side_effect=RuntimeError("queue stopped"))
+        sender = GcodeSender(queue)
+        sender._result = PrintResult.RUNNING
+
+        await sender._print_loop(path)
+
+        assert sender.result == PrintResult.FAILED
+        assert isinstance(sender.failure, RuntimeError)
+
+    async def test_success_sets_completed(self, tmp_path):
+        path = tmp_path / "valid.gcode"
+        path.write_text("G1 X1\n", encoding="utf-8")
+        sender = _sender_with_successful_queue()
+        sender._result = PrintResult.RUNNING
+
+        await sender._print_loop(path)
+
+        assert sender.result == PrintResult.COMPLETED
+        assert sender.failure is None
+
+
 class TestGcodeSenderProgress:
     """Test progress calculation properties."""
 
@@ -101,6 +183,8 @@ class TestGcodeSenderProgress:
         sender._total_pause_duration = 0.0
         sender._task = None
         sender._in_start_gcode = False
+        sender._result = PrintResult.IDLE
+        sender._failure = None
         return sender
 
     def test_progress_zero_when_no_lines(self):
@@ -214,6 +298,7 @@ class TestGcodeSenderLayerCallbacks:
         sender.add_layer_callback(lambda l: results.append(l))
         # Should not raise, and second callback still fires
         sender._notify_layer_change(1)
+        assert results == [1]
 
 
 class TestGcodeSenderReset:
@@ -231,6 +316,8 @@ class TestGcodeSenderReset:
         sender._cancelled = True
         sender._in_start_gcode = True
         sender._task = "fake"
+        sender._result = PrintResult.FAILED
+        sender._failure = RuntimeError("boom")
         sender._layer_callbacks = [lambda: None]
         sender._filament_used_mm = 250.0
 
@@ -246,6 +333,8 @@ class TestGcodeSenderReset:
         assert sender._cancelled is False
         assert sender._in_start_gcode is False
         assert sender._task is None
+        assert sender.result == PrintResult.IDLE
+        assert sender.failure is None
         assert sender._layer_callbacks == []
 
     def test_reset_preserves_filament_used(self):
@@ -261,6 +350,8 @@ class TestGcodeSenderReset:
         sender._cancelled = False
         sender._in_start_gcode = False
         sender._task = None
+        sender._result = PrintResult.COMPLETED
+        sender._failure = None
         sender._layer_callbacks = []
         sender._filament_used_mm = 123.456
 
