@@ -9,11 +9,23 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 from .connection import SerialConnection
 
 logger = logging.getLogger(__name__)
+
+
+# Marlin's host-keepalive output explicitly distinguishes a printer that has
+# gone silent from one that is intentionally waiting for the operator.  Once
+# one of these signals is seen, the current command must stay in flight until
+# Marlin finally replies with ``ok``; sending another print line while an M600
+# dialog is active can make the host run ahead and eventually abort the job.
+_USER_WAIT_RE = re.compile(
+    r"(busy:\s*paused\s+for\s+(user|input)|"
+    r"action:(out_of_filament|filament_runout|filament_change|prompt_begin))",
+    re.IGNORECASE,
+)
+_USER_WAIT_COMMANDS = {"M0", "M1", "M600"}
 
 
 class PrinterError(Exception):
@@ -25,11 +37,10 @@ class CommandResult:
     command: str
     ok: bool
     response_lines: list[str] = field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class MarlinProtocol:
-
     def __init__(self, connection: SerialConnection):
         self._conn = connection
         self._line_number = 0
@@ -93,7 +104,20 @@ class MarlinProtocol:
             return self.long_timeout
         return self.default_timeout
 
-    async def send_command(self, command: str, with_checksum: bool = False, timeout: Optional[float] = None) -> CommandResult:
+    @staticmethod
+    def _is_user_wait_command(command: str) -> bool:
+        """Return whether a command intentionally waits for LCD input."""
+        cmd_base = command.split()[0].upper() if command else ""
+        return cmd_base in _USER_WAIT_COMMANDS
+
+    @staticmethod
+    def _is_user_wait_signal(line: str) -> bool:
+        """Return whether Marlin says it is intentionally waiting for input."""
+        return bool(_USER_WAIT_RE.search(line))
+
+    async def send_command(
+        self, command: str, with_checksum: bool = False, timeout: float | None = None
+    ) -> CommandResult:
         original_command = command.strip()
         if with_checksum:
             wire_command = self._add_line_number(original_command)
@@ -109,25 +133,54 @@ class MarlinProtocol:
         response_lines = []
         max_retries = 3
         retry_count = 0
+        waiting_for_user = self._is_user_wait_command(original_command)
         # Total wall-clock deadline for this command. The per-read timeout
         # resets every time data arrives (e.g. M155 temp reports), so a
         # command can hang forever if the printer sends temp data but never
-        # "ok". This deadline catches that case.
+        # "ok". This deadline catches that case. The one intentional exception
+        # is an LCD/user-input wait (such as M600): Marlin's keepalive signal
+        # proves it is alive, and the command must remain open until the user
+        # completes the firmware-controlled resume sequence.
         deadline = asyncio.get_event_loop().time() + timeout
         while True:
             remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                return CommandResult(command=original_command, ok=False, response_lines=response_lines, error=f"Timeout after {timeout}s (no ok received)")
-            read_timeout = min(remaining, self.default_timeout)
+            if not waiting_for_user and remaining <= 0:
+                return CommandResult(
+                    command=original_command,
+                    ok=False,
+                    response_lines=response_lines,
+                    error=f"Timeout after {timeout}s (no ok received)",
+                )
+            read_timeout = (
+                self.default_timeout if waiting_for_user else min(remaining, self.default_timeout)
+            )
             try:
                 line = await self._conn.read_line(timeout=read_timeout)
-            except asyncio.TimeoutError:
-                return CommandResult(command=original_command, ok=False, response_lines=response_lines, error=f"Timeout after {timeout}s")
+            except TimeoutError:
+                if waiting_for_user:
+                    # A physical filament swap has no useful upper time limit.
+                    # Keep polling so disconnect() can still cancel the queue
+                    # task and a real serial failure can still surface.
+                    continue
+                return CommandResult(
+                    command=original_command,
+                    ok=False,
+                    response_lines=response_lines,
+                    error=f"Timeout after {timeout}s",
+                )
             except ConnectionError as e:
-                return CommandResult(command=original_command, ok=False, response_lines=response_lines, error=str(e))
+                return CommandResult(
+                    command=original_command, ok=False, response_lines=response_lines, error=str(e)
+                )
             if not line:
                 continue
             self._emit_terminal(line, "recv")
+            if not waiting_for_user and self._is_user_wait_signal(line):
+                waiting_for_user = True
+                logger.info(
+                    "Printer is waiting for user input; holding command open: %s",
+                    original_command,
+                )
             if self._is_temp_report(line):
                 self._emit_temp(line)
                 if not line.startswith("ok"):
@@ -143,11 +196,18 @@ class MarlinProtocol:
                     match = re.search(r"N(\d+)", original_command, re.IGNORECASE)
                     self._line_number = int(match.group(1)) if match else 0
                     logger.info("Line number reset to %d (M110)", self._line_number)
-                return CommandResult(command=original_command, ok=True, response_lines=response_lines)
+                return CommandResult(
+                    command=original_command, ok=True, response_lines=response_lines
+                )
             if line.lower().startswith("resend:") or line.lower().startswith("rs:"):
                 retry_count += 1
                 if retry_count > max_retries:
-                    return CommandResult(command=original_command, ok=False, response_lines=response_lines, error=f"Checksum failed after {max_retries} retries")
+                    return CommandResult(
+                        command=original_command,
+                        ok=False,
+                        response_lines=response_lines,
+                        error=f"Checksum failed after {max_retries} retries",
+                    )
                 logger.warning("Resend requested: %s (retry %d)", line, retry_count)
                 if self._last_numbered_line:
                     await self._conn.send(self._last_numbered_line)
@@ -167,9 +227,14 @@ class MarlinProtocol:
                                 self._emit_temp(drain)
                             if drain.startswith("ok"):
                                 break
-                    except (asyncio.TimeoutError, ConnectionError):
+                    except (TimeoutError, ConnectionError):
                         break
-                return CommandResult(command=original_command, ok=False, response_lines=response_lines, error=error_msg)
+                return CommandResult(
+                    command=original_command,
+                    ok=False,
+                    response_lines=response_lines,
+                    error=error_msg,
+                )
             response_lines.append(line)
 
     def _is_temp_report(self, line: str) -> bool:
@@ -217,7 +282,7 @@ class MarlinProtocol:
         while True:
             try:
                 line = await self._conn.read_line(timeout=0.1)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break
             except ConnectionError:
                 break

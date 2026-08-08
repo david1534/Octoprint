@@ -1,6 +1,9 @@
 """Tests for Marlin serial protocol handling."""
 
+from unittest.mock import MagicMock
+
 import pytest
+
 from app.serial.protocol import MarlinProtocol
 
 
@@ -67,3 +70,92 @@ class TestTimeoutSelection:
         assert proto._get_timeout("G28") == 300.0
         assert proto._get_timeout("M109 S200") == 300.0
         assert proto._get_timeout("M190 S60") == 300.0
+
+
+class _ScriptedConnection:
+    """Minimal serial connection that returns scripted lines/exceptions."""
+
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.sent = []
+
+    async def send(self, command):
+        self.sent.append(command)
+
+    async def read_line(self, timeout=10.0):
+        response = next(self.responses)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+
+class TestUserInputWait:
+    """LCD-controlled pauses must not make the host abandon the print stream."""
+
+    def _protocol(self, responses):
+        proto = MarlinProtocol(_ScriptedConnection(responses))
+        proto.default_timeout = 0.001
+        proto._terminal_callbacks = [MagicMock()]
+        return proto
+
+    def test_recognizes_lcd_wait_commands(self):
+        assert MarlinProtocol._is_user_wait_command("M600")
+        assert MarlinProtocol._is_user_wait_command("m0 Change filament")
+        assert MarlinProtocol._is_user_wait_command("M1")
+        assert not MarlinProtocol._is_user_wait_command("G1 X10")
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "echo:busy: paused for user",
+            "busy: paused for input",
+            "//action:out_of_filament",
+            "//action:filament_runout",
+            "//action:filament_change",
+            "//action:prompt_begin Filament Runout",
+        ],
+    )
+    def test_recognizes_firmware_wait_signals(self, line):
+        assert MarlinProtocol._is_user_wait_signal(line)
+
+    async def test_m600_survives_silence_until_final_ok(self):
+        proto = self._protocol(
+            [
+                TimeoutError(),
+                "echo:busy: paused for user",
+                TimeoutError(),
+                "busy: processing",
+                TimeoutError(),
+                "ok",
+            ]
+        )
+
+        result = await proto.send_command("M600")
+
+        assert result.ok is True
+        assert proto._conn.sent == ["M600"]
+
+    async def test_firmware_runout_holds_current_print_command_until_ok(self):
+        proto = self._protocol(
+            [
+                "//action:filament_runout",
+                TimeoutError(),
+                "echo:busy: paused for user",
+                "busy: processing",
+                TimeoutError(),
+                "ok",
+            ]
+        )
+
+        result = await proto.send_command("G1 X120 Y80 E42")
+
+        assert result.ok is True
+        assert proto._conn.sent == ["G1 X120 Y80 E42"]
+
+    async def test_normal_command_still_times_out(self):
+        proto = self._protocol([TimeoutError()])
+
+        result = await proto.send_command("G1 X10")
+
+        assert result.ok is False
+        assert "Timeout" in result.error
